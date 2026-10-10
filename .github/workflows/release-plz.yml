@@ -42,10 +42,15 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
 
   # Opens or updates the release PR with the next version and the
-  # changelog of the commits since the last release.
+  # changelog of the commits since the last release. It waits for the
+  # release job: the changelog range is bounded by the commit the last
+  # version was published from, which only exists in crates.io's
+  # records once that job has published. Running the two in parallel
+  # once made every release PR repeat the whole repo history.
   release-pr:
     name: release PR
     runs-on: ubuntu-latest
+    needs: release
     permissions:
       contents: write
       pull-requests: write
