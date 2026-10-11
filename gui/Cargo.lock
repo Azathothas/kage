@@ -7724,6 +7724,10 @@ dependencies = [
  "egui_commonmark",
  "egui_kittest",
  "egui_virtual_list",
+ "log",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
  "web-time",
 ]
 

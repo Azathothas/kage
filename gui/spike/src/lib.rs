@@ -8,6 +8,15 @@ use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 use egui_virtual_list::VirtualList;
 use web_time::Instant;
 
+#[cfg(target_arch = "wasm32")]
+macro_rules! spike_log {
+    ($($arg:tt)*) => { log::info!($($arg)*) };
+}
+#[cfg(not(target_arch = "wasm32"))]
+macro_rules! spike_log {
+    ($($arg:tt)*) => { eprintln!($($arg)*) };
+}
+
 /// Probe configuration, parsed from CLI flags in the binary.
 #[derive(Debug, Clone)]
 pub struct Options {
@@ -77,6 +86,7 @@ pub struct ProbeApp {
     items: Vec<String>,
     caches: HashMap<usize, CommonMarkCache>,
     list: VirtualList,
+    composer: String,
     extra_items: usize,
     parses_this_frame: u32,
     max_parses_per_frame: u32,
@@ -87,6 +97,9 @@ pub struct ProbeApp {
     stream: Option<StreamState>,
     next_report: Instant,
     last_rss_mb: f64,
+    composer_focused: bool,
+    composer_rect: Option<egui::Rect>,
+    item_rects: Vec<(usize, egui::Rect)>,
 }
 
 impl ProbeApp {
@@ -113,6 +126,7 @@ impl ProbeApp {
             items,
             caches: HashMap::new(),
             list,
+            composer: String::new(),
             extra_items: 0,
             parses_this_frame: 0,
             max_parses_per_frame: 0,
@@ -121,6 +135,9 @@ impl ProbeApp {
             start: Instant::now(),
             stream,
             last_rss_mb: 0.0,
+            composer_focused: false,
+            composer_rect: None,
+            item_rects: Vec::new(),
         }
     }
 
@@ -139,10 +156,33 @@ impl ProbeApp {
         self.step_stream(ui);
         self.maybe_report(now);
 
+        if false && self.frame_no == 1 {
+            spike_log!("[spike] viewport={:?} pixels_per_point={:?} dark_mode={} panel_fill={:?} theme={:?}",
+                ui.input(|i| i.viewport_rect()), ui.ctx().pixels_per_point(),
+                ui.visuals().dark_mode, ui.visuals().panel_fill, ui.ctx().theme());
+        }
+
         let streaming = self
             .stream
             .as_ref()
             .is_some_and(|st| !st.done);
+        egui::Panel::bottom("spike-composer").show_inside(ui, |ui| {
+            let response = egui::TextEdit::multiline(&mut self.composer)
+                .hint_text("composer (spike)")
+                .desired_rows(2)
+                .show(ui);
+            self.composer_focused = response.response.has_focus();
+            self.composer_rect = Some(response.response.rect);
+            response
+                .response
+                .widget_info(|| {
+                    egui::WidgetInfo::labeled(
+                        egui::WidgetType::TextEdit,
+                        true,
+                        "spike-composer",
+                    )
+                });
+        });
         let Self {
             items,
             caches,
@@ -157,7 +197,14 @@ impl ProbeApp {
                 list.ui_custom_layout(ui, items.len(), |ui, i| {
                     *parses_this_frame += 1;
                     let cache = caches.entry(i).or_default();
+                    let top = if false { ui.cursor().top() } else { 0.0 };
                     CommonMarkViewer::new().show(ui, cache, &items[i]);
+                    if false && self.frame_no <= 3 && i < 12 {
+                        self.item_rects.push((i, egui::Rect::from_min_max(
+                            egui::pos2(ui.cursor().left(), top),
+                            egui::pos2(ui.cursor().left() + 100.0, ui.cursor().top()),
+                        )));
+                    }
                     1
                 });
             });
@@ -168,7 +215,7 @@ impl ProbeApp {
         }
         if let Some(secs) = self.opts.exit_after_secs {
             if Instant::now() - self.start > Duration::from_secs(secs) {
-                eprintln!("[spike] exit-after {}: {}", secs, self.summary_line());
+                spike_log!("[spike] exit-after {}: {}", secs, self.summary_line());
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             }
         }
@@ -211,7 +258,7 @@ impl ProbeApp {
             }
         };
         if just_finished {
-            eprintln!("[spike] bench done: {}", self.summary_line());
+            spike_log!("[spike] bench done: {}", self.summary_line());
         }
     }
 
@@ -229,10 +276,21 @@ impl ProbeApp {
             return;
         }
         self.next_report = now + Duration::from_secs(5);
-        eprintln!(
-            "[spike] t={}s {}",
+        if !self.item_rects.is_empty() {
+            let rects: Vec<String> = self.item_rects.iter()
+                .map(|(i, r)| format!("i{i}: y {:.0}-{:.0}", r.top(), r.bottom()))
+                .collect();
+            spike_log!("[spike] item_rects frame={}: {}", self.frame_no, rects.join(", "));
+            self.item_rects.clear();
+        }
+        spike_log!(
+            "[spike] t={}s {} composer={:?} len={} focused={} rect={:?}",
             (now - self.start).as_secs_f64(),
-            self.stats_line()
+            self.stats_line(),
+            if self.composer.chars().count() > 24 { "<24+ chars>" } else { self.composer.as_str() },
+            self.composer.len(),
+            self.composer_focused,
+            self.composer_rect,
         );
     }
 
@@ -296,7 +354,7 @@ impl ProbeApp {
 
 impl Drop for ProbeApp {
     fn drop(&mut self) {
-        eprintln!("[spike] {}", self.summary_line());
+        spike_log!("[spike] {}", self.summary_line());
     }
 }
 
@@ -307,6 +365,7 @@ impl eframe::App for ProbeApp {
 }
 
 /// Runs the probe in a native glow window.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn run_native(opts: Options) -> eframe::Result {
     let native = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default().with_inner_size([1100.0, 800.0]),
@@ -352,6 +411,10 @@ pub fn varied_markdown(i: usize) -> String {
         ),
     }
 }
+
+// Web entry for the spike web probe.
+#[cfg(target_arch = "wasm32")]
+mod web;
 
 fn stream_chunk(n: usize) -> &'static str {
     const CHUNKS: [&str; 6] = [

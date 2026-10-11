@@ -55,7 +55,9 @@ fn headless_stream_bench_5s() {
     let start = std::time::Instant::now();
     loop {
         std::thread::sleep(Duration::from_millis(16));
-        harness.run();
+        // run() would panic: the stream requests a repaint every frame,
+        // and run() only tolerates max_steps (4) consecutive demands.
+        harness.run_steps(1);
         if harness.state().bench_done() || start.elapsed() > Duration::from_secs(30) {
             break;
         }
