@@ -259,76 +259,14 @@ pub fn queue_rows(session: &Session) -> Vec<QueueRow> {
         .collect()
 }
 
-/// What the dock asks the shell to carry out in another view.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DockEvent {
-    /// Bring the plan card under review into view in the transcript.
-    /// The dock cannot scroll the transcript itself; the shell
-    /// subscribes and forwards the request.
-    ScrollToPlan,
-    /// Show the background agents in the workbench's agents list.
-    OpenBackgroundAgents,
-}
-
-/// The dock row: the pills the active session's state names, over the
-/// composer.
-///
-/// The pills read from the store each frame, so the row holds no
-/// session data of its own: only which popover is open.
-#[derive(Debug, Default)]
-pub struct DockRow {
-    /// Whether the goal popover shows.
-    goal_open: bool,
-    /// The goal text the popover's field edits.
-    goal_text: String,
-}
-
-impl DockRow {
-    /// A closed dock row.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Whether the goal popover shows.
-    #[must_use]
-    pub fn goal_open(&self) -> bool {
-        self.goal_open
-    }
-
-    /// Opens the goal popover over the current goal text.
-    pub fn open_goal(&mut self, current: &str) {
-        self.goal_open = true;
-        self.goal_text = current.to_owned();
-    }
-
-    /// Closes the goal popover and forgets its text.
-    pub fn close_goal(&mut self) {
-        self.goal_open = false;
-        self.goal_text.clear();
-    }
-
-    /// The goal text the popover's field edits.
-    pub fn goal_text(&mut self) -> &mut String {
-        &mut self.goal_text
-    }
-
-    /// Takes the goal text out for a save, leaving the field empty.
-    pub fn take_goal(&mut self) -> String {
-        self.goal_open = false;
-        std::mem::take(&mut self.goal_text)
-    }
-
-    /// Saves the goal text to the store, or clears the goal when the
-    /// text is empty. Returns whether the store took the write.
-    pub fn save_goal(&mut self, store: &mut Store) -> bool {
-        let text = self.take_goal();
-        let goal = text.trim();
-        if goal.is_empty() {
-            store.set_option("goal", "")
-        } else {
-            store.set_option("goal", goal)
-        }
+/// Saves the goal text to the store: an empty or blank text clears the
+/// goal, which is how the popover's Clear button works.
+pub fn save_goal(store: &mut Store, text: &str) -> bool {
+    let goal = text.trim();
+    if goal.is_empty() {
+        store.set_option("goal", "")
+    } else {
+        store.set_option("goal", goal)
     }
 }
 
@@ -961,24 +899,67 @@ mod tests {
         assert_eq!(truncate_text("abcdefghij", 3), "abc\u{2026}");
     }
 
-    #[test]
-    fn the_goal_popover_edits_then_saves() {
+    /// A store with one open session, so an option write rides the
+    /// wire and the answer is readable.
+    fn store_with_session() -> crate::store::Store {
         let mut store = crate::store::Store::new("/w", false);
-        let mut dock = super::DockRow::new();
-        dock.open_goal("");
-        dock.goal_text().push_str("ship the port");
-        assert!(dock.save_goal(&mut store), "the store takes the goal");
-        assert!(!dock.goal_open(), "the popover closes on the save");
+        store.set_connect(crate::transport::State::Connected);
+        store.handshake(false);
+        store.new_session();
+        let _ = store.take_outgoing();
+        store.absorb(kage_client::Frame::Success {
+            id: kage_client::RequestId::Number(2),
+            result: serde_json::json!({"sessionId": "s1"}),
+        });
+        let _ = store.take_outgoing();
+        store
+    }
+
+    /// The value the last option write for `id` carried.
+    fn last_option_write(store: &mut crate::store::Store, id: &str) -> Option<String> {
+        store
+            .take_outgoing()
+            .into_iter()
+            .filter_map(|frame| match frame {
+                kage_client::Frame::Request { method, params, .. }
+                    if method == "session/set_config_option" =>
+                {
+                    (params.get("configId").and_then(serde_json::Value::as_str) == Some(id)).then(
+                        || {
+                            params
+                                .get("value")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or_default()
+                                .to_owned()
+                        },
+                    )
+                }
+                _ => None,
+            })
+            .next_back()
     }
 
     #[test]
-    fn the_goal_popover_clears_an_empty_goal() {
-        let mut store = crate::store::Store::new("/w", false);
-        let mut dock = super::DockRow::new();
-        dock.open_goal("ship the port");
-        assert!(
-            dock.save_goal(&mut store),
-            "an empty goal clears the option"
+    fn a_goal_save_trims_and_writes_the_option() {
+        let mut store = store_with_session();
+        assert!(super::save_goal(&mut store, "  ship the port  "));
+        assert_eq!(
+            last_option_write(&mut store, "goal").as_deref(),
+            Some("ship the port"),
+            "the text is trimmed on the way in"
+        );
+    }
+
+    #[test]
+    fn a_blank_goal_clears_the_option() {
+        let mut store = store_with_session();
+        assert!(super::save_goal(&mut store, "ship the port"));
+        let _ = last_option_write(&mut store, "goal");
+        assert!(super::save_goal(&mut store, "   "));
+        assert_eq!(
+            last_option_write(&mut store, "goal").as_deref(),
+            Some(""),
+            "a blank text clears the goal"
         );
     }
 }
