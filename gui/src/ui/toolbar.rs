@@ -345,11 +345,10 @@ fn kbd(ui: &mut egui::Ui, label: &str, palette: &Palette) {
 pub fn show(
     ui: &mut egui::Ui,
     toolbar: &mut Toolbar,
-    store: &Store,
+    store: &mut Store,
     running: bool,
     has_text: bool,
 ) -> Vec<ToolbarEvent> {
-    let palette = Palette::active_of(ui.ctx());
     let mut events = Vec::new();
     ui.horizontal(|ui| {
         ui.set_height(PILL_H);
@@ -361,13 +360,12 @@ pub fn show(
         swarm_chip(ui, store, &mut events);
         ui.add_space(SP_2);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            send_button(ui, store, running, has_text, &mut events);
+            send_button(ui, running, has_text, &mut events);
             model_button(ui, toolbar, store, &mut events);
             compact_button(ui, store, running, &mut events);
             context_ring(ui, toolbar, store, &mut events);
         });
     });
-    let _ = palette;
     events
 }
 
@@ -425,6 +423,7 @@ fn plus_button(
                     "Files",
                     "Upload files or images",
                     Some("drop"),
+                    "the prompt surface carries text only for now",
                 );
                 let mention = plus_row_button(
                     ui,
@@ -479,10 +478,7 @@ fn plus_button(
                     events.push(ToolbarEvent::TogglePlan);
                     toolbar.close_plus();
                 }
-                ui.horizontal(|ui| {
-                    let _ = ui;
-                    onoff(ui, plan_on, palette);
-                });
+                onoff(ui, plan_on, palette);
                 let swarm = plus_row_button(
                     ui,
                     palette,
@@ -574,8 +570,9 @@ fn plus_row_button(
     response
 }
 
-/// A plus-menu row that does nothing yet, drawn dimmed with its key
-/// cap: the attachment surface carries text only for now.
+/// A plus-menu row that does nothing yet, drawn faint with its reason:
+/// the prompt surface carries text only for now, so the attachment
+/// entry stays inert.
 fn dimmed_row(
     ui: &mut egui::Ui,
     palette: &Palette,
@@ -583,9 +580,42 @@ fn dimmed_row(
     label: &str,
     description: &str,
     tail: Option<&str>,
+    reason: &str,
 ) {
-    let response = plus_row_button(ui, palette, icon, label, description, tail);
-    let _ = response;
+    let response = egui::Frame::NONE
+        .corner_radius(egui::CornerRadius::same(R_MD as u8))
+        .inner_margin(egui::Margin::symmetric(7, 6))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 10.0;
+                egui::Frame::NONE
+                    .fill(palette.fill)
+                    .corner_radius(egui::CornerRadius::same(7))
+                    .inner_margin(egui::Margin::same(6))
+                    .show(ui, |ui| {
+                        crate::icons::icon(ui, icon, 14.0, palette.faint);
+                    });
+                ui.vertical(|ui| {
+                    ui.label(
+                        egui::RichText::new(label)
+                            .size(FS_XS + 1.0)
+                            .color(palette.faint),
+                    );
+                    ui.label(
+                        egui::RichText::new(description)
+                            .size(11.5)
+                            .color(palette.faint),
+                    );
+                });
+                if let Some(tail) = tail {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        kbd(ui, tail, palette);
+                    });
+                }
+            });
+        })
+        .response;
+    let _ = response.on_hover_text(reason);
 }
 
 /// The thinking rows the model picker lists, from the active session.
@@ -601,8 +631,8 @@ fn thinking_rows_for(store: &Store) -> Vec<kage_client::wire::SessionConfigSelec
 fn mode_button(
     ui: &mut egui::Ui,
     toolbar: &mut Toolbar,
-    store: &Store,
-    events: &mut Vec<ToolbarEvent>,
+    store: &mut Store,
+    _events: &mut Vec<ToolbarEvent>,
 ) -> Option<()> {
     let palette = Palette::active_of(ui.ctx());
     let open = toolbar.picker() == Some(Picker::Mode);
@@ -632,10 +662,12 @@ fn mode_button(
     if !open {
         return Some(());
     }
-    let Some(session) = store.active_session() else {
+    let Some(rows) = store
+        .active_session()
+        .map(|session| pickers::mode_rows(session, ""))
+    else {
         return Some(());
     };
-    let mut picked_mode: Option<String> = None;
     egui::Window::new("mode-picker")
         .title_bar(false)
         .collapsible(false)
@@ -656,7 +688,21 @@ fn mode_button(
                 if query.gained_focus() {
                     toolbar.mode_query().clear();
                 }
-                let rows = pickers::mode_rows(session, &toolbar.mode_query().clone());
+                let rows: Vec<_> = rows
+                    .iter()
+                    .filter(|row| {
+                        let needle = pickers::picker_query(&toolbar.mode_query().clone());
+                        needle.is_empty()
+                            || format!(
+                                "{} {}",
+                                row.name,
+                                row.description.as_deref().unwrap_or_default()
+                            )
+                            .to_lowercase()
+                            .contains(&needle)
+                    })
+                    .cloned()
+                    .collect();
                 let total = rows.len();
                 let highlight = toolbar.mode_highlight();
                 for (index, row) in rows.iter().enumerate() {
@@ -700,7 +746,7 @@ fn mode_button(
                         })
                         .response;
                     if response.clicked() {
-                        picked_mode = Some(row.value.clone());
+                        store.set_permission(&row.value);
                         toolbar.close_pickers();
                     }
                 }
@@ -713,7 +759,6 @@ fn mode_button(
                 }
             });
         });
-    let _ = events;
     Some(())
 }
 
@@ -813,8 +858,8 @@ fn mode_chip(
 fn model_button(
     ui: &mut egui::Ui,
     toolbar: &mut Toolbar,
-    store: &Store,
-    events: &mut Vec<ToolbarEvent>,
+    store: &mut Store,
+    _events: &mut Vec<ToolbarEvent>,
 ) -> Option<()> {
     let palette = Palette::active_of(ui.ctx());
     let open = toolbar.picker() == Some(Picker::Model);
@@ -858,8 +903,6 @@ fn model_button(
         return Some(());
     }
     let starred: Vec<String> = store.prefs().starred_models.iter().cloned().collect();
-    let mut picked_model: Option<String> = None;
-    let mut picked_thinking: Option<String> = None;
     egui::Window::new("model-picker")
         .title_bar(false)
         .collapsible(false)
@@ -965,7 +1008,7 @@ fn model_button(
                             })
                             .response;
                         if response.clicked() {
-                            picked_model = Some(row.id.clone());
+                            store.set_option("model", &row.id);
                             toolbar.close_pickers();
                         }
                     }
@@ -1005,14 +1048,13 @@ fn model_button(
                                 })
                                 .response;
                             if response.clicked() {
-                                picked_thinking = Some(level.value.clone());
+                                store.set_option("thinking", &level.value);
                             }
                         }
                     });
                 }
             });
         });
-    let _ = events;
     Some(())
 }
 
@@ -1111,7 +1153,7 @@ fn context_ring(
         .and_then(|id| store.tree_cost(id))
         .map(|cost| format!("{} {:.2}", cost.currency, cost.amount))
         .unwrap_or_else(|| "unknown".to_owned());
-    let model = pickers::select_option(session, "model").and_then(|option| {
+    let model = crate::modes::select_option(session, "model").and_then(|option| {
         option
             .options
             .iter()
@@ -1267,7 +1309,6 @@ fn gauge_stat(ui: &mut egui::Ui, label: &str, value: String, palette: &Palette) 
 /// run is in flight and the input is empty, and sends otherwise.
 fn send_button(
     ui: &mut egui::Ui,
-    store: &Store,
     running: bool,
     has_text: bool,
     events: &mut Vec<ToolbarEvent>,
@@ -1310,7 +1351,6 @@ fn send_button(
         "Send (Enter)"
     });
 
-    let _ = store;
     Some(())
 }
 

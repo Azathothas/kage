@@ -11,12 +11,7 @@
 
 use crate::store::Store;
 use crate::theme::Palette;
-use kage_client::wire::{
-    ModelEntry, ModelProvider, SessionConfigOption, SessionConfigSelectOption,
-};
-
-/// The plan mode's id in the `mode` option, which its own chip toggles.
-pub const PLAN_MODE: &str = "plan";
+use kage_client::wire::{ModelEntry, ModelProvider, SessionConfigSelectOption};
 
 /// What a picker asks of the composer that hosts it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -315,58 +310,9 @@ pub fn mode_tone(mode: &str, palette: &Palette) -> Option<egui::Color32> {
     }
 }
 
-/// The select config option `id` of a session, when the agent
-/// advertised it as a select.
-#[must_use]
-pub fn select_option<'a>(
-    session: &'a kage_client::Session,
-    id: &str,
-) -> Option<&'a SessionConfigOption> {
-    session.config_options.iter().find(|option| {
-        option.id == id && option.kind == kage_client::wire::SessionConfigKind::Select
-    })
-}
-
-/// The mode id that is active now: what `current_mode_update` last
-/// marked, else what the mode option reports.
-#[must_use]
-pub fn active_mode(session: &kage_client::Session) -> Option<String> {
-    session
-        .mode
-        .clone()
-        .or_else(|| select_option(session, "mode").map(|option| option.current_value.clone()))
-}
-
-/// The permission modes the mode option advertises, in its order: every
-/// value but plan mode, which the toolbar shows as its own chip.
-#[must_use]
-pub fn permission_values(session: &kage_client::Session) -> Vec<&SessionConfigSelectOption> {
-    select_option(session, "mode")
-        .map(|option| {
-            option
-                .options
-                .iter()
-                .filter(|value| value.value != PLAN_MODE)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-/// The permission mode Shift+Tab cycles to from `current`: the next
-/// advertised one, wrapping around. No option or an empty list cycles
-/// nowhere.
-#[must_use]
-pub fn next_mode_value(session: &kage_client::Session, current: &str) -> Option<String> {
-    let values = permission_values(session);
-    if values.is_empty() {
-        return None;
-    }
-    let index = values
-        .iter()
-        .position(|value| value.value == current)
-        .map_or(0, |index| (index + 1) % values.len());
-    Some(values[index].value.clone())
-}
+// The mode vocabulary the crate already owns: the pickers read it
+// rather than hold a second copy of each rule.
+use crate::modes::PLAN_MODE;
 
 /// The goal text option of a session, when one is set.
 #[must_use]
@@ -383,8 +329,8 @@ pub fn session_goal(session: Option<&kage_client::Session>) -> Option<String> {
 /// permission mode but plan mode, narrowed by name and description.
 #[must_use]
 pub fn mode_rows(session: &kage_client::Session, query: &str) -> Vec<SessionConfigSelectOption> {
-    let needle = query.trim().to_lowercase();
-    select_option(session, "mode")
+    let needle = picker_query(query);
+    crate::modes::select_option(session, "mode")
         .map(|option| option.options.clone())
         .unwrap_or_default()
         .into_iter()
@@ -409,8 +355,8 @@ pub fn thinking_rows(
     session: &kage_client::Session,
     query: &str,
 ) -> Vec<SessionConfigSelectOption> {
-    let needle = query.trim().to_lowercase();
-    select_option(session, "thinking")
+    let needle = picker_query(query);
+    crate::modes::select_option(session, "thinking")
         .map(|option| option.options.clone())
         .unwrap_or_default()
         .into_iter()
@@ -454,34 +400,6 @@ pub fn step_highlight(current: usize, total: usize, delta: isize) -> usize {
 #[must_use]
 pub fn picker_query(value: &str) -> String {
     value.trim().to_lowercase()
-}
-
-/// Whether a picker row's id is the option's current value.
-#[must_use]
-pub fn is_current(current: Option<&str>, id: &str) -> bool {
-    current == Some(id)
-}
-
-/// The value of the `id` option, from a list of select options.
-#[must_use]
-pub fn option_value(options: &[SessionConfigSelectOption], id: &str) -> Option<String> {
-    options
-        .iter()
-        .find(|option| option.value == id)
-        .map(|option| option.name.clone())
-}
-
-/// The rows a plus popover lists: the context the composer can attach.
-/// Each row is its label, description and the key cap it shows.
-#[must_use]
-pub fn plus_rows() -> Vec<(&'static str, &'static str, &'static str)> {
-    vec![
-        ("Add file", "Mention a file or folder", "@"),
-        ("Add image", "Attach an image", ""),
-        ("Take screenshot", "Capture the screen", ""),
-        ("Paste from clipboard", "Read the clipboard", ""),
-        ("New session", "Start a fresh session", ""),
-    ]
 }
 
 /// The tokens the usage numbers read as: `12480` becomes `12.5k`.
@@ -542,9 +460,9 @@ mod tests {
     use super::{
         COMPACT_AT, COMPACT_CELL, KINDS, ModelRow, Section, compacts_soon, fallback_groups,
         fill_percent, flat_rows, gauge_cells, level_label, mode_rows, model_levels, model_sections,
-        next_mode_value, option_value, permission_values, picker_query, plus_rows, policy,
-        provider_tile, step_highlight, thinking_rows, tokens, window_size,
+        picker_query, policy, provider_tile, step_highlight, thinking_rows, tokens, window_size,
     };
+    use crate::modes::{next_mode_value, permission_values};
     use kage_client::Session;
     use kage_client::wire::{ModelEntry, ModelProvider, SessionConfigSelectOption};
     use serde_json::json;
@@ -760,21 +678,6 @@ mod tests {
     fn the_query_trims_and_lowercases() {
         assert_eq!(picker_query("  Opus "), "opus");
         assert_eq!(picker_query("   "), "");
-    }
-
-    #[test]
-    fn the_option_value_names_the_picked_row() {
-        let options = vec![value("ask", "Ask first")];
-        assert_eq!(option_value(&options, "ask").as_deref(), Some("Ask first"));
-        assert_eq!(option_value(&options, "deny"), None);
-    }
-
-    #[test]
-    fn the_plus_popover_lists_the_context_rows() {
-        let rows = plus_rows();
-        assert_eq!(rows.len(), 5);
-        assert_eq!(rows[0].0, "Add file");
-        assert_eq!(rows[0].2, "@", "the mention row shows its key");
     }
 
     #[test]

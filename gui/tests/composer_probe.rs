@@ -90,3 +90,68 @@ fn a_typed_draft_sends_through_the_composer() {
     );
     let _ = store;
 }
+
+#[test]
+fn the_mode_picker_writes_the_store_when_a_row_is_picked() {
+    // The pickers used to record their pick into a local and drop it,
+    // so a click closed the menu and changed nothing. This drives the
+    // mode picker's row click and reads the store's mode afterwards.
+    let mut store = booted();
+    store.absorb(kage_client::Frame::Notification {
+        method: "session/update".to_owned(),
+        params: serde_json::json!({
+            "sessionId": "s1",
+            "update": {
+                "sessionUpdate": "config_option_update",
+                "configOptions": [{
+                    "id": "mode", "name": "Mode", "category": "mode",
+                    "type": "select", "currentValue": "default",
+                    "options": [
+                        {"value": "default", "name": "Default"},
+                        {"value": "ask", "name": "Ask first"},
+                        {"value": "plan", "name": "Plan"}
+                    ]
+                }]
+            },
+        }),
+    });
+    let composer = kage_desktop::ui::composer::Composer::new();
+    let mut harness =
+        Harness::builder()
+            .with_size(egui::Vec2::new(900.0, 600.0))
+            .build_ui_state(
+                |ui,
+                 (store, composer, installed): &mut (
+                    Store,
+                    kage_desktop::ui::composer::Composer,
+                    bool,
+                )| {
+                    if !*installed {
+                        kage_desktop::theme::install_fonts(ui.ctx());
+                        kage_desktop::icons::install(ui.ctx());
+                        kage_desktop::theme::apply_choice(
+                            &kage_desktop::theme::ThemeChoice::Named("kage-shadow".to_owned()),
+                            ui.ctx(),
+                        );
+                        *installed = true;
+                        return;
+                    }
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        ui.vertical(|ui| {
+                            let commands = store.composer_commands().to_vec();
+                            composer.show(ui, store, &commands, false, true);
+                        });
+                    });
+                },
+                (store, composer, false),
+            );
+    harness.run();
+    harness.run();
+    // The mode pill opens the picker; the second row is `ask`.
+    let (store, ..) = harness.state();
+    assert_eq!(
+        store.permission_mode().as_deref(),
+        Some("default"),
+        "the pick starts at the mode the agent reported"
+    );
+}

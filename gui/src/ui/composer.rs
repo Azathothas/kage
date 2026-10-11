@@ -722,8 +722,6 @@ pub struct Composer {
     pub draft: Draft,
     /// The placeholder the field shows, re-set only on a real change.
     placeholder: String,
-    /// Whether the composer asks for a send on the next frame.
-    send: bool,
     /// The session workdir listing the mention menu reads, cloned out
     /// of the store each frame it is asked for.
     listing: Option<kage_client::wire::FsListResult>,
@@ -744,7 +742,6 @@ impl Composer {
         Self {
             draft: Draft::default(),
             placeholder: String::new(),
-            send: false,
             listing: None,
             toolbar: crate::ui::toolbar::Toolbar::new(),
         }
@@ -770,7 +767,7 @@ impl Composer {
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
-        store: &crate::store::Store,
+        store: &mut crate::store::Store,
         commands: &[serde_json::Value],
         running: bool,
         enter_sends: bool,
@@ -824,7 +821,7 @@ impl Composer {
                 for asked in toolbar_events {
                     match asked {
                         crate::ui::toolbar::ToolbarEvent::Submit => {
-                            event = ComposerEvent::Send;
+                            event = ComposerEvent::Send { steer: false };
                         }
                         crate::ui::toolbar::ToolbarEvent::Cancel => {
                             event = ComposerEvent::Stop;
@@ -882,11 +879,15 @@ impl Composer {
             );
         }
 
-        // Enter sends, or adds a newline, per the preference.
-        if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+        // Enter sends, or adds a newline, per the preference. The
+        // toolbar's own ask wins, so a click and a keypress in one
+        // frame do not race.
+        if event == ComposerEvent::None && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
             let modifiers = ui.input(|i| i.modifiers);
             if modifiers.ctrl || modifiers.command || (enter_sends && !modifiers.shift) {
-                event = ComposerEvent::Send;
+                event = ComposerEvent::Send {
+                    steer: modifiers.ctrl || modifiers.command,
+                };
             } else {
                 self.draft.insert("\n");
             }
@@ -901,22 +902,17 @@ impl Composer {
         }
     }
 
+    /// The placeholder the field shows.
+    #[must_use]
+    pub fn placeholder(&self) -> &str {
+        &self.placeholder
+    }
+
     /// Sets the session workdir listing the mention menu reads. The
     /// shell hands in the active session's listing each frame, so the
     /// menu follows the session.
     pub fn set_listing(&mut self, listing: Option<kage_client::wire::FsListResult>) {
         self.listing = listing;
-    }
-
-    /// Whether the frame asked for a send.
-    #[must_use]
-    pub fn wants_send(&self) -> bool {
-        self.send
-    }
-
-    /// Clears the send request.
-    pub fn clear_send(&mut self) {
-        self.send = false;
     }
 }
 
@@ -925,8 +921,12 @@ impl Composer {
 pub enum ComposerEvent {
     /// Nothing.
     None,
-    /// Send the draft.
-    Send,
+    /// Send the draft, or steer the running turn when `steer` is set.
+    Send {
+        /// The ask came from Ctrl+Enter, so a running turn is steered
+        /// rather than queued.
+        steer: bool,
+    },
     /// Stop the run in flight.
     Stop,
 }
@@ -1050,24 +1050,22 @@ mod surface_tests {
         let mut composer = Composer::new();
         composer.set_placeholder("Ask anything");
         composer.set_placeholder("Ask anything");
+        assert_eq!(composer.placeholder(), "Ask anything");
         composer.set_placeholder("Ask kage");
-        // The field's own hint text carries it, so the state only tracks
-        // the change.
-        assert!(composer.draft.text.is_empty());
+        assert_eq!(composer.placeholder(), "Ask kage", "a change re-sets it");
     }
 
     #[test]
-    fn the_send_request_is_cleared_after_it_is_read() {
-        let mut composer = Composer::new();
-        composer.send = true;
-        assert!(composer.wants_send());
-        composer.clear_send();
-        assert!(!composer.wants_send());
-    }
-
-    #[test]
-    fn the_event_names_both_asks() {
-        assert_eq!(ComposerEvent::None, ComposerEvent::None);
-        assert_ne!(ComposerEvent::Send, ComposerEvent::Stop);
+    fn the_send_event_carries_whether_it_steers() {
+        assert_eq!(
+            ComposerEvent::Send { steer: false },
+            ComposerEvent::Send { steer: false }
+        );
+        assert_ne!(
+            ComposerEvent::Send { steer: true },
+            ComposerEvent::Send { steer: false }
+        );
+        assert_ne!(ComposerEvent::Send { steer: false }, ComposerEvent::Stop);
+        assert_ne!(ComposerEvent::None, ComposerEvent::Stop);
     }
 }

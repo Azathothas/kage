@@ -546,18 +546,9 @@ impl ShellApp {
         for action in actions {
             match action {
                 crate::ui::dock::DockAction::Steer(index) => {
-                    if index == usize::MAX {
-                        // The plan pill: bring the plan card into view.
-                        continue;
-                    }
                     let _ = self.shell.store.steer_queued(index);
                 }
                 crate::ui::dock::DockAction::Edit(index) => {
-                    if index == usize::MAX {
-                        // The background pill: the workbench's agents
-                        // list, which E06 owns.
-                        continue;
-                    }
                     if let Some(text) = self
                         .shell
                         .store
@@ -580,7 +571,37 @@ impl ShellApp {
                 crate::ui::dock::DockAction::Remove(index) => {
                     self.shell.store.withdraw_queued(index);
                 }
+                crate::ui::dock::DockAction::ScrollToPlan => {
+                    self.scroll_to_plan();
+                }
+                crate::ui::dock::DockAction::OpenBackgroundAgents => {
+                    // The workbench's agents list, which E06 mounts.
+                }
+                crate::ui::dock::DockAction::OpenGoal => {
+                    // The goal editor is the plus menu's dialog, which
+                    // E07 mounts; the pill reports the ask for now.
+                }
             }
+        }
+    }
+
+    /// Brings the plan card under review into view, or the transcript's
+    /// last plan item when no review waits.
+    fn scroll_to_plan(&mut self) {
+        let Some(session) = self.shell.store.active_session() else {
+            return;
+        };
+        let plan_row = session
+            .items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| matches!(item, kage_client::TranscriptItem::Plan { .. }))
+            .map(|(ix, _)| ix)
+            .next_back();
+        if let Some(ix) = plan_row {
+            self.shell
+                .transcript
+                .scroll_to_row(crate::ui::transcript::model::RowKey::Item(ix));
         }
     }
 
@@ -601,18 +622,26 @@ impl ShellApp {
             .and_then(|id| self.shell.store.fs_listing(id))
             .cloned();
         self.shell.composer.set_listing(listing);
+        let steer_available = self.shell.store.state().steer_available();
         let event =
             self.shell
                 .composer
-                .show(ui, &self.shell.store, &commands, running, enter_sends);
-        if event == crate::ui::composer::ComposerEvent::Send
+                .show(ui, &mut self.shell.store, &commands, running, enter_sends);
+        if let crate::ui::composer::ComposerEvent::Send { steer } = event
             && let Some(text) = self.shell.composer.take_prompt()
         {
             let builtin = crate::ui::composer::builtin(&text);
             let handled =
                 builtin.is_some_and(|command| self.run_builtin(command.name, command.args));
             if !handled {
-                let _ = self.shell.store.submit(&text);
+                // Ctrl+Enter steers a running turn; the engine
+                // advertises the capability, so a steer that cannot go
+                // out falls back to a plain submit.
+                if steer && running && steer_available {
+                    let _ = self.shell.store.steer(&text);
+                } else {
+                    let _ = self.shell.store.submit(&text);
+                }
             }
         }
     }

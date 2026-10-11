@@ -353,6 +353,12 @@ pub enum DockAction {
     Edit(usize),
     /// Remove the queued prompt at `index`.
     Remove(usize),
+    /// Bring the plan card under review into view in the transcript.
+    ScrollToPlan,
+    /// Show the background agents in the workbench's agents list.
+    OpenBackgroundAgents,
+    /// Open the goal editor over the goal pill.
+    OpenGoal,
 }
 
 /// Draws the dock row: the pills the session's state names, then the
@@ -449,20 +455,28 @@ fn goal_pill(
     } else {
         (crate::icons::Icon::Target, palette.accent)
     };
-    let response = pill(ui, palette);
-    ui.painter().text(
-        response.rect.left_center() + egui::vec2(10.0, 0.0),
-        egui::Align2::LEFT_CENTER,
-        &goal.text,
-        egui::FontId::new(
-            crate::theme::FS_XS,
-            crate::theme::family(crate::theme::FAMILY_BODY_REGULAR),
-        ),
-        palette.ink,
-    );
-    let _ = icon;
-    let _ = color;
-    let _ = actions;
+    let response = egui::Frame::NONE
+        .fill(palette.surface)
+        .stroke(egui::Stroke::new(1.0, palette.line))
+        .corner_radius(egui::CornerRadius::same(crate::theme::R_FULL as u8))
+        .inner_margin(egui::Margin::symmetric(10, 0))
+        .show(ui, |ui| {
+            ui.set_min_height(PILL_H);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = crate::theme::SP_3;
+                crate::icons::icon(ui, icon, 12.0, color);
+                ui.label(
+                    egui::RichText::new(goal.text.clone())
+                        .size(crate::theme::FS_XS)
+                        .color(color),
+                );
+            });
+        })
+        .response;
+    if response.clicked() {
+        actions.push(DockAction::OpenGoal);
+    }
+    let _ = response.on_hover_text("the session goal; click to edit or clear it");
 }
 
 /// The plan pill: under review it carries the success palette and
@@ -474,7 +488,6 @@ fn plan_pill(
     pending: bool,
     actions: &mut Vec<DockAction>,
 ) {
-    let response = pill(ui, palette);
     let (bg, line, fg, label) = if pending {
         (
             palette.ok_soft,
@@ -490,43 +503,55 @@ fn plan_pill(
             PLAN_WAITING.to_owned(),
         )
     };
-    let _ = (bg, line, fg);
-    ui.painter().text(
-        response.rect.left_center() + egui::vec2(10.0, 0.0),
-        egui::Align2::LEFT_CENTER,
-        label,
-        egui::FontId::new(
-            crate::theme::FS_XS,
-            crate::theme::family(crate::theme::FAMILY_BODY_REGULAR),
-        ),
-        fg,
-    );
+    let response = egui::Frame::NONE
+        .fill(bg)
+        .stroke(egui::Stroke::new(1.0, line))
+        .corner_radius(egui::CornerRadius::same(crate::theme::R_FULL as u8))
+        .inner_margin(egui::Margin::symmetric(10, 0))
+        .show(ui, |ui| {
+            ui.set_min_height(PILL_H);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = crate::theme::SP_3;
+                crate::icons::icon(ui, crate::icons::Icon::PenLine, 12.0, fg);
+                ui.label(
+                    egui::RichText::new(label)
+                        .size(crate::theme::FS_XS)
+                        .color(fg),
+                );
+            });
+        })
+        .response;
     if pending && response.clicked() {
-        actions.push(DockAction::Steer(usize::MAX));
+        actions.push(DockAction::ScrollToPlan);
     }
+    let _ = response.on_hover_text(if pending {
+        "a plan waits for review; click to find it in the transcript"
+    } else {
+        "plan mode is on"
+    });
 }
 
 /// The swarm pill: the done/total count, the paused count, and the
 /// member list popover.
 fn swarm_pill(ui: &mut egui::Ui, palette: &crate::theme::Palette, swarm: &SwarmState) {
-    let response = pill(ui, palette);
     let count = format!("{}/{}", swarm.done, swarm.total);
     let label = if swarm.paused > 0 {
         format!("Swarm {count} {} paused", swarm.paused)
     } else {
         format!("Swarm {count}")
     };
-    ui.painter().text(
-        response.rect.left_center() + egui::vec2(10.0, 0.0),
-        egui::Align2::LEFT_CENTER,
-        label,
-        egui::FontId::new(
-            crate::theme::FS_XS,
-            crate::theme::family(crate::theme::FAMILY_BODY_REGULAR),
-        ),
-        palette.done,
-    );
-    response.on_hover_text("delegated members and their states");
+    let response = pill(ui, palette, |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = crate::theme::SP_3;
+            crate::icons::icon(ui, crate::icons::Icon::Waypoints, 12.0, palette.done);
+            ui.label(
+                egui::RichText::new(label)
+                    .size(crate::theme::FS_XS)
+                    .color(palette.done),
+            );
+        });
+    });
+    let _ = response.on_hover_text("delegated members and their states");
 }
 
 /// The background agents pill: a spinner and how many run while any
@@ -543,43 +568,55 @@ fn background_pill(
     } else {
         format!("{} background {}", state.total, noun(state.total))
     };
-    let response = pill(ui, palette);
-    ui.painter().text(
-        response.rect.left_center() + egui::vec2(10.0, 0.0),
-        egui::Align2::LEFT_CENTER,
-        label,
-        egui::FontId::new(
-            crate::theme::FS_XS,
-            crate::theme::family(crate::theme::FAMILY_BODY_REGULAR),
-        ),
-        palette.muted,
-    );
+    let response = pill(ui, palette, |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = crate::theme::SP_3;
+            let icon = if state.live > 0 {
+                crate::icons::Icon::LoaderCircle
+            } else {
+                crate::icons::Icon::Bot
+            };
+            crate::icons::icon(ui, icon, 12.0, palette.muted);
+            ui.label(
+                egui::RichText::new(label)
+                    .size(crate::theme::FS_XS)
+                    .color(palette.muted),
+            );
+        });
+    });
     if response.clicked() {
-        actions.push(DockAction::Edit(usize::MAX));
+        actions.push(DockAction::OpenBackgroundAgents);
     }
 }
 
-/// The todos pill: the done/total count and its mini bar.
+/// The todos pill: the done/total count, its mini bar, and the entry
+/// list a hover opens.
 fn todos_pill(
     ui: &mut egui::Ui,
     palette: &crate::theme::Palette,
     todos: TodosState,
-    _entries: Vec<(String, String)>,
+    entries: Vec<(String, String)>,
 ) {
-    let response = pill(ui, palette);
     let count = format!("{}/{}", todos.done, todos.total);
-    ui.painter().text(
-        response.rect.left_center() + egui::vec2(10.0, 0.0),
-        egui::Align2::LEFT_CENTER,
-        format!("Progress {count}"),
-        egui::FontId::new(
-            crate::theme::FS_XS,
-            crate::theme::family(crate::theme::FAMILY_BODY_REGULAR),
-        ),
-        palette.muted,
-    );
+    let response = pill(ui, palette, |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = crate::theme::SP_3;
+            crate::icons::icon(ui, crate::icons::Icon::ListTodo, 12.0, palette.muted);
+            ui.label(
+                egui::RichText::new("Progress")
+                    .size(crate::theme::FS_XS)
+                    .color(palette.muted),
+            );
+            ui.label(
+                egui::RichText::new(count)
+                    .size(crate::theme::FS_XS)
+                    .family(crate::theme::family(crate::theme::FAMILY_MONO_REGULAR))
+                    .color(palette.ink_strong),
+            );
+        });
+    });
     // The mini bar: a 36 by 4 track with the done share in the
-    // success green.
+    // success green, on the pill's right edge.
     let rect = response.rect;
     let track = egui::Rect::from_min_size(
         egui::pos2(rect.right() - TODO_BAR - 8.0, rect.center().y - 2.0),
@@ -593,6 +630,30 @@ fn todos_pill(
         egui::CornerRadius::same(2),
         palette.ok,
     );
+    let _ = response.on_hover_ui(|ui| {
+        for (text, status) in &entries {
+            let (icon, color, ink) = match status.as_str() {
+                "completed" => (crate::icons::Icon::CircleCheck, palette.ok, palette.muted),
+                "in_progress" => (
+                    crate::icons::Icon::LoaderCircle,
+                    palette.accent,
+                    palette.ink_strong,
+                ),
+                _ => (crate::icons::Icon::Circle, palette.faint, palette.ink),
+            };
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = crate::theme::SP_4;
+                crate::icons::icon(ui, icon, 13.0, color);
+                let mut text = egui::RichText::new(text.clone())
+                    .size(crate::theme::FS_SM)
+                    .color(ink);
+                if status == "completed" {
+                    text = text.strikethrough();
+                }
+                ui.label(text);
+            });
+        }
+    });
 }
 
 /// One queue row with its three actions. `steer_tip` disables the
@@ -663,14 +724,24 @@ fn queue_row(
 }
 
 /// One pill: 28px tall, fully round, bordered, in the surface color.
-fn pill(ui: &mut egui::Ui, palette: &crate::theme::Palette) -> egui::Response {
-    ui.add(
-        egui::Button::new("")
-            .fill(palette.surface)
-            .stroke(egui::Stroke::new(1.0, palette.line))
-            .corner_radius(egui::CornerRadius::same(crate::theme::R_FULL as u8))
-            .min_size(egui::vec2(0.0, PILL_H)),
-    )
+fn pill(
+    ui: &mut egui::Ui,
+    palette: &crate::theme::Palette,
+    body: impl FnOnce(&mut egui::Ui),
+) -> egui::Response {
+    egui::Frame::NONE
+        .fill(palette.surface)
+        .stroke(egui::Stroke::new(1.0, palette.line))
+        .corner_radius(egui::CornerRadius::same(crate::theme::R_FULL as u8))
+        .inner_margin(egui::Margin::symmetric(10, 0))
+        .show(ui, |ui| {
+            ui.set_min_height(PILL_H);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = crate::theme::SP_3;
+                body(ui);
+            });
+        })
+        .response
 }
 
 #[cfg(test)]
