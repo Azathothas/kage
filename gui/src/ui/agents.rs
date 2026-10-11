@@ -76,6 +76,18 @@ impl Phase {
             Self::Cancelled => palette.faint,
         }
     }
+
+    /// The glyph the card's state chip carries.
+    #[must_use]
+    pub fn icon(self) -> crate::icons::Icon {
+        match self {
+            Self::Running => crate::icons::Icon::LoaderCircle,
+            Self::Paused => crate::icons::Icon::CirclePause,
+            Self::Done => crate::icons::Icon::CircleCheck,
+            Self::Failed => crate::icons::Icon::CircleX,
+            Self::Cancelled => crate::icons::Icon::CircleSlash,
+        }
+    }
 }
 
 /// What a card shows about one subagent.

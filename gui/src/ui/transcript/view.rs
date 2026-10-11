@@ -54,11 +54,14 @@ struct RowCtx<'a> {
     revealed: &'a HashMap<usize, usize>,
     /// Whether this view is a pinned subagent pane in the workbench.
     pinned: bool,
+    /// When this view was built, the clock the constellation twinkles
+    /// on.
+    born: web_time::Instant,
 }
 
 /// The transcript view of one session: the measured list, the state the
 /// rows read, and the find marks the find bar sets.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct TranscriptView {
     /// The measured-height list the rows render in.
     list: List,
@@ -89,23 +92,59 @@ pub struct TranscriptView {
     scroll_to: Option<RowKey>,
     /// The rows the last frame built, for the vim cursor's methods.
     rows: Vec<Row>,
+    /// When this view was built, the clock the constellation twinkles
+    /// on, so a repaint from a state change continues the animation
+    /// instead of restarting it.
+    born: web_time::Instant,
+}
+
+impl Default for TranscriptView {
+    fn default() -> Self {
+        Self::born(web_time::Instant::now())
+    }
 }
 
 impl TranscriptView {
     /// A transcript following the store's active session.
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
+        Self::born(web_time::Instant::now())
     }
 
     /// A transcript that always shows session `id`, such as a
     /// subagent's in the workbench.
     #[must_use]
     pub fn pinned(id: impl Into<String>) -> Self {
+        Self::born(web_time::Instant::now()).with_pinned(id)
+    }
+
+    /// A transcript born at `born`, the clock its constellation
+    /// twinkles on.
+    #[must_use]
+    fn born(born: web_time::Instant) -> Self {
         Self {
-            pinned: Some(id.into()),
-            ..Self::default()
+            list: List::default(),
+            ui: UiState::default(),
+            pipeline: Pipeline::default(),
+            find: None,
+            pinned: None,
+            stashed: HashMap::new(),
+            session_key: None,
+            vim_cursor: None,
+            reveal: Reveal::default(),
+            revealed: HashMap::new(),
+            revise: PlanRevise::default(),
+            scroll_to: None,
+            rows: Vec::new(),
+            born,
         }
+    }
+
+    /// Pins this view to session `id`.
+    #[must_use]
+    fn with_pinned(mut self, id: impl Into<String>) -> Self {
+        self.pinned = Some(id.into());
+        self
     }
 
     /// The id of the session this view shows.
@@ -157,6 +196,7 @@ impl TranscriptView {
         let revise = &mut self.revise;
         let scroll_to = self.scroll_to.take();
         let revealed = self.revealed.clone();
+        let born = self.born;
 
         // The measure pass borrows the same state the draw pass does, so
         // the fields are split before either runs.
@@ -175,6 +215,7 @@ impl TranscriptView {
             revise,
             revealed: &revealed,
             pinned,
+            born,
         };
 
         // Measure the rows whose signature moved, laid out offscreen at
@@ -474,6 +515,7 @@ fn render_row(
         revise,
         revealed,
         pinned,
+        born,
     } = ctx;
     let times = *times;
     let revealed = *revealed;
@@ -538,8 +580,9 @@ fn render_row(
             }
             Some(TranscriptItem::ToolCall(call))
                 if (call.title == "agent" || call.title == "swarm")
-                    && let Some((response, actions)) =
-                        tool_rows::render_agents(ui, store, session, *ix, call, ui_state) =>
+                    && let Some((response, actions)) = tool_rows::render_agents(
+                        ui, store, session, *ix, call, *born, ui_state,
+                    ) =>
             {
                 events.extend(actions);
                 response

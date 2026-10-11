@@ -7,6 +7,7 @@
 
 pub mod agents;
 pub mod composer;
+pub mod constellation;
 pub mod copy;
 pub mod dock;
 pub mod eclipse;

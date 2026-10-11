@@ -19,7 +19,7 @@
 use std::f32::consts::TAU;
 use std::time::Duration;
 
-use kage_client::wire::{ContentBlock, NoticeTone, SubagentState, ToolCallStatus};
+use kage_client::wire::{ContentBlock, NoticeTone, ToolCallStatus};
 use kage_client::{Session, Subagent, ToolCallItem, TranscriptItem};
 
 use super::model::{
@@ -33,6 +33,7 @@ use crate::theme::{
     FS_XS, Palette, R_FULL, R_LG, R_MD, R_SM, SP_1, SP_2, SP_3, SP_4, SP_5, family,
 };
 use crate::timing::{RunEnd, SessionTimes};
+use crate::ui::agents::Phase;
 
 /// The activity row's minimum height.
 const ROW_H: f32 = 28.0;
@@ -1475,74 +1476,13 @@ pub fn render_plan_card(
     (response, actions)
 }
 
-/// Where one subagent stands, as the cards label it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Phase {
-    /// Working on its task.
-    Running,
-    /// Waiting out a rate limit.
-    Paused,
-    /// Finished its task.
-    Done,
-    /// Could not finish.
-    Failed,
-    /// Stopped.
-    Cancelled,
-}
-
-impl Phase {
-    fn of(agent: &Subagent) -> Self {
-        match agent.state {
-            None | Some(SubagentState::Running) => Self::Running,
-            Some(SubagentState::Paused) => Self::Paused,
-            Some(SubagentState::Completed) => Self::Done,
-            Some(SubagentState::Unknown) | Some(SubagentState::Failed) => Self::Failed,
-            Some(SubagentState::Cancelled) => Self::Cancelled,
-        }
-    }
-
-    fn live(self) -> bool {
-        matches!(self, Self::Running | Self::Paused)
-    }
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::Running => "Running",
-            Self::Paused => "Rate limited",
-            Self::Done => "Finished",
-            Self::Failed => "Error",
-            Self::Cancelled => "Cancelled",
-        }
-    }
-
-    fn icon(self) -> crate::icons::Icon {
-        match self {
-            Self::Running => crate::icons::Icon::LoaderCircle,
-            Self::Paused => crate::icons::Icon::CirclePause,
-            Self::Done => crate::icons::Icon::CircleCheck,
-            Self::Failed => crate::icons::Icon::CircleX,
-            Self::Cancelled => crate::icons::Icon::CircleSlash,
-        }
-    }
-
-    fn color(self, palette: &Palette) -> egui::Color32 {
-        match self {
-            Self::Running => palette.accent,
-            Self::Paused => palette.warn,
-            Self::Done => palette.ok,
-            Self::Failed => palette.danger,
-            Self::Cancelled => palette.faint,
-        }
-    }
-}
-
 /// What a card shows about one subagent.
 #[derive(Debug, Clone, PartialEq)]
 struct AgentFacts {
     id: String,
     name: String,
     task: String,
-    phase: Phase,
+    phase: crate::ui::agents::Phase,
     reason: Option<String>,
     elapsed: Option<Duration>,
     tokens: Option<u64>,
@@ -1774,6 +1714,7 @@ pub fn render_agents(
     session: &Session,
     ix: usize,
     call: &ToolCallItem,
+    origin: std::time::Instant,
     ui_state: &mut UiState,
 ) -> Option<(egui::Response, Vec<RowAction>)> {
     let members: Vec<AgentFacts> = children_of(session, &call.tool_call_id)
@@ -1811,6 +1752,7 @@ pub fn render_agents(
         &members,
         counts,
         open,
+        store.constellation().then_some(origin),
         ui_state.templates.contains(&ix),
         template.as_deref(),
         took,
@@ -1945,6 +1887,7 @@ fn swarm_card(
     members: &[AgentFacts],
     counts: SwarmCounts,
     open: bool,
+    field: Option<std::time::Instant>,
     template_open: bool,
     template: Option<&str>,
     took: Option<Duration>,
@@ -2043,30 +1986,60 @@ fn swarm_card(
             if head.clicked() {
                 toggle_click = true;
             }
-            // The progress bar: done, failed and live shares of the batch.
-            let (track, _) =
-                ui.allocate_exact_size(egui::vec2(ui.available_width(), 3.0), egui::Sense::hover());
-            let share = |n: usize| {
-                if counts.total == 0 {
-                    0.0
-                } else {
-                    n as f32 / counts.total as f32
+            // The constellation while the preference asks for it, else the
+            // progress bar: done, failed and live shares of the batch.
+            if let Some(origin) = field {
+                let stars: Vec<crate::ui::constellation::Star> = members
+                    .iter()
+                    .map(|member| crate::ui::constellation::Star {
+                        id: member.id.clone(),
+                        item: member
+                            .item
+                            .clone()
+                            .map_or_else(|| member.name.clone(), |(item, _)| item),
+                        phase: member.phase,
+                    })
+                    .collect();
+                let (asked, animate) = crate::ui::constellation::show(ui, &stars, None, origin);
+                for event in asked {
+                    open_member = match event {
+                        crate::ui::constellation::ConstellationEvent::Open(id) => Some(id),
+                    };
                 }
-            };
-            let mut x = track.left();
-            for (n, color) in [
-                (counts.done, palette.ok),
-                (counts.failed, palette.danger),
-                (counts.running + counts.paused, palette.done),
-            ] {
-                let w = track.width() * share(n);
-                if w > 0.0 {
-                    ui.painter().rect_filled(
-                        egui::Rect::from_min_size(egui::pos2(x, track.top()), egui::vec2(w, 3.0)),
-                        0.0,
-                        color,
-                    );
-                    x += w;
+                if animate {
+                    ui.ctx()
+                        .request_repaint_after(std::time::Duration::from_millis(50));
+                }
+            } else {
+                let (track, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), 3.0),
+                    egui::Sense::hover(),
+                );
+                let share = |n: usize| {
+                    if counts.total == 0 {
+                        0.0
+                    } else {
+                        n as f32 / counts.total as f32
+                    }
+                };
+                let mut x = track.left();
+                for (n, color) in [
+                    (counts.done, palette.ok),
+                    (counts.failed, palette.danger),
+                    (counts.running + counts.paused, palette.done),
+                ] {
+                    let w = track.width() * share(n);
+                    if w > 0.0 {
+                        ui.painter().rect_filled(
+                            egui::Rect::from_min_size(
+                                egui::pos2(x, track.top()),
+                                egui::vec2(w, 3.0),
+                            ),
+                            0.0,
+                            color,
+                        );
+                        x += w;
+                    }
                 }
             }
             if open {
