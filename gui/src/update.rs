@@ -8,11 +8,6 @@
 //! only on native targets, and every entry point degrades to a no-op
 //! or a report on the web build.
 
-use gpui_kit::AsyncApp;
-use gpui_kit::Entity;
-
-use crate::store::Store;
-
 /// The releases list the checks read, newest first. `per_page` spans
 /// both families, so a burst of desktop releases cannot hide the
 /// newest engine tag.
@@ -297,43 +292,54 @@ pub fn install_desktop_latest() -> Result<std::path::PathBuf, String> {
     Err("this platform cannot download kage".to_owned())
 }
 
-/// Runs one release check when one is due and stores what it saw in
-/// the preferences, where the About page reads it. `force` skips the
-/// daily throttle, for the button. The web build never checks.
-pub async fn run_check(store: Entity<Store>, cx: &mut AsyncApp, force: bool) {
+/// What one release check saw, for the UI thread to apply.
+#[derive(Debug, Default)]
+pub struct CheckOutcome {
+    /// The newest engine release, without the `v`.
+    pub cli: Option<String>,
+    /// The newest desktop release.
+    pub desktop: Option<String>,
+    /// The newest nightly, when the channel is nightly.
+    pub nightly: Option<crate::prefs::NightlyBuild>,
+    /// Why the check failed, when it did. Cleared on a success.
+    pub error: Option<String>,
+    /// Whether a newer engine or client is out, for the badge.
+    pub badge: bool,
+    /// Unix seconds of the completed check.
+    pub checked_at: i64,
+}
+
+/// Runs one release check when one is due and returns what it saw.
+/// `force` skips the daily throttle, for the button. The web build
+/// never checks. The caller runs it on its own thread and applies the
+/// outcome on the UI thread, so the store never crosses the boundary.
+pub fn run_check(prefs: &crate::prefs::Prefs, force: bool) -> Option<CheckOutcome> {
     #[cfg(target_arch = "wasm32")]
-    let _ = (store, cx, force);
+    {
+        let _ = (prefs, force);
+        None
+    }
 
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let (due, channel) = store.update(cx, |store, _| {
-            let prefs = store.prefs();
-            (due_for_check(prefs, force), prefs.channel)
-        });
-        if !due {
-            return;
+        if !due_for_check(prefs, force) {
+            return None;
         }
-        let fetched = cx
-            .background_executor()
-            .spawn(async { native::fetch_releases() })
-            .await;
-        let text = match fetched {
+        let channel = prefs.channel;
+        let text = match native::fetch_releases() {
             Ok(text) => text,
             Err(error) => {
-                store.update(cx, |store, _| {
-                    store.update_prefs(|prefs| prefs.check_error = Some(error));
+                return Some(CheckOutcome {
+                    error: Some(error),
+                    ..Default::default()
                 });
-                return;
             }
         };
         let feed = parse_feed(&text);
         let nightly = match channel {
             crate::prefs::Channel::Latest => None,
             crate::prefs::Channel::Nightly => {
-                let commit = cx
-                    .background_executor()
-                    .spawn(async { native::fetch_nightly_commit() })
-                    .await;
+                let commit = native::fetch_nightly_commit();
                 match (commit, feed.nightly.as_ref()) {
                     (Ok(Some(commit)), Some(release)) => Some(crate::prefs::NightlyBuild {
                         commit,
@@ -344,35 +350,41 @@ pub async fn run_check(store: Entity<Store>, cx: &mut AsyncApp, force: bool) {
             }
         };
         if feed.cli.is_none() && feed.desktop.is_none() && nightly.is_none() {
-            store.update(cx, |store, _| {
-                store.update_prefs(|prefs| {
-                    prefs.check_error = Some("the release list named nothing".to_owned());
-                });
+            return Some(CheckOutcome {
+                error: Some("the release list named nothing".to_owned()),
+                ..Default::default()
             });
-            return;
         }
-        store.update(cx, |store, _| {
-            let engine = store
-                .state()
-                .agent
-                .as_ref()
-                .and_then(|agent| agent.version.clone());
-            store.update_prefs(|prefs| {
-                if let Some(release) = &feed.cli {
-                    prefs.latest_cli_version = Some(release.version.clone());
-                }
-                if let Some(release) = &feed.desktop {
-                    prefs.latest_desktop_version = Some(release.version.clone());
-                }
-                if nightly.is_some() {
-                    prefs.latest_nightly = nightly;
-                }
-                prefs.check_error = None;
-                prefs.update_checked_at = Some(crate::clock::unix_seconds());
-                prefs.update_badge = pending_update(prefs, engine.as_deref()).is_some();
-            });
-        });
+        Some(CheckOutcome {
+            cli: feed.cli.map(|release| release.version),
+            desktop: feed.desktop.map(|release| release.version),
+            nightly,
+            error: None,
+            badge: false,
+            checked_at: crate::clock::unix_seconds(),
+        })
     }
+}
+
+/// Applies a check outcome to the preferences. The badge needs the
+/// engine's own version, which the caller reads off the store.
+pub fn apply_outcome(
+    prefs: &mut crate::prefs::Prefs,
+    outcome: CheckOutcome,
+    engine: Option<&str>,
+) {
+    if let Some(version) = outcome.cli {
+        prefs.latest_cli_version = Some(version);
+    }
+    if let Some(version) = outcome.desktop {
+        prefs.latest_desktop_version = Some(version);
+    }
+    if outcome.nightly.is_some() {
+        prefs.latest_nightly = outcome.nightly;
+    }
+    prefs.check_error = outcome.error;
+    prefs.update_checked_at = Some(outcome.checked_at);
+    prefs.update_badge = pending_update(prefs, engine).is_some();
 }
 
 /// Whether enough time has passed since the last completed check.
@@ -455,7 +467,9 @@ mod native {
 
     /// Downloads the newest engine release of `channel` and installs
     /// the engine binary it contains, returning the installed path.
-    pub(super) fn install_latest(channel: crate::prefs::Channel) -> Result<PathBuf, String> {
+    pub(super) fn install_latest(
+        channel: crate::prefs::Channel,
+    ) -> Result<PathBuf, String> {
         let Some(archive) = super::cli_asset() else {
             return Err("no kage release is built for this platform".to_owned());
         };

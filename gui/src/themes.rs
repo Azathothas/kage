@@ -10,11 +10,10 @@
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex, PoisonError};
 
-use gpui_kit::component::theme::ThemeMode;
-use gpui_kit::{Global, Hsla, rgba};
+use egui::Color32;
 use kage_client::wire::UserTheme;
 
-use crate::theme::Palette;
+use crate::theme::{Mode, Palette};
 
 /// The bundled themes, in the order the settings show them.
 pub const BUILTIN: [&str; 4] = ["kage-shadow", "kage-dawn", "kimi-dark", "kimi-light"];
@@ -32,8 +31,6 @@ pub struct Catalog {
     /// desktop.
     pub light: Option<String>,
 }
-
-impl Global for Catalog {}
 
 impl Catalog {
     /// The theme a System choice draws on a light or a dark desktop:
@@ -75,11 +72,7 @@ impl Catalog {
 /// name neither bundled nor listed. `light` settles the base of a user
 /// theme that names none, as `default` does in the terminal.
 #[must_use]
-pub fn resolve(
-    name: &str,
-    catalog: &Catalog,
-    light: bool,
-) -> Option<(&'static Palette, ThemeMode)> {
+pub fn resolve(name: &str, catalog: &Catalog, light: bool) -> Option<(&'static Palette, Mode)> {
     if let Some(found) = builtin(name) {
         return Some(found);
     }
@@ -95,16 +88,16 @@ pub fn resolve(
 
 /// A bundled theme's palette and mode.
 #[must_use]
-pub fn builtin(name: &str) -> Option<(&'static Palette, ThemeMode)> {
+pub fn builtin(name: &str) -> Option<(&'static Palette, Mode)> {
     static SHADOW: LazyLock<Palette> = LazyLock::new(Palette::shadow);
     static DAWN: LazyLock<Palette> = LazyLock::new(Palette::dawn);
     static KIMI_DARK: LazyLock<Palette> = LazyLock::new(Palette::kimi_dark);
     static KIMI_LIGHT: LazyLock<Palette> = LazyLock::new(Palette::kimi_light);
     match name {
-        "kage-shadow" => Some((&SHADOW, ThemeMode::Dark)),
-        "kage-dawn" => Some((&DAWN, ThemeMode::Light)),
-        "kimi-dark" => Some((&KIMI_DARK, ThemeMode::Dark)),
-        "kimi-light" => Some((&KIMI_LIGHT, ThemeMode::Light)),
+        "kage-shadow" => Some((&SHADOW, Mode::Dark)),
+        "kage-dawn" => Some((&DAWN, Mode::Light)),
+        "kimi-dark" => Some((&KIMI_DARK, Mode::Dark)),
+        "kimi-light" => Some((&KIMI_LIGHT, Mode::Light)),
         _ => None,
     }
 }
@@ -134,8 +127,7 @@ fn custom(theme: &UserTheme, base: &str, palette: &Palette) -> &'static Palette 
         .or_insert_with(|| {
             let mut built = palette.clone();
             for (token, value) in &theme.gui {
-                if let (Some(slot), Some(color)) =
-                    (token_mut(&mut built, token), parse_color(value))
+                if let (Some(slot), Some(color)) = (token_mut(&mut built, token), parse_color(value))
                 {
                     *slot = color;
                 }
@@ -146,12 +138,21 @@ fn custom(theme: &UserTheme, base: &str, palette: &Palette) -> &'static Palette 
 
 /// A `[gui]` color: `#rrggbb`, or `#rrggbbaa` with alpha.
 #[must_use]
-pub fn parse_color(text: &str) -> Option<Hsla> {
+pub fn parse_color(text: &str) -> Option<Color32> {
     let hex = text.strip_prefix('#')?;
     let value = u32::from_str_radix(hex, 16).ok()?;
     match hex.len() {
-        6 => Some(rgba((value << 8) | 0xFF).into()),
-        8 => Some(rgba(value).into()),
+        6 => Some(Color32::from_rgb(
+            (value >> 16) as u8,
+            (value >> 8) as u8,
+            value as u8,
+        )),
+        8 => Some(Color32::from_rgba_unmultiplied(
+            (value >> 24) as u8,
+            (value >> 16) as u8,
+            (value >> 8) as u8,
+            value as u8,
+        )),
         _ => None,
     }
 }
@@ -162,7 +163,7 @@ macro_rules! tokens {
         pub const TOKENS: &[&str] = &[$(stringify!($name)),*];
 
         /// The palette slot `name` names.
-        fn token_mut<'a>(palette: &'a mut Palette, name: &str) -> Option<&'a mut Hsla> {
+        fn token_mut<'a>(palette: &'a mut Palette, name: &str) -> Option<&'a mut Color32> {
             match name {
                 $(stringify!($name) => Some(&mut palette.$name),)*
                 _ => None,
@@ -259,7 +260,7 @@ mod tests {
             ..Catalog::default()
         };
         let (palette, mode) = resolve("ember", &catalog, false).unwrap();
-        assert_eq!(mode, ThemeMode::Light, "the base's mode");
+        assert_eq!(mode, Mode::Light, "the base's mode");
         assert_eq!(palette.accent, parse_color("#fe8019").unwrap());
         assert_eq!(
             palette.bg,
@@ -276,11 +277,11 @@ mod tests {
         };
         assert_eq!(
             resolve("plain", &catalog, true).unwrap().1,
-            ThemeMode::Light
+            Mode::Light
         );
         assert_eq!(
             resolve("plain", &catalog, false).unwrap().1,
-            ThemeMode::Dark
+            Mode::Dark
         );
         assert!(resolve("gone", &catalog, false).is_none());
     }
@@ -304,8 +305,8 @@ mod tests {
 
     #[test]
     fn colors_take_six_or_eight_digits() {
-        assert_eq!(parse_color("#ffffff").unwrap().a, 1.0);
-        assert!((parse_color("#1a88ff47").unwrap().a - 0x47 as f32 / 255.0).abs() < 1e-6);
+        assert_eq!(parse_color("#ffffff").unwrap().a(), 255);
+        assert_eq!(parse_color("#1a88ff47").unwrap().a(), 0x47);
         assert!(parse_color("ffffff").is_none());
         assert!(parse_color("#fff").is_none());
     }

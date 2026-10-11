@@ -6,6 +6,13 @@
 //! recording. Commands it cannot carry out itself come back to the
 //! shell, which owns the transport. Views read the store and call its
 //! command methods; they never see frames.
+//!
+//! With egui the shell drains the store once per frame, so every
+//! take-style accessor ([`Store::take_commands`],
+//! [`Store::take_outgoing`], [`Store::take_notes`]) drains without
+//! a notify and without re-queuing: a mutation that queues frames
+//! leaves them on the client until the next drain, which the shell
+//! performs on every frame.
 
 use kage_client::wire::{
     ContentBlock, FsListResult, FsOp, FsReadResult, NoticeTone, PermissionOption,
@@ -16,39 +23,13 @@ use kage_client::{
     TranscriptItem,
 };
 
-use gpui_kit::{App, Entity};
-
 use crate::gate::{self, Report};
+use crate::modes::{PLAN_MODE, active_mode};
 use crate::prefs::Prefs;
 use std::collections::HashMap;
 
 use crate::timing::{SessionTimes, Timings};
 use crate::transport::{Link, State};
-use crate::views::composer::{PLAN_MODE, active_mode};
-
-/// Store mutations that queue frames or move state go through
-/// [`StoreHandle::act`], which notifies the store's observers: the
-/// shell flushes the outgoing frames on that notify, and the views
-/// redraw. A bare `update` that skips the notify leaves the frames in
-/// the client until something unrelated notifies. The one sanctioned
-/// bare update is a drain on a take-style accessor
-/// ([`Store::take_commands`], [`Store::take_outgoing`],
-/// [`Store::take_notes`]): draining must not notify, or the shell
-/// loop re-enters.
-pub trait StoreHandle {
-    /// Runs `f` on the store, then notifies its observers.
-    fn act<R>(&self, cx: &mut App, f: impl FnOnce(&mut Store) -> R) -> R;
-}
-
-impl StoreHandle for Entity<Store> {
-    fn act<R>(&self, cx: &mut App, f: impl FnOnce(&mut Store) -> R) -> R {
-        self.update(cx, |store, cx| {
-            let result = f(store);
-            cx.notify();
-            result
-        })
-    }
-}
 
 /// A directory read's answer: the providers it lists, or why it failed.
 pub type DirectoryRead = Result<Vec<kage_client::wire::DirectoryProvider>, String>;
@@ -1781,7 +1762,8 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
-    use super::{Command, Store, StoreHandle as _};
+    use crate::modes::next_mode_value;
+    use super::{Command, Store};
     use crate::transport::State;
     use kage_client::wire::NoticeTone;
     use kage_client::{Frame, PromptOutcome, RequestId, SteerError, TranscriptItem};
@@ -2164,8 +2146,7 @@ mod tests {
         // Shift+Tab walks the permission modes; plan mode is its own chip.
         for expected in ["ask", "allow", "deny", "default", "ask"] {
             let current = store.permission_mode().unwrap();
-            let next =
-                crate::views::composer::next_mode_value(store.active_session().unwrap(), &current);
+            let next = next_mode_value(store.active_session().unwrap(), &current);
             assert_eq!(next.as_deref(), Some(expected));
             assert!(store.set_permission(expected));
             assert_eq!(sent_mode(&mut store), [expected], "one frame per step");
@@ -2223,72 +2204,47 @@ mod tests {
         );
     }
 
-    /// The shell flushes frames when the store notifies, so a welcome
-    /// prompt that opens its session through `act` reaches the wire at
-    /// once instead of waiting for an unrelated redraw.
-    #[gpui_kit::test]
-    fn act_notifies_so_queued_frames_flush(cx: &mut gpui_kit::TestAppContext) {
-        use gpui_kit::AppContext as _;
-        let store = cx.new(|_| Store::new("/w", false));
-        let flushed = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-        cx.update(|cx| {
-            let flushed = flushed.clone();
-            cx.observe(&store, move |store, cx| {
-                let frames = store.update(cx, |store, _| store.take_outgoing());
-                flushed.borrow_mut().extend(frames);
-            })
-            .detach();
-        });
-        cx.update(|cx| store.act(cx, |store| store.open_with_prompt("fix the flake")));
-        cx.run_until_parked();
-        let flushed = flushed.borrow();
-        assert_eq!(flushed.len(), 1, "the session/new went out on the notify");
+    /// A welcome prompt that opens its session queues the session/new
+    /// frame on the store, where the shell's per-frame drain collects
+    /// it; the drain does not notify or re-queue, so a second drain
+    /// finds nothing.
+    #[test]
+    fn a_welcome_prompt_queues_its_frame_for_the_per_frame_drain() {
+        let mut store = Store::new("/w", false);
+        store.open_with_prompt("fix the flake");
+        let flushed = store.take_outgoing();
+        assert_eq!(flushed.len(), 1, "the session/new reached the store");
         assert!(matches!(&flushed[0], Frame::Request { method, .. } if method == "session/new"));
+        assert!(
+            store.take_outgoing().is_empty(),
+            "the drain does not re-queue what it took"
+        );
     }
 
-    /// Every store method that queues a frame flushes exactly its
-    /// frames on the notify [`StoreHandle::act`] sends: one mutation,
-    /// one flush, with no unrelated redraw needed.
-    #[gpui_kit::test]
-    fn every_frame_queuing_method_flushes_through_act(cx: &mut gpui_kit::TestAppContext) {
-        use gpui_kit::{App, AppContext as _};
-        let store = cx.new(|_| Store::new("/w", false));
-        let flushed = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-        cx.update(|cx| {
-            let flushed = flushed.clone();
-            cx.observe(&store, move |store, cx| {
-                let frames = store.update(cx, |store, _| store.take_outgoing());
-                flushed.borrow_mut().extend(frames);
-            })
-            .detach();
-        });
+    /// Every store method that queues a frame leaves exactly its
+    /// frames on the store for the shell's per-frame drain: one
+    /// mutation, one batch, with no unrelated redraw needed.
+    #[test]
+    fn every_frame_queuing_method_leaves_exactly_its_frames() {
+        let mut store = Store::new("/w", false);
 
         // A live store with one open session, the way the shell answers
         // the boot frames.
-        cx.update(|cx| {
-            store.update(cx, |store, cx| {
-                store.set_connect(State::Connected);
-                store.handshake(false);
-                cx.notify();
-            });
-        });
+        store.set_connect(State::Connected);
+        store.handshake(false);
+        let mut flushed: Vec<Frame> = store.take_outgoing();
         let init_id = flushed
-            .borrow()
             .iter()
             .find_map(|frame| match frame {
                 Frame::Request { id, method, .. } if method == "initialize" => id.as_number(),
                 _ => None,
             })
             .expect("the handshake went out");
-        cx.update(|cx| {
-            store.update(cx, |store, cx| {
-                store.absorb(init_answer_on(init_id, Some("0.1.0"), true, true));
-                store.new_session();
-                cx.notify();
-            });
-        });
+        store.absorb(init_answer_on(init_id, Some("0.1.0"), true, true));
+        store.new_session();
+        flushed.clear();
+        flushed.extend(store.take_outgoing());
         let new_id = flushed
-            .borrow()
             .iter()
             .rev()
             .find_map(|frame| match frame {
@@ -2296,80 +2252,62 @@ mod tests {
                 _ => None,
             })
             .expect("the session/new went out");
-        cx.update(|cx| {
-            store.update(cx, |store, cx| {
-                store.absorb(Frame::Success {
-                    id: new_id,
-                    result: serde_json::json!({ "sessionId": "s1" }),
-                });
-                cx.notify();
-            });
-            assert_eq!(store.read(cx).active_id(), Some("s1"));
+        store.absorb(Frame::Success {
+            id: new_id,
+            result: serde_json::json!({ "sessionId": "s1" }),
         });
+        assert_eq!(store.active_id(), Some("s1"));
 
-        type FlushCase<'a> = (&'a str, Vec<&'a str>, Box<dyn Fn(&mut App) + 'a>);
+        type FlushCase<'a> = (&'a str, Vec<&'a str>, Box<dyn Fn(&mut Store) + 'a>);
         let cases: Vec<FlushCase> = vec![
             (
                 "handshake",
                 vec!["initialize"],
-                Box::new(|cx| {
-                    store.act(cx, |store| store.handshake(false));
-                }),
+                Box::new(|store| store.handshake(false)),
             ),
             (
                 "new_session",
                 vec!["session/new"],
-                Box::new(|cx| {
-                    store.act(cx, |store| store.new_session());
-                }),
+                Box::new(|store| store.new_session()),
             ),
             (
                 "prompt",
                 vec!["session/prompt"],
-                Box::new(|cx| {
-                    store.act(cx, |store| assert!(store.prompt("a plain prompt")));
-                }),
+                Box::new(|store| assert!(store.prompt("a plain prompt"))),
             ),
             (
                 "steer",
                 vec!["session/prompt"],
-                Box::new(|cx| {
-                    store.act(cx, |store| assert!(store.steer("join me here").is_ok()));
-                }),
+                Box::new(|store| assert!(store.steer("join me here").is_ok())),
             ),
             (
                 "config_set",
                 vec!["_kage/config/set"],
-                Box::new(|cx| {
-                    store.act(cx, |store| {
-                        store.config_set(&["theme"], Some(serde_json::json!("dark")))
-                    });
+                Box::new(|store| {
+                    store.config_set(&["theme"], Some(serde_json::json!("dark")));
                 }),
             ),
             (
                 "close_active",
                 vec!["session/close", "session/list"],
-                Box::new(|cx| {
-                    store.act(cx, Store::close_active);
-                }),
+                Box::new(|store| store.close_active()),
             ),
         ];
         for (name, expected, run) in cases {
-            flushed.borrow_mut().clear();
-            cx.update(|cx| run(cx));
-            cx.run_until_parked();
-            let frames = flushed.borrow();
-            let methods: Vec<&str> = frames
+            flushed.clear();
+            run(&mut store);
+            flushed.extend(store.take_outgoing());
+            let methods: Vec<&str> = flushed
                 .iter()
                 .filter_map(|frame| match frame {
                     Frame::Request { method, .. } => Some(method.as_str()),
                     _ => None,
                 })
                 .collect();
-            assert_eq!(methods, expected, "{name} flushes exactly its frames");
+            assert_eq!(methods, expected, "{name} leaves exactly its frames");
             if name == "steer" {
-                let Frame::Request { params, .. } = &frames[0] else {
-                    panic!("expected the steer request, got {:?}", frames[0]);
+                let Frame::Request { params, .. } = &flushed[0] else {
+                    panic!("expected the steer request, got {:?}", flushed[0]);
                 };
                 assert_eq!(params["delivery"], "steer");
                 assert_eq!(params["prompt"][0]["text"], "join me here");

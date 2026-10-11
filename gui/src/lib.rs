@@ -1,31 +1,35 @@
 //! The kage client: one window over one engine link.
 //!
-//! The shell ([`app`]) renders three resizable panels over the
-//! [`store`], which fronts `kage-client`, and pumps frames through a
-//! [`transport`]. One crate builds two ways:
-//!
-//! - Desktop: [`launch`] parses the flags and opens a native window
-//!   over stdio, WebSocket or the replay recording.
-//! - Browser: [`web`] compiles for wasm32-unknown-unknown and opens
-//!   the same shell over a web-sys WebSocket. GPUI renders through
-//!   `gpui-pre-web`, WebGPU with a WebGL2 canvas fallback.
+//! The shell is being rebuilt on egui (specs/epics/, E01 onward); this
+//! commit carries the framework-free spine: preferences, the launch
+//! gate, clocks, timings, the paced text reveal and the transports
+//! that front `kage-client`. The views return with their epics.
 
-pub mod app;
-pub mod assets;
+// The icon catalog and the brand art callers return with their views;
+// until then the embeds are carried but unreferenced, and CI denies
+// dead code.
+#[allow(dead_code)]
+mod assets;
 pub mod clock;
 pub mod gate;
-#[cfg(not(target_arch = "wasm32"))]
+#[allow(dead_code)]
 pub mod icon;
-mod logos;
+#[allow(dead_code)]
+pub mod icons;
+pub mod launch;
+mod modes;
 pub mod prefs;
-#[doc(hidden)]
+// The views that call the paced reveal return with E04; until then its
+// API is carried but unreferenced, and CI denies dead code.
+#[allow(dead_code)]
+pub mod reveal;
+#[allow(dead_code)]
 pub mod store;
 pub mod theme;
 pub mod themes;
 pub mod timing;
 pub mod transport;
 pub mod update;
-pub mod views;
 
 /// Reports a problem where the platform can show it: stderr on the
 /// desktop, the browser console on the web.
@@ -35,9 +39,3 @@ pub(crate) fn warn(message: &str) {
     #[cfg(not(target_arch = "wasm32"))]
     eprintln!("kage-desktop: {message}");
 }
-
-#[cfg(not(target_arch = "wasm32"))]
-pub mod launch;
-
-#[cfg(target_arch = "wasm32")]
-pub mod web;

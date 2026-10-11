@@ -8,8 +8,8 @@ members = [".", "spike"]
 name = "kage-desktop"
 version = "0.3.0"
 edition = "2024"
-# The pinned gpui-kit stack needs 1.95 (`slice_as_array`,
-# `std::hint::cold_path`); the msrv gui leg in CI enforces this floor.
+# Kept at 1.95 from the GPUI days; the msrv gui leg in CI enforces
+# this floor.
 rust-version = "1.95"
 description = "The kage desktop client"
 license = "MIT"
@@ -21,13 +21,23 @@ publish = false
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-# Exactly pinned GPUI Kit stack. gpui-kit 0.7.0 re-exports GPUI (`gpui-pre`
-# 0.3.7), the platform crates and gpui-component 0.7.0; every one of those is
-# pinned `=x.y.z` inside the toolkit itself, so this single pin holds the
-# whole tree. Bump all of them together, see SPIKE.md for the procedure.
-# The pin covers the web too: gpui-kit pulls `gpui-pre-web` 0.3.7 on wasm
-# targets, WebGPU with a WebGL2 canvas fallback.
-gpui-kit = "=0.7.0"
+# The egui stack. glow renders; wgpu stays available as a fallback
+# feature (decision D1). default_fonts keeps egui's Latin faces; the
+# CJK coverage arrives with E05's system font discovery.
+eframe = { version = "0.36", default-features = false, features = [
+    "accesskit",
+    "default_fonts",
+    "glow",
+    "wayland",
+    "x11",
+] }
+egui = "0.36"
+egui_extras = { version = "0.36", features = ["svg"] }
+egui_commonmark = { version = "0.25", features = ["better_syntax_highlighting"] }
+egui_virtual_list = "0.12"
+# Syntax highlighting for the transcript's code blocks; the
+# `default-fancy` flavor keeps the fancy regex engine.
+syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 kage-client = { path = "../crates/kage-client" }
 async-channel = "2.5"
 serde_json = "1"
@@ -35,8 +45,7 @@ serde = { version = "1", features = ["derive"] }
 # `std::time::Instant::now` panics in the browser; this one reads
 # `performance.now` there and is std on native.
 web-time = "1"
-# Local wall-clock labels; already in the toolkit tree with its clock
-# and wasm features.
+# Local wall-clock labels.
 chrono = "0.4"
 # The config.toml preview the settings forms show.
 toml = "1"
@@ -46,17 +55,10 @@ toml = "1"
 # windows target.
 winresource = "0.1"
 
-[dev-dependencies]
-# The same pinned toolkit with headless windows and input dispatch, for
-# the transcript's instrumented render tests. Test-only: the shipped
-# binary never builds with it.
-gpui-kit = { version = "=0.7.0", features = ["test-support"] }
-
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # Plain WebSocket client, no TLS: kage serves loopback ws:// only.
 tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
-# Decodes the embedded brand art for the window icon; gpui's
-# `WindowOptions.icon` takes an `image::RgbaImage`.
+# Decodes the embedded brand art for the window icon.
 image = { version = "0.25", default-features = false, features = ["png"] }
 # Fetches the release list and the engine binary for the update
 # check and the setup screen download; rustls, so no system OpenSSL.
@@ -66,8 +68,8 @@ ureq = "2.10"
 compak = "0.2"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-# Exactly the versions the toolkit's web stack resolved, so the lockfile
-# and the wasm-bindgen-cli version stay one and the same.
+# Exact versions so the wasm-bindgen CLI (0.2.129 installed) stays in
+# sync with the crate, same rule as the gui workspace lock.
 wasm-bindgen = "=0.2.129"
 wasm-bindgen-futures = "=0.4.79"
 # `Date.now`, the browser clock behind `clock::unix_seconds`.
@@ -82,17 +84,16 @@ web-sys = { version = "=0.3.106", features = [
     "Window",
 ] }
 
-# gpui-base 0.7.0 reads `std::time::Instant` on every touch that lands on
-# an input, which panics in a browser and leaves the web client dead after
-# the first tap. Upstream fixed it after the release (longbridge/gpui-kit#3271);
-# this pins that commit, three past 0.7.0. Drop it once a release carries it.
-[patch.crates-io]
-gpui-base = { git = "https://github.com/longbridge/gpui-kit", rev = "5a3892ce7fb23f056462b9391b4e523a8a5f3623" }
-
 # Size and speed for shipped binaries, after soar's profile. Nothing in
 # the client recovers from a panic, so aborting drops the unwind tables.
+# T01.1.3: fat (lto = true) vs thin measured in the E01 results; fat
+# builds the whole app tree clean in ~70s on 16 cores.
 [profile.release]
 codegen-units = 1
 lto = true
 panic = "abort"
 strip = true
+
+[dev-dependencies]
+# The headless harness the E01 theme and icon probes render through.
+egui_kittest = { version = "0.36", features = ["snapshot", "wgpu"] }

@@ -3,23 +3,20 @@
 //! One window over one transport: `kage rpc` as a child by default,
 //! `kage serve` over WebSocket with `--ws` and `--token`, or the
 //! recorded golden transcript with `--replay`. `--smoke` quits after
-//! a delay and prints what the window reached, which is how the
-//! headless runs are automated. The browser build replaces this
-//! module with [`crate::web`].
+//! a delay, which is how the headless runs are automated (the smoke
+//! report grows with the shell, E02). The browser build replaces this
+//! module with the web entry, which returns with E08.
 
 use std::time::Duration;
 
-use gpui_kit::assets::Assets;
-use gpui_kit::{App, AppContext, Entity, TitlebarOptions, WindowOptions, px, size};
-
 use kage_client::unquote_and_trim;
+use kage_client::Frame;
 
-use crate::app::{Shell, ShellArgs};
-use crate::theme;
-use crate::transport::Transport;
+use crate::store::Command;
 use crate::transport::replay::ReplayTransport;
 use crate::transport::stdio::{Config as StdioConfig, StdioTransport};
 use crate::transport::ws::WsTransport;
+use crate::transport::{Event, Link, Transport};
 
 /// Which transport the shell connects through.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -137,6 +134,8 @@ impl Launch {
 
     /// The transport the launch selected. Stdio runs `--rpc-bin`, else
     /// the binary the setup screen saved, else `kage` from the PATH.
+    /// The shell wires it up when it returns with E02.
+    #[allow(dead_code)]
     fn transport(&self, saved: Option<&str>) -> Box<dyn Transport> {
         match &self.wire {
             Wire::Stdio => {
@@ -157,76 +156,299 @@ impl Launch {
     }
 }
 
-/// Parses the flags, opens the window and runs until quit.
+/// The shell: the store on the UI thread and the transport behind it.
+///
+/// One pump thread reads the transport's events and hands them to the
+/// UI thread through a `std` channel, asking egui for a repaint on
+/// each. The UI thread drains the store on every frame, executes the
+/// commands the store queued, and pushes the outgoing frames back
+/// through the transport. The store never crosses the thread
+/// boundary, matching the old single-threaded entity model.
+pub struct Shell {
+    /// The store, touched only on the UI thread.
+    store: crate::store::Store,
+    /// The transport behind the store.
+    transport: Box<dyn Transport>,
+    /// The pump thread's event inbox.
+    inbox: std::sync::mpsc::Receiver<Event>,
+    /// Set when `--smoke` asked for a timed quit.
+    smoke_deadline: Option<(std::time::Instant, Duration)>,
+    /// Synthetic chunks appended, for the 30 Hz stream measurement.
+    streamed: usize,
+    /// The keepalive handle of the pump thread, dropped with the shell.
+    _pump: Option<std::thread::JoinHandle<()>>,
+}
+
+impl Shell {
+    /// Builds the shell: the store opens sessions in `cwd`, `replay`
+    /// selects the scripted prompt of the recording, and `transport`
+    /// starts on the pump thread right away. `ctx` is cloned into the
+    /// pump so each transport event asks for a repaint.
+    #[must_use]
+    pub fn new(
+        cwd: impl Into<String>,
+        replay: bool,
+        mut transport: Box<dyn Transport>,
+        ctx: &egui::Context,
+    ) -> Self {
+        let (events, incoming) = async_channel::unbounded();
+        transport.start(events.clone());
+        let (tx, rx) = std::sync::mpsc::channel::<Event>();
+        let ctx = ctx.clone();
+        let pump = std::thread::Builder::new()
+            .name("kage-pump".to_owned())
+            .spawn(move || {
+                while let Ok(event) = incoming.recv_blocking() {
+                    if tx.send(event).is_err() {
+                        return;
+                    }
+                    ctx.request_repaint();
+                }
+            })
+            .expect("the pump thread starts");
+        Self {
+            store: crate::store::Store::new(cwd, replay),
+            transport,
+            inbox: rx,
+            smoke_deadline: None,
+            streamed: 0,
+            _pump: Some(pump),
+        }
+    }
+
+    /// The connection's link, for the status bar.
+    #[must_use]
+    pub fn link(&self) -> Link {
+        self.transport.link()
+    }
+
+    /// The store, for the views.
+    pub const fn store(&self) -> &crate::store::Store {
+        &self.store
+    }
+
+    /// Drains the pump's events into the store and carries out the
+    /// commands it produced.
+    fn on_events(&mut self) {
+        while let Ok(event) = self.inbox.try_recv() {
+            match event {
+                Event::Frame(frame) => {
+                    self.store.absorb(frame);
+                }
+                Event::State(state) => self.store.set_connect(state),
+            }
+        }
+        let commands = self.store.take_commands();
+        for command in commands {
+            match command {
+                Command::Handshake { replay_sessions } => {
+                    self.store.handshake(replay_sessions);
+                }
+                Command::NewSession => {
+                    self.store.new_session();
+                }
+                Command::ReplayPrompt => {
+                    self.store.prompt(REPLAY_PROMPT);
+                }
+            }
+        }
+    }
+
+    /// Drains the store's outgoing frames into the transport.
+    fn flush_outgoing(&mut self) {
+        for frame in self.store.take_outgoing() {
+            self.transport.send(frame);
+        }
+    }
+
+    /// The line automated runs print before quitting.
+    #[must_use]
+    pub fn smoke_line(&self) -> String {
+        let state = self.store.state();
+        let agent = state
+            .agent
+            .as_ref()
+            .map(|agent| format!("{} {}", agent.name, agent.version.as_deref().unwrap_or("?")))
+            .unwrap_or_else(|| "none".to_owned());
+        let (items, used, size) = self
+            .store
+            .active_session()
+            .map(|session| (session.items.len(), session.usage.used, session.usage.size))
+            .unwrap_or((0, 0, 0));
+        format!(
+            "smoke: connect={} agent=({agent}) sessions={sessions} items={items} used={used}/{size} streamed={streamed} connection={connection}",
+            self.store.connect().label(),
+            sessions = state.sessions.len(),
+            streamed = self.streamed,
+            connection = self.transport.connection_id().unwrap_or_else(|| "-".to_owned()),
+        )
+    }
+
+    /// Appends one synthetic agent chunk, for the 30 updates per
+    /// second measurement against the real client path.
+    fn stream_chunk(&mut self) {
+        let Some(id) = self.store.active_id().map(str::to_owned) else {
+            return;
+        };
+        self.streamed += 1;
+        let text = format!("stream chunk {}\n", self.streamed);
+        let frame = Frame::Notification {
+            method: "session/update".to_owned(),
+            params: serde_json::json!({
+                "sessionId": id,
+                "update": {
+                    "sessionUpdate": "agent_message_chunk",
+                    "content": {"type": "text", "text": text},
+                },
+            }),
+        };
+        self.store.absorb(frame);
+    }
+}
+
+/// The window's body: the shell plus the frame clock.
+struct ShellApp {
+    /// The shell under the window.
+    shell: Shell,
+    /// The 30 Hz stream runs while this is set.
+    stream: bool,
+    /// Frames since the last stream chunk, for the 30 Hz pace.
+    stream_clock: std::time::Instant,
+    /// When the daily release check last ran, unix seconds.
+    last_update_check: i64,
+    /// The finished release check's inbox, while one is in flight.
+    update_rx: Option<std::sync::mpsc::Receiver<Option<crate::update::CheckOutcome>>>,
+}
+
+impl eframe::App for ShellApp {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        self.shell.on_events();
+        self.shell.flush_outgoing();
+        self.pump_update_check();
+        self.apply_update();
+        if self.stream {
+            if self.stream_clock.elapsed() >= Duration::from_secs_f64(1.0 / 30.0) {
+                self.stream_clock = std::time::Instant::now();
+                self.shell.stream_chunk();
+            }
+            ctx.request_repaint_after(Duration::from_secs_f64(1.0 / 30.0));
+        }
+        if let Some((started, delay)) = self.shell.smoke_deadline.take() {
+            if started.elapsed() >= delay {
+                println!("{}", self.shell.smoke_line());
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                return;
+            }
+            self.shell.smoke_deadline = Some((started, delay));
+            // The smoke window runs without input, so keep the frame
+            // clock alive until the deadline.
+            ctx.request_repaint_after(Duration::from_millis(50));
+        }
+        egui::CentralPanel::default().show(ui, |_| {});
+    }
+}
+
+impl ShellApp {
+    /// Runs the daily release check on its own thread and applies the
+    /// answer on the UI thread: the check blocks on the network, so it
+    /// never sits in the frame.
+    fn pump_update_check(&mut self) {
+        let now = crate::clock::unix_seconds();
+        if now < self.last_update_check + 24 * 60 * 60 {
+            return;
+        }
+        self.last_update_check = now;
+        let prefs = self.shell.store.prefs().clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("kage-update-check".to_owned())
+            .spawn(move || {
+                let outcome = crate::update::run_check(&prefs, false);
+                let _ = tx.send(outcome);
+            })
+            .expect("the check thread starts");
+        self.update_rx = Some(rx);
+    }
+
+    /// Applies a finished release check to the preferences, once.
+    fn apply_update(&mut self) {
+        let Some(rx) = self.update_rx.take() else {
+            return;
+        };
+        let Ok(outcome) = rx.try_recv() else {
+            self.update_rx = Some(rx);
+            return;
+        };
+        let Some(outcome) = outcome else {
+            return;
+        };
+        let engine = self
+            .shell
+            .store
+            .state()
+            .agent
+            .as_ref()
+            .and_then(|agent| agent.version.clone());
+        let prefs = self.shell.store.prefs().clone();
+        let mut prefs = prefs;
+        crate::update::apply_outcome(&mut prefs, outcome, engine.as_deref());
+        self.shell.store.update_prefs(|current| *current = prefs);
+    }
+}
+
+/// The prompt the recording expects, once its session is open.
+const REPLAY_PROMPT: &str = "fix the null check";
+
+/// Parses the flags and runs until quit.
 pub fn run() {
     let launch = Launch::parse(std::env::args().skip(1));
     if let Some(error) = &launch.error {
         eprintln!("kage-desktop: {error}");
         std::process::exit(2);
     }
-    let replay = launch.wire == Wire::Replay;
-    let stream = launch.stream;
     let smoke_millis = launch.smoke_millis;
+    let stream = launch.stream;
+    let replay = launch.wire == Wire::Replay;
     let prefs = crate::prefs::load();
-    gpui_kit::application()
-        .with_assets(crate::assets::KageAssets::new(Assets))
-        .run(move |cx: &mut App| {
-            theme::install_fonts(cx);
-            gpui_kit::init(cx);
-            cx.bind_keys(crate::app::key_bindings());
-            cx.set_global(prefs.theme.clone());
-            let options = WindowOptions {
-                titlebar: Some(TitlebarOptions {
-                    title: Some("kage client".into()),
-                    ..Default::default()
-                }),
-                window_min_size: Some(size(px(960.), px(640.))),
-                // The runtime icon applies on X11 only; the other
-                // platforms take the icon from the packaged resources.
-                icon: crate::icon::window_icon(),
-                ..Default::default()
-            };
-            let args = ShellArgs {
-                transport: launch.transport(prefs.kage_path.as_deref()),
-                replay,
-                stream,
-                prefs,
-            };
-            let (_, shell) = gpui_kit::open_window(options, cx, move |window, cx| {
-                // The window knows the platform appearance, so the theme is
-                // chosen here rather than at `run`, and the observer keeps
-                // it in step when the desktop flips.
-                crate::theme::apply_choice(cx, window.appearance());
-                let shell = cx.new(|cx| Shell::new(args, window, cx));
-                window
-                    .observe_window_appearance(|window, cx| {
-                        crate::theme::apply_choice(cx, window.appearance());
-                        window.refresh();
-                    })
-                    .detach();
-                shell
-            })
-            .expect("failed to open the window");
-            crate::app::route_actions(cx);
+    let cwd = std::env::current_dir()
+        .map(|dir| dir.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| ".".to_owned());
+    let saved = prefs.kage_path.clone();
+    let transport = launch.transport(saved.as_deref());
 
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_title("kage client")
+            .with_inner_size([1100.0, 760.0])
+            .with_min_inner_size([960.0, 640.0])
+            // The runtime icon applies on X11 only; the other
+            // platforms take the icon from the packaged resources.
+            .with_icon(crate::icon::window_icon().unwrap_or_default()),
+        ..Default::default()
+    };
+    eframe::run_native(
+        "kage client",
+        options,
+        Box::new(move |cc| {
+            crate::theme::install_fonts(&cc.egui_ctx);
+            crate::icons::install(&cc.egui_ctx);
+            crate::theme::apply_choice(&prefs.theme, &cc.egui_ctx);
+            let mut shell = Shell::new(cwd, replay, transport, &cc.egui_ctx);
             if let Some(millis) = smoke_millis {
-                quit_after(cx, shell, Duration::from_millis(millis));
+                shell.smoke_deadline =
+                    Some((std::time::Instant::now(), Duration::from_millis(millis)));
             }
-        });
-}
-
-/// Schedules the process to exit after `delay`, letting a headless run
-/// exercise the event loop and exit on its own. The final store
-/// counters go to stdout so automated runs report what happened.
-fn quit_after(cx: &mut App, shell: Entity<Shell>, delay: Duration) {
-    cx.spawn(async move |cx| {
-        cx.background_executor().timer(delay).await;
-        cx.update(|cx| {
-            println!("{}", shell.read(cx).smoke_line(cx));
-            cx.quit();
-        });
-    })
-    .detach();
+            Ok(Box::new(ShellApp {
+                shell,
+                stream,
+                stream_clock: std::time::Instant::now(),
+                last_update_check: crate::clock::unix_seconds(),
+                update_rx: None,
+            }))
+        }),
+    )
+    .expect("failed to open the window");
 }
 
 #[cfg(test)]
