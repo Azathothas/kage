@@ -1,0 +1,30 @@
+[package]
+name = "spike"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Throwaway egui probe for the GPUI exit spike; deleted at cutover"
+
+[[bin]]
+name = "egui-spike"
+path = "src/main.rs"
+
+[lib]
+name = "spike"
+path = "src/lib.rs"
+
+[dependencies]
+eframe = { version = "0.36", default-features = false, features = [
+    "accesskit",
+    "default_fonts",
+    "glow",
+    "wayland",
+    "x11",
+] }
+egui = "0.36"
+egui_commonmark = { version = "0.25", features = ["better_syntax_highlighting"] }
+egui_virtual_list = "0.12"
+web-time = "1"
+
+[dev-dependencies]
+egui_kittest = { version = "0.36", features = ["snapshot", "wgpu"] }

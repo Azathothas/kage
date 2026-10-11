@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
-members = ["."]
+# `spike` is the throwaway egui probe for the GPUI exit spike
+# (specs/epics/E00-spike.md); deleted at cutover.
+members = [".", "spike"]
 
 [package]
 name = "kage-desktop"
