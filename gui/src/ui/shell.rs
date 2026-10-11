@@ -106,12 +106,20 @@ pub fn show(
     let narrow = panels.sidebar_floats();
     let mid = panels.workbench_overlays();
 
+    // Each panel paints its own palette token, the way the old shell
+    // drew them: the sidebar the `sidebar` surface, the workbench the
+    // `well`, and the chat keeps the app background.
+    let palette = Palette::active_of(ui.ctx());
     if panels.sidebar_visible && !narrow {
         let panel = egui::Panel::left("sidebar")
             .resizable(true)
             .default_size(panels.sidebar_width)
             .size_range(CHAT_MIN_W.min(SIDE_W)..=f32::MAX)
-            .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(0.0))
+            .frame(
+                egui::Frame::side_top_panel(ui.style())
+                    .fill(palette.sidebar)
+                    .inner_margin(egui::Margin::symmetric(SP_4 as i8, SP_4 as i8)),
+            )
             .show(ui, |ui| {
                 sidebar(ui);
             });
@@ -123,7 +131,11 @@ pub fn show(
             .resizable(true)
             .default_size(panels.workbench_width)
             .size_range(200.0..=f32::MAX)
-            .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(0.0))
+            .frame(
+                egui::Frame::side_top_panel(ui.style())
+                    .fill(palette.well)
+                    .inner_margin(egui::Margin::symmetric(SP_4 as i8, SP_4 as i8)),
+            )
             .show(ui, |ui| {
                 workbench(ui);
             });

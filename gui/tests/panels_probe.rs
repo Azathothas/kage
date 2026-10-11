@@ -104,6 +104,8 @@ fn the_themed_shell_paints_the_palette_background() {
     let mut harness = harness_for(1200.0, Panels::default());
     harness.run();
     let img = harness.render().expect("the frame renders");
+    // The chat column holds the app background, and the sidebar its
+    // own surface token: the two together cover the painted frame.
     let mut counts: HashMap<egui::Color32, usize> = HashMap::new();
     let mut painted = 0usize;
     for px in img.pixels() {
@@ -114,11 +116,17 @@ fn the_themed_shell_paints_the_palette_background() {
         let c = egui::Color32::from_rgba_unmultiplied(px.0[0], px.0[1], px.0[2], px.0[3]);
         *counts.entry(c).or_default() += 1;
     }
-    let (color, share) = counts
-        .into_iter()
-        .max_by_key(|(_, n)| *n)
-        .map(|(c, n)| (c, n as f32 / painted as f32))
-        .expect("the frame paints something");
-    assert_eq!(color, egui::Color32::from_rgb(0x0F, 0x0E, 0x13));
-    assert!(share > 0.9, "the background holds {share} of the frame");
+    let bg = counts
+        .get(&egui::Color32::from_rgb(0x0F, 0x0E, 0x13))
+        .copied()
+        .unwrap_or(0);
+    let sidebar = counts
+        .get(&egui::Color32::from_rgb(0x0B, 0x0A, 0x0E))
+        .copied()
+        .unwrap_or(0);
+    let share = (bg + sidebar) as f32 / painted as f32;
+    assert!(
+        share > 0.9,
+        "the palette surfaces hold {share} of the frame"
+    );
 }
