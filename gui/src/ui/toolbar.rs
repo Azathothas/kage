@@ -735,6 +735,28 @@ fn mode_button(
                                         );
                                     }
                                 });
+                                // The policy strip: six dots, one per
+                                // kind of tool call, in the verdict's
+                                // tone.
+                                if let Some(verdicts) = pickers::policy(&row.value) {
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            ui.spacing_mut().item_spacing.x = 3.0;
+                                            for verdict in verdicts {
+                                                let (rect, _) = ui.allocate_at_least(
+                                                    egui::vec2(7.0, 7.0),
+                                                    egui::Sense::hover(),
+                                                );
+                                                ui.painter().rect_filled(
+                                                    rect,
+                                                    egui::CornerRadius::same(2),
+                                                    verdict.tone(palette),
+                                                );
+                                            }
+                                        },
+                                    );
+                                }
                                 if row.value == active {
                                     ui.label(
                                         egui::RichText::new("active")

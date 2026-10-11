@@ -23,10 +23,6 @@ use serde_json::Value;
 /// How long the first Esc of an interrupt gesture stays armed.
 pub const ESC_WINDOW: Duration = Duration::from_millis(1500);
 
-/// The context fill fraction at which the composer suggests a
-/// compaction, the design's 80 percent.
-pub const COMPACT_AT: f64 = 0.8;
-
 /// What one Esc press means, given the interrupt window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EscStep {
@@ -611,9 +607,19 @@ fn show_suggestion_menu(
 ) {
     let width = SUGGEST_W;
     let height = (rows.len() as f32 * 44.0 + 10.0).min(SUGGEST_MAX_H);
+    // The menu opens above the composer, and a composer near the top
+    // of a short window would push it off screen, so the position is
+    // clamped to the viewport.
+    let mut at = at - egui::vec2(0.0, height + 6.0);
+    let screen = ctx.content_rect();
+    at.x = at.x.clamp(
+        screen.left() + 8.0,
+        (screen.right() - width - 8.0).max(screen.left() + 8.0),
+    );
+    at.y = at.y.max(screen.top() + 8.0);
     egui::Area::new(egui::Id::new("composer-suggest"))
         .order(egui::Order::Foreground)
-        .fixed_pos(at - egui::vec2(0.0, height + 6.0))
+        .fixed_pos(at)
         .show(ctx, |ui| {
             egui::Frame::NONE
                 .fill(palette.menu)
