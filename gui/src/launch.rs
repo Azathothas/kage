@@ -195,6 +195,9 @@ pub struct Shell {
     transcript: crate::ui::transcript::view::TranscriptView,
     /// The find bar over the chat column.
     find: crate::ui::find::FindBar,
+    /// The composer under the chat column: the field, its toolbar and
+    /// its suggestion menus.
+    composer: crate::ui::composer::Composer,
 }
 
 impl Shell {
@@ -240,6 +243,7 @@ impl Shell {
             orbit: None,
             transcript: crate::ui::transcript::view::TranscriptView::new(),
             find: crate::ui::find::FindBar::new(),
+            composer: crate::ui::composer::Composer::new(),
         }
     }
 
@@ -446,41 +450,50 @@ impl ShellApp {
             );
         };
         let chat = |ui: &mut egui::Ui| {
-            if self.shell.store.active_id().is_some() {
-                let store = &self.shell.store;
-                let mut events = Vec::new();
-                self.shell.transcript.show(ui, store, &mut events);
-                self.row_actions.extend(events);
-                return;
-            }
-            // The welcome column: the brand mark, the eclipse while a
-            // turn runs, and the connection line.
-            let palette = crate::theme::Palette::active_of(ui.ctx());
-            let running = self
-                .shell
-                .store
-                .active_session()
-                .is_some_and(|session| session.in_turn || session.running);
-            if running && self.shell.orbit.is_none() {
-                self.shell.orbit = Some(std::time::Instant::now());
-            } else if !running {
-                self.shell.orbit = None;
-            }
-            ui.vertical_centered(|ui| {
-                ui.add_space(ui.available_height() / 2.0 - 60.0);
-                crate::ui::eclipse::eclipse(ui, 44.0, self.shell.orbit);
-                ui.add_space(14.0);
-                ui.label(
-                    egui::RichText::new("kage")
-                        .size(40.0)
-                        .color(palette.ink_strong)
-                        .family(crate::theme::family(crate::theme::FAMILY_BODY_EXTRABOLD)),
-                );
-                ui.label(
-                    egui::RichText::new(self.welcome_line())
-                        .size(crate::theme::FS_SM)
-                        .color(palette.muted),
-                );
+            // The column is the transcript above and the composer
+            // below: the transcript takes what is left, and the
+            // composer and its dock keep their own height. With no
+            // session the welcome column shows instead, and the
+            // composer still mounts so a draft never resets.
+            ui.vertical(|ui| {
+                if self.shell.store.active_id().is_some() {
+                    let store = &self.shell.store;
+                    let mut events = Vec::new();
+                    self.shell.transcript.show(ui, store, &mut events);
+                    self.row_actions.extend(events);
+                } else {
+                    // The welcome column: the brand mark, the eclipse
+                    // while a turn runs, and the connection line.
+                    let palette = crate::theme::Palette::active_of(ui.ctx());
+                    let running = self
+                        .shell
+                        .store
+                        .active_session()
+                        .is_some_and(|session| session.in_turn || session.running);
+                    if running && self.shell.orbit.is_none() {
+                        self.shell.orbit = Some(std::time::Instant::now());
+                    } else if !running {
+                        self.shell.orbit = None;
+                    }
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(ui.available_height() / 2.0 - 60.0);
+                        crate::ui::eclipse::eclipse(ui, 44.0, self.shell.orbit);
+                        ui.add_space(14.0);
+                        ui.label(
+                            egui::RichText::new("kage")
+                                .size(40.0)
+                                .color(palette.ink_strong)
+                                .family(crate::theme::family(crate::theme::FAMILY_BODY_EXTRABOLD)),
+                        );
+                        ui.label(
+                            egui::RichText::new(self.welcome_line())
+                                .size(crate::theme::FS_SM)
+                                .color(palette.muted),
+                        );
+                    });
+                }
+                self.show_dock(ui);
+                self.show_composer(ui);
             });
         };
         crate::ui::shell::show(ui, &mut panels, sidebar, chat, workbench);
@@ -508,6 +521,110 @@ impl ShellApp {
         self.shell.panels = panels;
         self.shell.palette = palette;
         self.shell.toasts = toasts;
+    }
+
+    /// Draws the dock row: the pills the session's state names, over
+    /// the composer. The rows carry the shell's follow-up actions.
+    fn show_dock(&mut self, ui: &mut egui::Ui) {
+        let actions = crate::ui::dock::show(ui, &self.shell.store);
+        for action in actions {
+            match action {
+                crate::ui::dock::DockAction::Steer(index) => {
+                    if index == usize::MAX {
+                        // The plan pill: bring the plan card into view.
+                        continue;
+                    }
+                    let _ = self.shell.store.steer_queued(index);
+                }
+                crate::ui::dock::DockAction::Edit(index) => {
+                    if index == usize::MAX {
+                        // The background pill: the workbench's agents
+                        // list, which E06 owns.
+                        continue;
+                    }
+                    if let Some(text) = self
+                        .shell
+                        .store
+                        .active_session()
+                        .and_then(|session| session.queue.get(index))
+                        .map(|queued| {
+                            queued
+                                .prompt
+                                .iter()
+                                .filter_map(|block| block.as_text())
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                        })
+                    {
+                        self.shell.composer.draft.text = text;
+                        self.shell.composer.draft.caret = self.shell.composer.draft.text.len();
+                        self.shell.store.withdraw_queued(index);
+                    }
+                }
+                crate::ui::dock::DockAction::Remove(index) => {
+                    self.shell.store.withdraw_queued(index);
+                }
+            }
+        }
+    }
+
+    /// Draws the composer: the field, its toolbar and the dock row's
+    /// goal popover. A send takes the draft out to the store.
+    fn show_composer(&mut self, ui: &mut egui::Ui) {
+        let running = self
+            .shell
+            .store
+            .active_session()
+            .is_some_and(|session| session.running);
+        let enter_sends = self.shell.store.prefs().enter_sends;
+        let commands = self.shell.store.composer_commands().to_vec();
+        let listing = self
+            .shell
+            .store
+            .active_id()
+            .and_then(|id| self.shell.store.fs_listing(id))
+            .cloned();
+        self.shell.composer.set_listing(listing);
+        let event =
+            self.shell
+                .composer
+                .show(ui, &self.shell.store, &commands, running, enter_sends);
+        if event == crate::ui::composer::ComposerEvent::Send
+            && let Some(text) = self.shell.composer.take_prompt()
+        {
+            let builtin = crate::ui::composer::builtin(&text);
+            let handled =
+                builtin.is_some_and(|command| self.run_builtin(command.name, command.args));
+            if !handled {
+                let _ = self.shell.store.submit(&text);
+            }
+        }
+    }
+
+    /// Runs a built-in composer command. Returns whether the client
+    /// ran it, so an unhandled one goes to the agent as plain text.
+    fn run_builtin(&mut self, name: &str, args: &str) -> bool {
+        match (name, args) {
+            ("new", _) => {
+                self.shell.store.show_welcome();
+                true
+            }
+            ("plan", "on") => self.shell.store.enter_plan(),
+            ("plan", "off") => self.shell.store.exit_plan(),
+            ("plan", _) => {
+                if self.shell.store.plan_on() {
+                    self.shell.store.exit_plan()
+                } else {
+                    self.shell.store.enter_plan()
+                }
+            }
+            ("goal", "") => true,
+            ("goal", "clear") => self.shell.store.set_option("goal", ""),
+            ("goal", text) => self.shell.store.set_option("goal", text),
+            ("swarm", "off") => self.shell.store.set_option("swarm", "off"),
+            ("swarm", "on" | "") => true,
+            _ => false,
+        }
     }
 
     /// The line the welcome column shows under the wordmark.

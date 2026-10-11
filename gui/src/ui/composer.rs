@@ -727,6 +727,8 @@ pub struct Composer {
     /// The session workdir listing the mention menu reads, cloned out
     /// of the store each frame it is asked for.
     listing: Option<kage_client::wire::FsListResult>,
+    /// The toolbar under the field: pickers, context ring, send.
+    toolbar: crate::ui::toolbar::Toolbar,
 }
 
 impl Default for Composer {
@@ -744,6 +746,7 @@ impl Composer {
             placeholder: String::new(),
             send: false,
             listing: None,
+            toolbar: crate::ui::toolbar::Toolbar::new(),
         }
     }
 
@@ -767,12 +770,14 @@ impl Composer {
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
+        store: &crate::store::Store,
         commands: &[serde_json::Value],
         running: bool,
         enter_sends: bool,
     ) -> ComposerEvent {
         let palette = crate::theme::Palette::active_of(ui.ctx());
         let mut event = ComposerEvent::None;
+        let has_text = !self.draft.text.trim().is_empty();
 
         // The suggestion menu, over the field: the slash rows or the
         // mention rows the draft points at.
@@ -813,29 +818,19 @@ impl Composer {
                     }
                     output.response
                 });
-                // The send or stop button.
-                let (label, tint) = if running {
-                    ("\u{25A0}", palette.danger)
-                } else {
-                    ("\u{2191}", palette.send_bg)
-                };
-                if ui
-                    .add(
-                        egui::Button::new(
-                            egui::RichText::new(label)
-                                .size(crate::theme::FS_SM)
-                                .color(tint),
-                        )
-                        .fill(palette.surface)
-                        .corner_radius(egui::CornerRadius::same(crate::theme::R_COMPOSER as u8)),
-                    )
-                    .clicked()
-                {
-                    event = if running {
-                        ComposerEvent::Stop
-                    } else {
-                        ComposerEvent::Send
-                    };
+                // The toolbar carries the send or stop control.
+                let toolbar_events =
+                    crate::ui::toolbar::show(ui, &mut self.toolbar, store, running, has_text);
+                for asked in toolbar_events {
+                    match asked {
+                        crate::ui::toolbar::ToolbarEvent::Submit => {
+                            event = ComposerEvent::Send;
+                        }
+                        crate::ui::toolbar::ToolbarEvent::Cancel => {
+                            event = ComposerEvent::Stop;
+                        }
+                        _ => {}
+                    }
                 }
             })
             .inner
