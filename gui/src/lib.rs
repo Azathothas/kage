@@ -11,6 +11,7 @@
 #[allow(dead_code)]
 mod assets;
 pub mod clock;
+pub mod fonts;
 pub mod gate;
 #[allow(dead_code)]
 pub mod icon;

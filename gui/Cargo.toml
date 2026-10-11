@@ -56,6 +56,14 @@ toml = "1"
 winresource = "0.1"
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# System font discovery for the CJK fallback: fontconfig on Linux
+# through its dlopen mode, so the binary never hard-links the C
+# library, CoreText on macOS and DirectWrite on Windows.
+fontique = { version = "0.9", default-features = false, features = [
+    "std",
+    "system",
+    "fontconfig-dlopen",
+] }
 # Plain WebSocket client, no TLS: kage serves loopback ws:// only.
 tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 # Decodes the embedded brand art for the window icon.

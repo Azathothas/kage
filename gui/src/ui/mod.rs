@@ -7,12 +7,15 @@
 
 pub mod composer;
 pub mod copy;
+pub mod dock;
 pub mod eclipse;
 pub mod find;
 pub mod keys;
 pub mod palette;
+pub mod pickers;
 pub mod shell;
 pub mod splash;
 pub mod status;
 pub mod toasts;
+pub mod toolbar;
 pub mod transcript;

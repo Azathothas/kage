@@ -10,6 +10,11 @@
 //! preference's Ctrl+Enter send), Shift+Enter adds a newline, Ctrl+Enter
 //! sends, Up and Down walk the history or the rows as today, and Esc
 //! arms an interrupt inside a 1.5 second window.
+//!
+//! The suggestion menu: a leading `/token` lists the commands, and an
+//! `@token` before the caret lists the session workdir's entries. A
+//! picked row inserts plain text, exactly as the old `pick_slash` and
+//! `pick_mention` did, so the stored value stays byte-identical.
 
 use std::time::{Duration, Instant};
 
@@ -194,6 +199,34 @@ pub fn slash_items(commands: &[Value], query: &str) -> Vec<SlashItem> {
         })
     });
     builtins.chain(agent).collect()
+}
+
+/// One mention menu row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MentionItem {
+    /// The path relative to the session workdir.
+    pub path: String,
+    /// Whether the entry is a directory.
+    pub directory: bool,
+}
+
+/// The mention rows a `_kage/fs` listing delivers for `query`, case
+/// insensitively. No listing yields no rows: the menu says so itself.
+#[must_use]
+pub fn mention_items(
+    listing: Option<&kage_client::wire::FsListResult>,
+    query: &str,
+) -> Vec<MentionItem> {
+    let query = query.to_lowercase();
+    listing
+        .into_iter()
+        .flat_map(|listing| listing.entries.iter())
+        .filter(|entry| entry.path.to_lowercase().contains(&query))
+        .map(|entry| MentionItem {
+            path: entry.path.clone(),
+            directory: entry.kind == kage_client::wire::FsKind::Directory,
+        })
+        .collect()
 }
 
 /// The composer's draft and the state its input reads.
@@ -468,6 +501,214 @@ mod tests {
     }
 }
 
+/// The rows the suggestion menu lists: the slash items, the mention
+/// items, or `None` when the draft points at no menu. An empty slash
+/// list closes the menu, as the old panel did; a mention with no
+/// listing yet keeps a single explanatory row.
+fn suggestion_rows(
+    suggestion: Option<&Suggest>,
+    commands: &[Value],
+    listing: Option<&kage_client::wire::FsListResult>,
+) -> Option<Vec<MenuRow>> {
+    match suggestion? {
+        Suggest::Slash { query } => {
+            let items = slash_items(commands, query);
+            if items.is_empty() {
+                return None;
+            }
+            Some(
+                items
+                    .into_iter()
+                    .map(|item| MenuRow {
+                        icon: if item.badge.is_none() {
+                            crate::icons::Icon::Server
+                        } else {
+                            crate::icons::Icon::Slash
+                        },
+                        title: format!("/{}", item.name),
+                        detail: item.hint.unwrap_or_default(),
+                        description: item.description,
+                        badge: item.badge.map(str::to_owned),
+                        pick: MenuPick::Slash(item.name),
+                    })
+                    .collect(),
+            )
+        }
+        Suggest::Mention { query, at } => {
+            if listing.is_none() {
+                return Some(vec![MenuRow {
+                    icon: crate::icons::Icon::AtSign,
+                    title: "no file listing yet; the session workdir was asked".to_owned(),
+                    detail: String::new(),
+                    description: String::new(),
+                    badge: None,
+                    pick: MenuPick::None,
+                }]);
+            }
+            let items = mention_items(listing, query);
+            if items.is_empty() {
+                return None;
+            }
+            Some(
+                items
+                    .into_iter()
+                    .map(|item| MenuRow {
+                        icon: if item.directory {
+                            crate::icons::Icon::Folder
+                        } else {
+                            crate::icons::Icon::File
+                        },
+                        title: item.path.clone(),
+                        detail: String::new(),
+                        description: String::new(),
+                        badge: Some(if item.directory { "dir" } else { "file" }.to_owned()),
+                        pick: MenuPick::Mention {
+                            at: *at,
+                            path: item.path,
+                        },
+                    })
+                    .collect(),
+            )
+        }
+    }
+}
+
+/// One suggestion menu row.
+struct MenuRow {
+    /// The row's leading icon.
+    icon: crate::icons::Icon,
+    /// The row's title, in the mono family.
+    title: String,
+    /// The row's second line, when it carries one.
+    detail: String,
+    /// The row's description, under the title.
+    description: String,
+    /// The row's trailing badge.
+    badge: Option<String>,
+    /// What picking the row does.
+    pick: MenuPick,
+}
+
+/// What one suggestion row does when it is picked.
+enum MenuPick {
+    /// Insert the named command.
+    Slash(String),
+    /// Replace the mention at `at` with `path`.
+    Mention { at: usize, path: String },
+    /// Nothing: the row only reports a state.
+    None,
+}
+
+/// Draws the suggestion menu over the composer at `at`. A picked row
+/// writes plain text into the draft, as the old `pick_slash` and
+/// `pick_mention` did.
+fn show_suggestion_menu(
+    ctx: &egui::Context,
+    palette: &crate::theme::Palette,
+    rows: Vec<MenuRow>,
+    at: egui::Pos2,
+    draft: &mut Draft,
+) {
+    let width = SUGGEST_W;
+    let height = (rows.len() as f32 * 44.0 + 10.0).min(SUGGEST_MAX_H);
+    egui::Area::new(egui::Id::new("composer-suggest"))
+        .order(egui::Order::Foreground)
+        .fixed_pos(at - egui::vec2(0.0, height + 6.0))
+        .show(ctx, |ui| {
+            egui::Frame::NONE
+                .fill(palette.menu)
+                .stroke(egui::Stroke::new(1.0, palette.line))
+                .corner_radius(egui::CornerRadius::same(crate::theme::R_LG as u8))
+                .inner_margin(egui::Margin::same(5))
+                .shadow(palette.shadow_menu)
+                .show(ui, |ui| {
+                    ui.set_width(width);
+                    ui.set_max_height(SUGGEST_MAX_H);
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        ui.set_width(width - 10.0);
+                        for row in &rows {
+                            let response = egui::Frame::NONE
+                                .fill(egui::Color32::TRANSPARENT)
+                                .corner_radius(egui::CornerRadius::same(crate::theme::R_MD as u8))
+                                .inner_margin(egui::Margin::symmetric(9, 7))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 10.0;
+                                        crate::icons::icon(ui, row.icon, 16.0, palette.muted);
+                                        ui.vertical(|ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.spacing_mut().item_spacing.x = 6.0;
+                                                ui.label(
+                                                    egui::RichText::new(row.title.clone())
+                                                        .size(12.5)
+                                                        .family(crate::theme::family(
+                                                            crate::theme::FAMILY_MONO_REGULAR,
+                                                        ))
+                                                        .color(palette.ink),
+                                                );
+                                                if !row.detail.is_empty() {
+                                                    ui.label(
+                                                        egui::RichText::new(row.detail.clone())
+                                                            .size(11.0)
+                                                            .family(crate::theme::family(
+                                                                crate::theme::FAMILY_MONO_REGULAR,
+                                                            ))
+                                                            .color(palette.faint),
+                                                    );
+                                                }
+                                            });
+                                            if !row.description.is_empty() {
+                                                ui.label(
+                                                    egui::RichText::new(row.description.clone())
+                                                        .size(crate::theme::FS_XS)
+                                                        .color(palette.muted),
+                                                );
+                                            }
+                                        });
+                                        if let Some(badge) = &row.badge {
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    ui.label(
+                                                        egui::RichText::new(badge.clone())
+                                                            .size(crate::theme::FS_2XS)
+                                                            .color(palette.faint),
+                                                    );
+                                                },
+                                            );
+                                        }
+                                    });
+                                })
+                                .response;
+                            if response.hovered() {
+                                let rect = response.rect;
+                                ui.painter().rect_filled(
+                                    rect,
+                                    egui::CornerRadius::same(crate::theme::R_MD as u8),
+                                    palette.selected,
+                                );
+                            }
+                            if response.clicked() {
+                                match &row.pick {
+                                    MenuPick::Slash(name) => draft.pick_slash(name),
+                                    MenuPick::Mention { at, path } => {
+                                        draft.pick_mention(*at, path);
+                                    }
+                                    MenuPick::None => {}
+                                }
+                            }
+                        }
+                    });
+                });
+        });
+}
+
+/// The suggestion surface's width.
+const SUGGEST_W: f32 = 460.0;
+
+/// The suggestion surface's max height, before it scrolls.
+const SUGGEST_MAX_H: f32 = 300.0;
+
 /// The composer's input surface: the text field, its token chip and
 /// its send or stop control.
 ///
@@ -483,6 +724,9 @@ pub struct Composer {
     placeholder: String,
     /// Whether the composer asks for a send on the next frame.
     send: bool,
+    /// The session workdir listing the mention menu reads, cloned out
+    /// of the store each frame it is asked for.
+    listing: Option<kage_client::wire::FsListResult>,
 }
 
 impl Default for Composer {
@@ -499,6 +743,7 @@ impl Composer {
             draft: Draft::default(),
             placeholder: String::new(),
             send: false,
+            listing: None,
         }
     }
 
@@ -528,6 +773,13 @@ impl Composer {
     ) -> ComposerEvent {
         let palette = crate::theme::Palette::active_of(ui.ctx());
         let mut event = ComposerEvent::None;
+
+        // The suggestion menu, over the field: the slash rows or the
+        // mention rows the draft points at.
+        let suggestion = self.draft.suggest();
+        let menu_rows = suggestion_rows(suggestion.as_ref(), commands, self.listing.as_ref());
+        let menu_top = ui.next_widget_position().y - 6.0;
+        let menu_left = ui.next_widget_position().x;
 
         // The field: a framed multiline text edit that grows with its
         // text, at the content column's width.
@@ -589,22 +841,50 @@ impl Composer {
             .inner
         });
 
-        // The token chip, on the input's top edge.
+        // The token chip: the active `/command` or `@mention` drawn as
+        // a badge on the input's top edge. The stored text stays plain;
+        // the chip is a rendering.
         if let Some(token) = self.draft.token(commands) {
             let rect = response.response.rect;
-            let chip = egui::Rect::from_min_size(
-                egui::pos2(
-                    rect.left() + crate::theme::SP_4,
-                    rect.top() - crate::theme::SP_4,
-                ),
-                egui::vec2(0.0, 0.0),
+            let chip_font = egui::FontId::new(
+                crate::theme::FS_2XS,
+                crate::theme::family(crate::theme::FAMILY_MONO_REGULAR),
             );
-            let _ = chip;
-            let (rect, chip_response) =
-                ui.allocate_at_least(egui::vec2(0.0, 0.0), egui::Sense::hover());
-            let _ = rect;
-            let _ = chip_response;
-            let _ = token;
+            let galley = ui
+                .painter()
+                .layout_no_wrap(token.clone(), chip_font, palette.accent);
+            let width = galley.size().x + 12.0;
+            let height = galley.size().y + 5.0;
+            let chip_rect = egui::Rect::from_min_size(
+                egui::pos2(rect.left() + crate::theme::SP_4, rect.top() - height / 2.0),
+                egui::vec2(width, height),
+            );
+            ui.painter().rect_filled(
+                chip_rect,
+                egui::CornerRadius::same(crate::theme::R_FULL as u8),
+                palette.accent_soft,
+            );
+            ui.painter().rect_stroke(
+                chip_rect,
+                egui::CornerRadius::same(crate::theme::R_FULL as u8),
+                egui::Stroke::new(1.0, palette.accent_bd),
+                egui::StrokeKind::Inside,
+            );
+            ui.painter().galley(
+                chip_rect.center() - galley.size() / 2.0,
+                galley,
+                palette.accent,
+            );
+        }
+
+        if let Some(rows) = menu_rows {
+            show_suggestion_menu(
+                ui.ctx(),
+                palette,
+                rows,
+                egui::pos2(menu_left, menu_top),
+                &mut self.draft,
+            );
         }
 
         // Enter sends, or adds a newline, per the preference.
@@ -624,6 +904,13 @@ impl Composer {
         if self.placeholder != placeholder {
             self.placeholder = placeholder.to_owned();
         }
+    }
+
+    /// Sets the session workdir listing the mention menu reads. The
+    /// shell hands in the active session's listing each frame, so the
+    /// menu follows the session.
+    pub fn set_listing(&mut self, listing: Option<kage_client::wire::FsListResult>) {
+        self.listing = listing;
     }
 
     /// Whether the frame asked for a send.
@@ -651,13 +938,107 @@ pub enum ComposerEvent {
 
 #[cfg(test)]
 mod surface_tests {
-    use super::{Composer, ComposerEvent};
+    use super::{Composer, ComposerEvent, Suggest, mention_items, suggestion_rows};
 
     #[test]
     fn an_empty_draft_sends_nothing() {
         let mut composer = Composer::new();
         assert_eq!(composer.prompt(), None);
         assert_eq!(composer.take_prompt(), None);
+    }
+
+    #[test]
+    fn the_mention_rows_come_from_the_listing_only() {
+        let listing = kage_client::wire::FsListResult {
+            entries: vec![
+                kage_client::wire::FsEntry {
+                    path: "src/main.rs".to_owned(),
+                    kind: kage_client::wire::FsKind::File,
+                    size: 12,
+                },
+                kage_client::wire::FsEntry {
+                    path: "src/lib.rs".to_owned(),
+                    kind: kage_client::wire::FsKind::File,
+                    size: 9,
+                },
+                kage_client::wire::FsEntry {
+                    path: "docs".to_owned(),
+                    kind: kage_client::wire::FsKind::Directory,
+                    size: 0,
+                },
+            ],
+            truncated: false,
+        };
+        let items = mention_items(Some(&listing), "main");
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].path, "src/main.rs");
+        assert!(!items[0].directory);
+        let dirs = mention_items(Some(&listing), "docs");
+        assert_eq!(dirs.len(), 1);
+        assert!(dirs[0].directory, "a directory row says so");
+        assert!(
+            mention_items(Some(&listing), "MAIN").len() == 1,
+            "the query is case insensitive"
+        );
+        assert!(
+            mention_items(None, "").is_empty(),
+            "no listing yields no rows"
+        );
+    }
+
+    #[test]
+    fn the_suggestion_menu_names_the_slash_and_mention_rows() {
+        let commands = vec![serde_json::json!({"name": "review"})];
+        let rows = suggestion_rows(
+            Some(&Suggest::Slash {
+                query: "pl".to_owned(),
+            }),
+            &commands,
+            None,
+        )
+        .expect("the slash menu shows");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].title, "/plan");
+        assert!(
+            suggestion_rows(
+                Some(&Suggest::Slash {
+                    query: "zzz".to_owned(),
+                }),
+                &commands,
+                None,
+            )
+            .is_none(),
+            "no matching command closes the menu"
+        );
+        let listing = kage_client::wire::FsListResult {
+            entries: vec![kage_client::wire::FsEntry {
+                path: "src/main.rs".to_owned(),
+                kind: kage_client::wire::FsKind::File,
+                size: 0,
+            }],
+            truncated: false,
+        };
+        let rows = suggestion_rows(
+            Some(&Suggest::Mention {
+                query: "main".to_owned(),
+                at: 4,
+            }),
+            &commands,
+            Some(&listing),
+        )
+        .expect("the mention menu shows");
+        assert_eq!(rows[0].title, "src/main.rs");
+        assert_eq!(rows[0].badge.as_deref(), Some("file"));
+        let rows = suggestion_rows(
+            Some(&Suggest::Mention {
+                query: "main".to_owned(),
+                at: 4,
+            }),
+            &commands,
+            None,
+        )
+        .expect("the menu says the listing is coming");
+        assert!(rows[0].title.starts_with("no file listing yet"));
     }
 
     #[test]

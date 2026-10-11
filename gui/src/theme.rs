@@ -345,6 +345,10 @@ pub fn install_fonts(ctx: &egui::Context) {
             &[name, FAMILY_MONO_REGULAR, FAMILY_INTER_REGULAR],
         );
     }
+    // The CJK fallback lands behind every family, so a glyph a bundled
+    // face owns still renders from that face. The system has no CJK
+    // font only when the platform itself lacks one.
+    crate::fonts::install_cjk_fallback(&mut fonts);
     ctx.set_fonts(fonts);
 }
 

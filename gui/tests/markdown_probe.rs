@@ -145,62 +145,62 @@ fn the_pipeline_forgets_the_entries_that_are_gone() {
 }
 
 #[test]
-fn the_cjk_line_is_tofu_until_a_cjk_font_loads() {
-    // S04.7's measurement, recorded rather than assumed: with the
-    // bundled Latin families and egui's own default fonts, the CJK
-    // line renders exactly like a private-use codepoint no font
-    // carries, which is tofu. egui loads no system font on its own, so
-    // the CJK coverage needs the fallback path E05 owns. This probe
-    // keeps the measurement honest: when the fallback lands, the CJK
-    // line's glyph runs separate and this assertion flips.
-    let runs = |text: &str| {
+fn the_cjk_line_renders_glyphs_now_that_a_fallback_loads() {
+    // S04.7 measured the tofu: with the bundled Latin families and
+    // egui's own default fonts, the CJK line rendered exactly like a
+    // private-use codepoint no font carries. E05's fallback closes
+    // that: a system font covering U+5F71 registers behind the
+    // bundled families, so the line lays out at the CJK font's own
+    // advance widths instead of the .notdef box's.
+    //
+    // The measurement is the galley's width. A CJK glyph is exactly
+    // one em wide, so ten of them at 28px measure 280px. The .notdef
+    // box is wider, so a tofu line measures more. The private-use
+    // control stays tofu and measures the same as the old CJK line
+    // did, which is what keeps the comparison honest.
+
+    /// The width `text` lays out at once the kage families and the
+    /// CJK fallback are active. `set_fonts` applies at the start of
+    /// the next pass, so the width is read on the frame after the
+    /// fonts are installed.
+    fn width_of(text: &str) -> f32 {
         let mut harness = egui_kittest::Harness::builder()
             .with_size(egui::Vec2::new(600.0, 120.0))
             .build_ui_state(
-                |ui, done: &mut bool| {
-                    if !*done {
-                        *done = true;
-                    }
+                |ui, width: &mut Option<f32>| {
+                    kage_desktop::theme::install_fonts(ui.ctx());
+                    let fid = egui::FontId::new(28.0, egui::FontFamily::Proportional);
+                    let galley = ui.ctx().fonts_mut(|f| {
+                        f.layout(text.to_owned(), fid, egui::Color32::WHITE, f32::INFINITY)
+                    });
                     ui.label(egui::RichText::new(text.to_owned()).size(28.0));
+                    // The fonts land at the start of the next pass, so
+                    // the first frame still lays out against the old
+                    // set and every frame after it against the new.
+                    if width.is_some() {
+                        eprintln!("{text:?} galley width: {}", galley.rect.width());
+                    }
+                    *width = Some(galley.rect.width());
                 },
-                false,
+                None,
             );
         harness.run();
-        let img = harness.render().expect("the frame renders");
-        let (w, h) = (img.width() as usize, img.height() as usize);
-        let ink_rows: Vec<usize> = (0..h)
-            .filter(|y| {
-                (0..w).any(|x| {
-                    let p = img.get_pixel(x as u32, *y as u32).0;
-                    p[3] != 0 && (p[0] as i32 + p[1] as i32 + p[2] as i32) < 600
-                })
-            })
-            .collect();
-        let band = (
-            ink_rows.first().copied().unwrap_or(0),
-            ink_rows.last().copied().unwrap_or(0),
-        );
-        let mut runs = 0usize;
-        let mut in_run = false;
-        for x in 0..w {
-            let ink = (band.0..=band.1).any(|y| {
-                let p = img.get_pixel(x as u32, y as u32).0;
-                p[3] != 0 && (p[0] as i32 + p[1] as i32 + p[2] as i32) < 600
-            });
-            if ink && !in_run {
-                runs += 1;
-            }
-            in_run = ink;
-        }
-        runs
-    };
-    let cjk = runs("影者の影は影に宿る。");
-    let tofu = runs("\u{E000}\u{E001}\u{E002}");
-    eprintln!("cjk glyph runs: {cjk}, known-tofu runs: {tofu}");
-    // The CJK line and the known-tofu line agree: no CJK font is
-    // loaded, so both are tofu. E05's fallback is what separates them.
-    assert_eq!(
-        cjk, tofu,
-        "the CJK line still renders as tofu; E05's fallback closes this"
+        harness.run();
+        harness.render().expect("the frame renders");
+        harness.state().expect("the width was read")
+    }
+
+    let cjk = width_of("影者の影は影に宿る。");
+    let tofu = width_of("\u{E000}\u{E001}\u{E002}");
+    eprintln!("cjk galley width: {cjk}, known-tofu width: {tofu}");
+    // Ten CJK glyphs at 28px are exactly ten em wide; the tofu control
+    // is three .notdef boxes, so it is wider than three em.
+    assert!(
+        (cjk - 280.0).abs() < 1.0,
+        "the CJK line lays out at its own advances: {cjk} for ten glyphs at 28px"
+    );
+    assert!(
+        (tofu - cjk).abs() > 1.0,
+        "the private-use line still measures the .notdef advances, not the CJK ones: {tofu}"
     );
 }
