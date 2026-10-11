@@ -1762,8 +1762,8 @@ impl Store {
 
 #[cfg(test)]
 mod tests {
-    use crate::modes::next_mode_value;
     use super::{Command, Store};
+    use crate::modes::next_mode_value;
     use crate::transport::State;
     use kage_client::wire::NoticeTone;
     use kage_client::{Frame, PromptOutcome, RequestId, SteerError, TranscriptItem};

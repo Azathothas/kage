@@ -127,7 +127,8 @@ fn custom(theme: &UserTheme, base: &str, palette: &Palette) -> &'static Palette 
         .or_insert_with(|| {
             let mut built = palette.clone();
             for (token, value) in &theme.gui {
-                if let (Some(slot), Some(color)) = (token_mut(&mut built, token), parse_color(value))
+                if let (Some(slot), Some(color)) =
+                    (token_mut(&mut built, token), parse_color(value))
                 {
                     *slot = color;
                 }
@@ -275,14 +276,8 @@ mod tests {
             user: vec![user("plain", None, &[])],
             ..Catalog::default()
         };
-        assert_eq!(
-            resolve("plain", &catalog, true).unwrap().1,
-            Mode::Light
-        );
-        assert_eq!(
-            resolve("plain", &catalog, false).unwrap().1,
-            Mode::Dark
-        );
+        assert_eq!(resolve("plain", &catalog, true).unwrap().1, Mode::Light);
+        assert_eq!(resolve("plain", &catalog, false).unwrap().1, Mode::Dark);
         assert!(resolve("gone", &catalog, false).is_none());
     }
 

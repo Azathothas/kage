@@ -109,7 +109,10 @@ fn empty_shell_draws_the_shadow_background() {
     let img = harness.render().expect("the frame renders");
     let (color, share) = dominant(&img);
     assert_eq!(color, egui::Color32::from_rgb(0x0F, 0x0E, 0x13));
-    assert!(share > 0.95, "the background holds only {share} of the frame");
+    assert!(
+        share > 0.95,
+        "the background holds only {share} of the frame"
+    );
 }
 
 /// The empty dawn shell paints the kage dawn background.
@@ -120,7 +123,10 @@ fn empty_shell_draws_the_dawn_background() {
     let img = harness.render().expect("the frame renders");
     let (color, share) = dominant(&img);
     assert_eq!(color, egui::Color32::from_rgb(0xF7, 0xF5, 0xF9));
-    assert!(share > 0.95, "the background holds only {share} of the frame");
+    assert!(
+        share > 0.95,
+        "the background holds only {share} of the frame"
+    );
 }
 
 /// Both design families draw: text pixels land on the panel in both

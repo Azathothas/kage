@@ -29,7 +29,12 @@ pub mod theme;
 pub mod themes;
 pub mod timing;
 pub mod transport;
+pub mod ui;
 pub mod update;
+// The vim layer's key router arrives with E03; until then the state
+// machine is carried but unreferenced, and CI denies dead code.
+#[allow(dead_code)]
+pub mod vim;
 
 /// Reports a problem where the platform can show it: stderr on the
 /// desktop, the browser console on the web.

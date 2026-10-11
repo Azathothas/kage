@@ -869,7 +869,11 @@ mod tests {
         for icon in Icon::ALL {
             let bytes = icon.bytes();
             let text = String::from_utf8_lossy(&bytes);
-            assert!(!text.contains("currentColor"), "{} kept currentColor", icon.file_stem());
+            assert!(
+                !text.contains("currentColor"),
+                "{} kept currentColor",
+                icon.file_stem()
+            );
         }
     }
 }

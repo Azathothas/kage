@@ -157,15 +157,17 @@ impl ProbeApp {
         self.maybe_report(now);
 
         if false && self.frame_no == 1 {
-            spike_log!("[spike] viewport={:?} pixels_per_point={:?} dark_mode={} panel_fill={:?} theme={:?}",
-                ui.input(|i| i.viewport_rect()), ui.ctx().pixels_per_point(),
-                ui.visuals().dark_mode, ui.visuals().panel_fill, ui.ctx().theme());
+            spike_log!(
+                "[spike] viewport={:?} pixels_per_point={:?} dark_mode={} panel_fill={:?} theme={:?}",
+                ui.input(|i| i.viewport_rect()),
+                ui.ctx().pixels_per_point(),
+                ui.visuals().dark_mode,
+                ui.visuals().panel_fill,
+                ui.ctx().theme()
+            );
         }
 
-        let streaming = self
-            .stream
-            .as_ref()
-            .is_some_and(|st| !st.done);
+        let streaming = self.stream.as_ref().is_some_and(|st| !st.done);
         egui::Panel::bottom("spike-composer").show_inside(ui, |ui| {
             let response = egui::TextEdit::multiline(&mut self.composer)
                 .hint_text("composer (spike)")
@@ -173,15 +175,9 @@ impl ProbeApp {
                 .show(ui);
             self.composer_focused = response.response.has_focus();
             self.composer_rect = Some(response.response.rect);
-            response
-                .response
-                .widget_info(|| {
-                    egui::WidgetInfo::labeled(
-                        egui::WidgetType::TextEdit,
-                        true,
-                        "spike-composer",
-                    )
-                });
+            response.response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "spike-composer")
+            });
         });
         let Self {
             items,
@@ -200,10 +196,13 @@ impl ProbeApp {
                     let top = if false { ui.cursor().top() } else { 0.0 };
                     CommonMarkViewer::new().show(ui, cache, &items[i]);
                     if false && self.frame_no <= 3 && i < 12 {
-                        self.item_rects.push((i, egui::Rect::from_min_max(
-                            egui::pos2(ui.cursor().left(), top),
-                            egui::pos2(ui.cursor().left() + 100.0, ui.cursor().top()),
-                        )));
+                        self.item_rects.push((
+                            i,
+                            egui::Rect::from_min_max(
+                                egui::pos2(ui.cursor().left(), top),
+                                egui::pos2(ui.cursor().left() + 100.0, ui.cursor().top()),
+                            ),
+                        ));
                     }
                     1
                 });
@@ -264,7 +263,8 @@ impl ProbeApp {
 
     fn append_chunk(&mut self) {
         if self.extra_items % 30 == 29 || self.items.is_empty() {
-            self.items.push(varied_markdown(self.opts.rows + self.extra_items));
+            self.items
+                .push(varied_markdown(self.opts.rows + self.extra_items));
         } else if let Some(tail) = self.items.last_mut() {
             tail.push_str(stream_chunk(self.extra_items));
         }
@@ -277,17 +277,27 @@ impl ProbeApp {
         }
         self.next_report = now + Duration::from_secs(5);
         if !self.item_rects.is_empty() {
-            let rects: Vec<String> = self.item_rects.iter()
+            let rects: Vec<String> = self
+                .item_rects
+                .iter()
                 .map(|(i, r)| format!("i{i}: y {:.0}-{:.0}", r.top(), r.bottom()))
                 .collect();
-            spike_log!("[spike] item_rects frame={}: {}", self.frame_no, rects.join(", "));
+            spike_log!(
+                "[spike] item_rects frame={}: {}",
+                self.frame_no,
+                rects.join(", ")
+            );
             self.item_rects.clear();
         }
         spike_log!(
             "[spike] t={}s {} composer={:?} len={} focused={} rect={:?}",
             (now - self.start).as_secs_f64(),
             self.stats_line(),
-            if self.composer.chars().count() > 24 { "<24+ chars>" } else { self.composer.as_str() },
+            if self.composer.chars().count() > 24 {
+                "<24+ chars>"
+            } else {
+                self.composer.as_str()
+            },
             self.composer.len(),
             self.composer_focused,
             self.composer_rect,
@@ -313,13 +323,7 @@ impl ProbeApp {
         let (p50, p95, p99) = percentiles(&self.frame_ms);
         let stream = self.stream.as_ref();
         let (appended, expected, late_p95) = stream
-            .map(|st| {
-                (
-                    st.appended,
-                    st.expected,
-                    percentiles(&st.late_ms).1,
-                )
-            })
+            .map(|st| (st.appended, st.expected, percentiles(&st.late_ms).1))
             .unwrap_or((0, 0, 0.0));
         format!(
             "summary: appends={appended}/{expected} late_p95={late_p95:.1}ms \
@@ -379,12 +383,19 @@ fn install_cjk_fallback(ctx: &egui::Context) {
     ];
     let mut fonts = egui::FontDefinitions::default();
     for path in CANDIDATES {
-        let Ok(data) = std::fs::read(path) else { continue };
-        fonts
-            .font_data
-            .insert("cjk_fallback".to_owned(), std::sync::Arc::new(egui::FontData::from_owned(data)));
+        let Ok(data) = std::fs::read(path) else {
+            continue;
+        };
+        fonts.font_data.insert(
+            "cjk_fallback".to_owned(),
+            std::sync::Arc::new(egui::FontData::from_owned(data)),
+        );
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-            fonts.families.entry(family).or_default().push("cjk_fallback".to_owned());
+            fonts
+                .families
+                .entry(family)
+                .or_default()
+                .push("cjk_fallback".to_owned());
         }
         spike_log!("[spike] cjk fallback from {path}");
         ctx.set_fonts(fonts);
@@ -419,7 +430,8 @@ pub fn varied_markdown(i: usize) -> String {
         1 => {
             let para = "A fairly long paragraph that wraps over several display lines on a \
                         typical transcript column, mixing *emphasis*, `code spans` and plain \
-                        prose. ".repeat(6);
+                        prose. "
+                .repeat(6);
             format!("## Note {i}\n\n{para}")
         }
         2 => format!(

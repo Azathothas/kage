@@ -83,29 +83,15 @@ fn sidebar_panel_takes_270px() {
                     .resizable(false)
                     .show_inside(ui, |ui| {
                         ui.label("sidebar");
-                        let body = ui.allocate_response(
-                            ui.available_size(),
-                            egui::Sense::hover(),
-                        );
+                        let body = ui.allocate_response(ui.available_size(), egui::Sense::hover());
                         body.widget_info(|| {
-                            egui::WidgetInfo::labeled(
-                                egui::WidgetType::Label,
-                                true,
-                                "sidebar-body",
-                            )
+                            egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "sidebar-body")
                         });
                     });
                 egui::CentralPanel::default().show(ui, |ui| {
-                    let body = ui.allocate_response(
-                        ui.available_size(),
-                        egui::Sense::hover(),
-                    );
+                    let body = ui.allocate_response(ui.available_size(), egui::Sense::hover());
                     body.widget_info(|| {
-                        egui::WidgetInfo::labeled(
-                            egui::WidgetType::Label,
-                            true,
-                            "central-body",
-                        )
+                        egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "central-body")
                     });
                     app.show(ui);
                 });
@@ -150,11 +136,7 @@ fn input_dispatch_click_and_type() {
                     .show(ui)
                     .response
                     .widget_info(|| {
-                        egui::WidgetInfo::labeled(
-                            egui::WidgetType::TextEdit,
-                            true,
-                            "composer",
-                        )
+                        egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "composer")
                     });
             },
             State {

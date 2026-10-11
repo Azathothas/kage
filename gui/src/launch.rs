@@ -9,8 +9,8 @@
 
 use std::time::Duration;
 
-use kage_client::unquote_and_trim;
 use kage_client::Frame;
+use kage_client::unquote_and_trim;
 
 use crate::store::Command;
 use crate::transport::replay::ReplayTransport;
@@ -280,7 +280,10 @@ impl Shell {
             self.store.connect().label(),
             sessions = state.sessions.len(),
             streamed = self.streamed,
-            connection = self.transport.connection_id().unwrap_or_else(|| "-".to_owned()),
+            connection = self
+                .transport
+                .connection_id()
+                .unwrap_or_else(|| "-".to_owned()),
         )
     }
 

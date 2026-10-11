@@ -215,10 +215,22 @@ const FONT_FACES: &[(&str, &[u8])] = &[
         FAMILY_BODY_EXTRABOLD,
         include_bytes!("../assets/fonts/SchibstedGrotesk-ExtraBold.ttf"),
     ),
-    (FAMILY_INTER_REGULAR, include_bytes!("../assets/fonts/Inter-Regular.ttf")),
-    (FAMILY_INTER_MEDIUM, include_bytes!("../assets/fonts/Inter-Medium.ttf")),
-    (FAMILY_INTER_SEMIBOLD, include_bytes!("../assets/fonts/Inter-SemiBold.ttf")),
-    (FAMILY_INTER_BOLD, include_bytes!("../assets/fonts/Inter-Bold.ttf")),
+    (
+        FAMILY_INTER_REGULAR,
+        include_bytes!("../assets/fonts/Inter-Regular.ttf"),
+    ),
+    (
+        FAMILY_INTER_MEDIUM,
+        include_bytes!("../assets/fonts/Inter-Medium.ttf"),
+    ),
+    (
+        FAMILY_INTER_SEMIBOLD,
+        include_bytes!("../assets/fonts/Inter-SemiBold.ttf"),
+    ),
+    (
+        FAMILY_INTER_BOLD,
+        include_bytes!("../assets/fonts/Inter-Bold.ttf"),
+    ),
     (
         FAMILY_INTER_EXTRABOLD,
         include_bytes!("../assets/fonts/Inter-ExtraBold.ttf"),
@@ -235,7 +247,10 @@ const FONT_FACES: &[(&str, &[u8])] = &[
         FAMILY_MONO_SEMIBOLD,
         include_bytes!("../assets/fonts/JetBrainsMono-SemiBold.ttf"),
     ),
-    (FAMILY_MONO_BOLD, include_bytes!("../assets/fonts/JetBrainsMono-Bold.ttf")),
+    (
+        FAMILY_MONO_BOLD,
+        include_bytes!("../assets/fonts/JetBrainsMono-Bold.ttf"),
+    ),
     (
         FAMILY_MONO_EXTRABOLD,
         include_bytes!("../assets/fonts/JetBrainsMono-ExtraBold.ttf"),
@@ -248,9 +263,10 @@ const FONT_FACES: &[(&str, &[u8])] = &[
 pub fn install_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     for (name, bytes) in FONT_FACES {
-        fonts
-            .font_data
-            .insert((*name).to_owned(), Arc::new(egui::FontData::from_static(bytes)));
+        fonts.font_data.insert(
+            (*name).to_owned(),
+            Arc::new(egui::FontData::from_static(bytes)),
+        );
     }
     // The body face is the proportional default; the other weights and
     // Inter follow as glyph fallbacks, egui's fonts last of all.
@@ -323,7 +339,11 @@ pub fn install_fonts(ctx: &egui::Context) {
         FAMILY_MONO_BOLD,
         FAMILY_MONO_EXTRABOLD,
     ] {
-        chain(&mut fonts, family(name), &[name, FAMILY_MONO_REGULAR, FAMILY_INTER_REGULAR]);
+        chain(
+            &mut fonts,
+            family(name),
+            &[name, FAMILY_MONO_REGULAR, FAMILY_INTER_REGULAR],
+        );
     }
     ctx.set_fonts(fonts);
 }
@@ -580,7 +600,11 @@ impl Palette {
         if let Some(palette) = ACTIVE.read().unwrap_or_else(PoisonError::into_inner)[index] {
             return palette;
         }
-        let kage = if mode.is_dark() { "kage-shadow" } else { "kage-dawn" };
+        let kage = if mode.is_dark() {
+            "kage-shadow"
+        } else {
+            "kage-dawn"
+        };
         crate::themes::builtin(kage).map_or_else(|| unreachable!(), |(palette, _)| palette)
     }
 
@@ -1092,11 +1116,7 @@ pub fn apply_choice(choice: &ThemeChoice, ctx: &egui::Context) {
 /// Fills one style slot with `palette` and remembers it as the active
 /// palette of the slot's mode, so views can read it back without
 /// touching egui.
-fn apply_slot(
-    ctx: &egui::Context,
-    slot: egui::Theme,
-    palette_mode: (&'static Palette, Mode),
-) {
+fn apply_slot(ctx: &egui::Context, slot: egui::Theme, palette_mode: (&'static Palette, Mode)) {
     let (palette, mode) = palette_mode;
     let index = match mode {
         Mode::Dark => 0,

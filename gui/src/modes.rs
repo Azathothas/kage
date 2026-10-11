@@ -11,10 +11,7 @@ use kage_client::wire::{SessionConfigKind, SessionConfigOption, SessionConfigSel
 /// The select config option `id` of a session, when the agent
 /// advertised it as a select.
 #[must_use]
-pub(crate) fn select_option<'a>(
-    session: &'a Session,
-    id: &str,
-) -> Option<&'a SessionConfigOption> {
+pub(crate) fn select_option<'a>(session: &'a Session, id: &str) -> Option<&'a SessionConfigOption> {
     session
         .config_options
         .iter()
@@ -71,9 +68,7 @@ pub(crate) fn next_mode_value(session: &Session, current: &str) -> Option<String
 #[cfg(test)]
 mod tests {
     use kage_client::Session;
-    use kage_client::wire::{
-        SessionConfigKind, SessionConfigOption, SessionConfigSelectOption,
-    };
+    use kage_client::wire::{SessionConfigKind, SessionConfigOption, SessionConfigSelectOption};
 
     use super::{active_mode, next_mode_value, select_option};
 

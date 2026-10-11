@@ -368,11 +368,7 @@ pub fn run_check(prefs: &crate::prefs::Prefs, force: bool) -> Option<CheckOutcom
 
 /// Applies a check outcome to the preferences. The badge needs the
 /// engine's own version, which the caller reads off the store.
-pub fn apply_outcome(
-    prefs: &mut crate::prefs::Prefs,
-    outcome: CheckOutcome,
-    engine: Option<&str>,
-) {
+pub fn apply_outcome(prefs: &mut crate::prefs::Prefs, outcome: CheckOutcome, engine: Option<&str>) {
     if let Some(version) = outcome.cli {
         prefs.latest_cli_version = Some(version);
     }
@@ -467,9 +463,7 @@ mod native {
 
     /// Downloads the newest engine release of `channel` and installs
     /// the engine binary it contains, returning the installed path.
-    pub(super) fn install_latest(
-        channel: crate::prefs::Channel,
-    ) -> Result<PathBuf, String> {
+    pub(super) fn install_latest(channel: crate::prefs::Channel) -> Result<PathBuf, String> {
         let Some(archive) = super::cli_asset() else {
             return Err("no kage release is built for this platform".to_owned());
         };
