@@ -455,13 +455,19 @@ pub fn render_assistant(
 ) -> egui::Response {
     let palette = Palette::active_of(ui.ctx());
     let id = format!("assistant-{ix}");
+    let top = ui.cursor().top();
     pipeline.show(&id, text, live, ui);
-    if !live {
-        return ui.allocate_response(egui::Vec2::ZERO, egui::Sense::hover());
+    if live {
+        let (rect, response) = ui.allocate_exact_size(egui::vec2(7.0, 14.0), egui::Sense::hover());
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::ZERO, palette.ink_strong);
+        return response;
     }
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(7.0, 14.0), egui::Sense::hover());
-    ui.painter()
-        .rect_filled(rect, egui::CornerRadius::ZERO, palette.ink_strong);
+    // A finished reply offers the hover copy: the markdown stripped to
+    // plain text, so a paste carries the words and not the syntax.
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(0.0, 0.0), egui::Sense::hover());
+    let _ = rect;
+    crate::ui::copy::hover_copy(ui, egui::Rect::everything_below(top), text);
     response
 }
 

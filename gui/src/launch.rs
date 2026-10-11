@@ -193,6 +193,8 @@ pub struct Shell {
     orbit: Option<std::time::Instant>,
     /// The transcript in the chat column.
     transcript: crate::ui::transcript::view::TranscriptView,
+    /// The find bar over the chat column.
+    find: crate::ui::find::FindBar,
 }
 
 impl Shell {
@@ -237,6 +239,7 @@ impl Shell {
             splash: crate::ui::splash::Splash::Showing,
             orbit: None,
             transcript: crate::ui::transcript::view::TranscriptView::new(),
+            find: crate::ui::find::FindBar::new(),
         }
     }
 
@@ -372,6 +375,8 @@ struct ShellApp {
     /// The actions the transcript's rows raised this frame, for the
     /// shell to carry out.
     row_actions: Vec<crate::ui::transcript::tool_rows::RowAction>,
+    /// The window's context, for the modal key contexts.
+    ctx: egui::Context,
 }
 
 impl eframe::App for ShellApp {
@@ -402,6 +407,7 @@ impl eframe::App for ShellApp {
         }
         self.shell.toasts.expire(web_time::Instant::now());
         self.draw(ui);
+        self.find_keys();
     }
 }
 
@@ -481,6 +487,12 @@ impl ShellApp {
 
         crate::ui::status::status_bar(ui, self.shell.store());
 
+        let rows = self.shell.transcript.searchable_rows(self.shell.store());
+        let find_action = self.shell.find.show(ui, &rows);
+        if let Some(crate::ui::find::RowAction::Reveal(key)) = find_action {
+            self.shell.transcript.scroll_to_row(key);
+        }
+
         if self.shell.palette.is_open() {
             let registry = crate::ui::palette::RegistryOwned::of(self.shell.store());
             let rows = registry.view().rows(self.shell.palette.query());
@@ -514,6 +526,9 @@ impl ShellApp {
     fn context(&self) -> crate::ui::keys::Context {
         if self.shell.palette.is_open() {
             return crate::ui::keys::Context::Palette;
+        }
+        if self.shell.find.is_open() {
+            return crate::ui::keys::Context::Find;
         }
         if self.shell.store.prefs().vim {
             return crate::ui::keys::Context::VimNormal;
@@ -564,13 +579,46 @@ impl ShellApp {
             Action::ToggleSidebar => self.shell.panels.toggle_sidebar(),
             Action::ToggleWorkbench => self.shell.panels.toggle_workbench(),
             Action::OpenPalette => self.shell.palette.open(),
-            Action::OpenFind | Action::OpenSettings | Action::OpenProviders => {}
+            Action::OpenFind => self.shell.find.open(),
+            Action::OpenSettings | Action::OpenProviders => {}
             Action::SendPrompt
             | Action::ToggleSwarm
             | Action::TogglePlan
             | Action::SetGoal
             | Action::ShowAgents
             | Action::ReviewChanges => {}
+        }
+    }
+
+    /// The find bar's keys, in its own context: Enter steps forward,
+    /// Shift+Enter back, Escape closes. The keys answer only while the
+    /// bar is open, so they never reach the shell's own bindings.
+    fn find_keys(&mut self) {
+        if !self.shell.find.is_open() {
+            return;
+        }
+        let ctx = self.ctx.clone();
+        let events: Vec<egui::Event> = ctx.input(|i| i.events.clone());
+        for event in events {
+            let egui::Event::Key {
+                key,
+                modifiers,
+                pressed: true,
+                ..
+            } = event
+            else {
+                continue;
+            };
+            let back = modifiers.shift;
+            match key {
+                egui::Key::Enter => {
+                    if let Some(key) = self.shell.find.step(back) {
+                        self.shell.transcript.scroll_to_row(key);
+                    }
+                }
+                egui::Key::Escape => self.shell.find.close(),
+                _ => {}
+            }
         }
     }
 
@@ -690,6 +738,7 @@ pub fn run() {
                 last_update_check: crate::clock::unix_seconds(),
                 update_rx: None,
                 row_actions: Vec::new(),
+                ctx: cc.egui_ctx.clone(),
             }))
         }),
     )
