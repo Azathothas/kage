@@ -173,10 +173,24 @@ pub struct Shell {
     inbox: std::sync::mpsc::Receiver<Event>,
     /// Set when `--smoke` asked for a timed quit.
     smoke_deadline: Option<(std::time::Instant, Duration)>,
+    /// Whether the engine has been asked for its themes and config.
+    themes_asked: bool,
     /// Synthetic chunks appended, for the 30 Hz stream measurement.
     streamed: usize,
     /// The keepalive handle of the pump thread, dropped with the shell.
     _pump: Option<std::thread::JoinHandle<()>>,
+    /// The three-panel layout state.
+    panels: crate::ui::shell::Panels,
+    /// The gate banner's dismissal.
+    gate_banner: crate::ui::status::Banner,
+    /// The toast queue.
+    toasts: crate::ui::toasts::Toasts,
+    /// The command palette.
+    palette: crate::ui::palette::Palette,
+    /// The boot splash.
+    splash: crate::ui::splash::Splash,
+    /// When the eclipse started orbiting, for the working indicator.
+    orbit: Option<std::time::Instant>,
 }
 
 impl Shell {
@@ -212,7 +226,14 @@ impl Shell {
             inbox: rx,
             smoke_deadline: None,
             streamed: 0,
+            themes_asked: false,
             _pump: Some(pump),
+            panels: crate::ui::shell::Panels::default(),
+            gate_banner: crate::ui::status::Banner::default(),
+            toasts: crate::ui::toasts::Toasts::default(),
+            palette: crate::ui::palette::Palette::default(),
+            splash: crate::ui::splash::Splash::Showing,
+            orbit: None,
         }
     }
 
@@ -230,13 +251,32 @@ impl Shell {
     /// Drains the pump's events into the store and carries out the
     /// commands it produced.
     fn on_events(&mut self) {
+        let mut reconnecting = false;
         while let Ok(event) = self.inbox.try_recv() {
             match event {
                 Event::Frame(frame) => {
                     self.store.absorb(frame);
                 }
-                Event::State(state) => self.store.set_connect(state),
+                Event::State(state) => {
+                    if matches!(state, crate::transport::State::Reconnecting { .. }) {
+                        reconnecting = true;
+                    }
+                    self.store.set_connect(state);
+                }
             }
+        }
+        // A reconnect asks for the themes and the config again, and
+        // brings a still-short gate report back.
+        if reconnecting {
+            self.gate_banner.reset();
+            self.themes_asked = false;
+        }
+        let answered =
+            self.store.state().agent.is_some() || self.store.state().capabilities.is_some();
+        self.splash.follow(self.store.connect(), answered);
+        let now = web_time::Instant::now();
+        for note in self.store.take_notes() {
+            self.toasts.push_note(&note, now);
         }
         let commands = self.store.take_commands();
         for command in commands {
@@ -256,6 +296,11 @@ impl Shell {
 
     /// Drains the store's outgoing frames into the transport.
     fn flush_outgoing(&mut self) {
+        if !self.themes_asked && self.store.live() {
+            self.themes_asked = true;
+            self.store.ask_themes();
+            self.store.ask_config();
+        }
         for frame in self.store.take_outgoing() {
             self.transport.send(frame);
         }
@@ -330,6 +375,7 @@ impl eframe::App for ShellApp {
         self.shell.flush_outgoing();
         self.pump_update_check();
         self.apply_update();
+        self.route_keys(&ctx);
         if self.stream {
             if self.stream_clock.elapsed() >= Duration::from_secs_f64(1.0 / 30.0) {
                 self.stream_clock = std::time::Instant::now();
@@ -348,11 +394,173 @@ impl eframe::App for ShellApp {
             // clock alive until the deadline.
             ctx.request_repaint_after(Duration::from_millis(50));
         }
-        egui::CentralPanel::default().show(ui, |_| {});
+        self.shell.toasts.expire(web_time::Instant::now());
+        self.draw(ui);
     }
 }
 
 impl ShellApp {
+    /// Draws the frame: the gate banner over the three panels, the
+    /// status bar under them, and the chrome (splash, palette,
+    /// toasts) over the top.
+    fn draw(&mut self, ui: &mut egui::Ui) {
+        // The key context: a modal sits above the shell.
+        let context = self.context();
+        let gate = self.shell.store.gate().clone();
+        let mut banner = self.shell.gate_banner.clone();
+        let mut panels = self.shell.panels.clone();
+        let mut palette = self.shell.palette.clone();
+        let mut toasts = std::mem::take(&mut self.shell.toasts);
+        let splash = self.shell.splash;
+        let orbit = self.shell.orbit;
+
+        banner.show(ui, &gate);
+
+        let sidebar = |ui: &mut egui::Ui| {
+            let palette = crate::theme::Palette::active_of(ui.ctx());
+            ui.label(
+                egui::RichText::new("kage")
+                    .size(crate::theme::FS_LG)
+                    .color(palette.ink_strong)
+                    .family(crate::theme::family(crate::theme::FAMILY_BODY_SEMIBOLD)),
+            );
+        };
+        let workbench = |ui: &mut egui::Ui| {
+            let palette = crate::theme::Palette::active_of(ui.ctx());
+            ui.label(
+                egui::RichText::new("workbench")
+                    .size(crate::theme::FS_SM)
+                    .color(palette.muted),
+            );
+        };
+        let chat = |ui: &mut egui::Ui| {
+            let palette = crate::theme::Palette::active_of(ui.ctx());
+            // The eclipse works indicator, and the welcome column's
+            // brand mark, until the transcript view arrives with E04.
+            let running = self
+                .shell
+                .store
+                .active_session()
+                .is_some_and(|session| session.in_turn || session.running);
+            if running && self.shell.orbit.is_none() {
+                self.shell.orbit = Some(std::time::Instant::now());
+            } else if !running {
+                self.shell.orbit = None;
+            }
+            ui.vertical_centered(|ui| {
+                ui.add_space(ui.available_height() / 2.0 - 60.0);
+                crate::ui::eclipse::eclipse(ui, 44.0, self.shell.orbit);
+                ui.add_space(14.0);
+                ui.label(
+                    egui::RichText::new("kage")
+                        .size(40.0)
+                        .color(palette.ink_strong)
+                        .family(crate::theme::family(crate::theme::FAMILY_BODY_EXTRABOLD)),
+                );
+                ui.label(
+                    egui::RichText::new(self.welcome_line())
+                        .size(crate::theme::FS_SM)
+                        .color(palette.muted),
+                );
+            });
+        };
+        crate::ui::shell::show(ui, &mut panels, sidebar, chat, workbench);
+
+        crate::ui::status::status_bar(ui, self.shell.store());
+
+        if self.shell.palette.is_open() {
+            let registry = crate::ui::palette::RegistryOwned::of(self.shell.store());
+            let rows = registry.view().rows(self.shell.palette.query());
+            if let Some(entry) = palette.show(ui, &rows) {
+                let _ = entry;
+            }
+        }
+        toasts.show(ui);
+        splash.show(ui, orbit);
+        let _ = context;
+
+        self.shell.gate_banner = banner;
+        self.shell.panels = panels;
+        self.shell.palette = palette;
+        self.shell.toasts = toasts;
+    }
+
+    /// The line the welcome column shows under the wordmark.
+    fn welcome_line(&self) -> String {
+        if self.shell.store.active_id().is_some() {
+            return "the transcript arrives with E04".to_owned();
+        }
+        match self.shell.store.connect() {
+            crate::transport::State::Connecting => "connecting".to_owned(),
+            crate::transport::State::Refused(why) => format!("refused: {why}"),
+            _ => "the transcript arrives with E04".to_owned(),
+        }
+    }
+
+    /// The active key context: a modal above the shell.
+    fn context(&self) -> crate::ui::keys::Context {
+        if self.shell.palette.is_open() {
+            return crate::ui::keys::Context::Palette;
+        }
+        if self.shell.store.prefs().vim {
+            return crate::ui::keys::Context::VimNormal;
+        }
+        crate::ui::keys::Context::Shell
+    }
+
+    /// Reads the frame's key presses and carries out the actions the
+    /// router dispatches. A modal context answers only its own keys.
+    fn route_keys(&mut self, ctx: &egui::Context) {
+        use crate::ui::keys::Press;
+        let events: Vec<egui::Event> = ctx.input(|i| i.events.clone());
+        for event in events {
+            let egui::Event::Key {
+                key,
+                modifiers,
+                pressed: true,
+                ..
+            } = event
+            else {
+                continue;
+            };
+            let press = Press {
+                key: key_name(&key),
+                mods: crate::ui::keys::Mods {
+                    ctrl: modifiers.ctrl || modifiers.command,
+                    shift: modifiers.shift,
+                    alt: modifiers.alt,
+                },
+                repeat: false,
+            };
+            let Some(action) = crate::ui::keys::dispatch(self.context(), &press) else {
+                continue;
+            };
+            self.carry(action);
+        }
+    }
+
+    /// Carries out one routed action.
+    fn carry(&mut self, action: crate::ui::keys::Action) {
+        use crate::ui::keys::Action;
+        match action {
+            Action::Quit => {
+                self.shell.smoke_deadline =
+                    Some((std::time::Instant::now(), Duration::from_millis(0)));
+            }
+            Action::NewSession => self.shell.store.show_welcome(),
+            Action::ToggleSidebar => self.shell.panels.toggle_sidebar(),
+            Action::ToggleWorkbench => self.shell.panels.toggle_workbench(),
+            Action::OpenPalette => self.shell.palette.open(),
+            Action::OpenFind | Action::OpenSettings | Action::OpenProviders => {}
+            Action::SendPrompt
+            | Action::ToggleSwarm
+            | Action::TogglePlan
+            | Action::SetGoal
+            | Action::ShowAgents
+            | Action::ReviewChanges => {}
+        }
+    }
+
     /// Runs the daily release check on its own thread and applies the
     /// answer on the UI thread: the check blocks on the network, so it
     /// never sits in the frame.
@@ -402,6 +610,26 @@ impl ShellApp {
 
 /// The prompt the recording expects, once its session is open.
 const REPLAY_PROMPT: &str = "fix the null check";
+
+/// The name the router spells a key by: the key's own name, lowercased
+/// for the letter keys, as egui prints it.
+fn key_name(key: &egui::Key) -> &'static str {
+    match key {
+        egui::Key::Enter => "Enter",
+        egui::Key::Escape => "Escape",
+        egui::Key::Tab => "Tab",
+        egui::Key::ArrowUp => "ArrowUp",
+        egui::Key::ArrowDown => "ArrowDown",
+        egui::Key::ArrowLeft => "ArrowLeft",
+        egui::Key::ArrowRight => "ArrowRight",
+        other => {
+            let name = other.name();
+            // The router's table spells the letter keys uppercase, and
+            // the punctuation by its own character.
+            name
+        }
+    }
+}
 
 /// Parses the flags and runs until quit.
 pub fn run() {

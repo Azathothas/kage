@@ -255,10 +255,61 @@ impl Registry<'_> {
     }
 }
 
+/// The registry a store offers, owned so the palette's rows can be
+/// built once per frame without borrowing the store across the draw.
+#[derive(Debug, Clone, Default)]
+pub struct RegistryOwned {
+    /// The active session, when one shows.
+    pub session: Option<Session>,
+    /// Whether plan mode is on for the active session.
+    pub plan_on: bool,
+    /// The agent's commands, raw as the wire carried them.
+    pub commands: Option<Vec<Value>>,
+    /// The sessions to offer: id, display title, and whether the
+    /// connection holds the session open.
+    pub sessions: Vec<(String, Option<String>, bool)>,
+}
+
+impl RegistryOwned {
+    /// The registry a store offers: the active session, its plan
+    /// state, its commands and every session's title.
+    #[must_use]
+    pub fn of(store: &crate::store::Store) -> RegistryOwned {
+        let session = store.active_session();
+        let plan_on = session.is_some_and(|session| {
+            crate::modes::active_mode(session).is_some_and(|mode| mode == crate::modes::PLAN_MODE)
+        });
+        let commands = session.map(|session| session.commands.clone());
+        let sessions = store
+            .state()
+            .sessions
+            .iter()
+            .map(|(id, session)| (id.clone(), session.title.clone(), !session.items.is_empty()))
+            .collect();
+        RegistryOwned {
+            session: session.cloned(),
+            plan_on,
+            commands,
+            sessions,
+        }
+    }
+
+    /// The borrowed view the rows are built from.
+    #[must_use]
+    pub fn view(&self) -> Registry<'_> {
+        Registry {
+            session: self.session.as_ref(),
+            plan_on: self.plan_on,
+            commands: self.commands.as_deref().unwrap_or_default(),
+            sessions: &self.sessions,
+        }
+    }
+}
+
 /// The command palette: a modal over the action registry, the agent's
 /// commands and the session directory. The query narrows, the arrows
 /// move, Enter runs and Esc closes.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct Palette {
     /// Whether the modal shows.
     open: bool,
