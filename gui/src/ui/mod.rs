@@ -5,6 +5,7 @@
 //! with egui widgets, so the logic tests without a window and the
 //! shell only wires keys and store data in.
 
+pub mod agents;
 pub mod composer;
 pub mod copy;
 pub mod dock;
@@ -20,3 +21,4 @@ pub mod status;
 pub mod toasts;
 pub mod toolbar;
 pub mod transcript;
+pub mod workbench;

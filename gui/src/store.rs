@@ -260,6 +260,14 @@ pub struct Store {
 }
 
 impl Store {
+    /// A store with no client, no link and no sessions, for a slot the
+    /// frame hands out and takes back. It answers nothing and sends
+    /// nothing, so it is never left in place for a whole frame.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self::new(String::new(), false).with_link(Link::serve(""))
+    }
+
     /// A store for a connection that opens sessions in `cwd`; `replay`
     /// selects the scripted prompt of the recording.
     #[must_use]

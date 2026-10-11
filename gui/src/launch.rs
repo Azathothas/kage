@@ -200,6 +200,8 @@ pub struct Shell {
     composer: crate::ui::composer::Composer,
     /// The sidebar's search query and collapsed projects.
     sidebar: crate::ui::sidebar::Sidebar,
+    /// The right panel's tabs, filters and selections.
+    workbench: crate::ui::workbench::Workbench,
 }
 
 impl Shell {
@@ -247,6 +249,7 @@ impl Shell {
             find: crate::ui::find::FindBar::new(),
             composer: crate::ui::composer::Composer::new(),
             sidebar: crate::ui::sidebar::Sidebar::new(),
+            workbench: crate::ui::workbench::Workbench::new(),
         }
     }
 
@@ -308,6 +311,14 @@ impl Shell {
     }
 
     /// Drains the store's outgoing frames into the transport.
+    /// Hands the store out for the frame's drawing and takes it
+    /// back afterwards. The workbench's panes write to the store, so
+    /// its closure needs it in a cell, and the cell outlives the
+    /// closure only inside this frame.
+    fn store_take(&mut self) -> crate::store::Store {
+        std::mem::replace(&mut self.store, crate::store::Store::empty())
+    }
+
     fn flush_outgoing(&mut self) {
         if !self.themes_asked && self.store.live() {
             self.themes_asked = true;
@@ -449,6 +460,18 @@ impl ShellApp {
         let sidebar_link = (link_name, link_status, dot, halo);
         let sidebar_events: std::cell::RefCell<Vec<crate::ui::sidebar::SidebarEvent>> =
             std::cell::RefCell::new(Vec::new());
+        // The workbench and the store ride in cells the way the
+        // sidebar does: its closure must stay `Fn`, because the shell
+        // draws the panel twice while narrow, and its events are
+        // carried out once the panels are drawn.
+        let workbench_state = std::cell::RefCell::new(std::mem::take(&mut self.shell.workbench));
+        // The workbench's panes read and write the store, so it rides
+        // in a cell the closure borrows once, the way the sidebar's
+        // state does. The shell takes it back when the panels are
+        // drawn.
+        let store = std::cell::RefCell::new(self.shell.store_take());
+        let workbench_events: std::cell::RefCell<Vec<crate::ui::workbench::WorkbenchEvent>> =
+            std::cell::RefCell::new(Vec::new());
         let sidebar_draw = |ui: &mut egui::Ui| {
             let events = crate::ui::sidebar::show_rows(
                 ui,
@@ -465,12 +488,12 @@ impl ShellApp {
             sidebar_events.borrow_mut().extend(events);
         };
         let workbench = |ui: &mut egui::Ui| {
-            let palette = crate::theme::Palette::active_of(ui.ctx());
-            ui.label(
-                egui::RichText::new("workbench")
-                    .size(crate::theme::FS_SM)
-                    .color(palette.muted),
+            let events = crate::ui::workbench::show(
+                ui,
+                &mut workbench_state.borrow_mut(),
+                &mut store.borrow_mut(),
             );
+            workbench_events.borrow_mut().extend(events);
         };
         let chat = |ui: &mut egui::Ui| {
             // The column is the transcript above and the composer
@@ -537,7 +560,10 @@ impl ShellApp {
         };
         crate::ui::shell::show(ui, &mut panels, sidebar_draw, chat, workbench);
         self.shell.sidebar = sidebar.into_inner();
+        self.shell.store = store.into_inner();
+        self.shell.workbench = workbench_state.into_inner();
         self.carry_sidebar(sidebar_events.into_inner());
+        self.carry_workbench(workbench_events.into_inner());
 
         crate::ui::status::status_bar(ui, self.shell.store());
 
@@ -588,6 +614,33 @@ impl ShellApp {
                     self.shell.store.update_prefs(|prefs| {
                         prefs.group_by_project = !prefs.group_by_project;
                     });
+                }
+            }
+        }
+    }
+
+    /// Carries out what the workbench's panes asked for.
+    fn carry_workbench(&mut self, events: Vec<crate::ui::workbench::WorkbenchEvent>) {
+        for event in events {
+            match event {
+                crate::ui::workbench::WorkbenchEvent::Mention(path) => {
+                    self.shell.composer.mention(&path);
+                }
+                crate::ui::workbench::WorkbenchEvent::OpenAgent(id) => {
+                    self.shell.store.load_child(&id);
+                    self.shell.store.set_active(id);
+                }
+                crate::ui::workbench::WorkbenchEvent::StopAgent(id) => {
+                    self.shell.store.cancel_session(&id);
+                }
+                crate::ui::workbench::WorkbenchEvent::AskFiles => {
+                    if let Some(id) = self.shell.store.active_id().map(str::to_owned) {
+                        self.shell.store.fs_list(&id);
+                        self.shell.workbench.mark_listing_asked(&id);
+                    }
+                }
+                crate::ui::workbench::WorkbenchEvent::ReadFile(path) => {
+                    self.shell.store.fs_read(&path);
                 }
             }
         }

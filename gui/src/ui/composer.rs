@@ -301,6 +301,16 @@ impl Draft {
         }
     }
 
+    /// The byte offset the mention token under the caret starts at,
+    /// or the caret itself when no token is active.
+    #[must_use]
+    fn token_at(&self) -> usize {
+        match self.suggest() {
+            Some(Suggest::Mention { at, .. }) => at,
+            _ => self.caret,
+        }
+    }
+
     /// Replaces the slash token before the caret with the picked
     /// command, ready for its arguments, as `pick_slash` does.
     pub fn pick_slash(&mut self, name: &str) {
@@ -953,6 +963,14 @@ impl Composer {
     pub fn set_draft(&mut self, text: String) {
         self.draft.text = text;
         self.draft.caret = self.draft.text.len();
+    }
+
+    /// Inserts a `@path` mention of `path` at the caret, replacing any
+    /// mention token already under it, so a file picked in the
+    /// workbench lands as a typed one would.
+    pub fn mention(&mut self, path: &str) {
+        let at = self.draft.token_at();
+        self.draft.pick_mention(at, path);
     }
 
     /// Sets the placeholder, when it changed.
