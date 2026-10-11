@@ -364,6 +364,31 @@ impl eframe::App for ProbeApp {
     }
 }
 
+/// Registers a system CJK fallback font so IME-committed text renders
+/// instead of showing tofu. egui's default fonts cover Latin only; the
+/// real port must do the equivalent (E05).
+#[cfg(not(target_arch = "wasm32"))]
+fn install_cjk_fallback(ctx: &egui::Context) {
+    const CANDIDATES: [&str; 2] = [
+        "/usr/share/fonts/noto/NotoSansCJK-Regular.ttc",
+        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    ];
+    let mut fonts = egui::FontDefinitions::default();
+    for path in CANDIDATES {
+        let Ok(data) = std::fs::read(path) else { continue };
+        fonts
+            .font_data
+            .insert("cjk_fallback".to_owned(), std::sync::Arc::new(egui::FontData::from_owned(data)));
+        for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+            fonts.families.entry(family).or_default().push("cjk_fallback".to_owned());
+        }
+        spike_log!("[spike] cjk fallback from {path}");
+        ctx.set_fonts(fonts);
+        return;
+    }
+    spike_log!("[spike] no CJK font found, IME text will show tofu");
+}
+
 /// Runs the probe in a native glow window.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn run_native(opts: Options) -> eframe::Result {
@@ -376,7 +401,8 @@ pub fn run_native(opts: Options) -> eframe::Result {
         "egui spike",
         native,
         Box::new(move |cc| {
-            cc.egui_ctx.set_visuals(egui::Visuals::dark());
+            cc.egui_ctx.set_theme(egui::ThemePreference::Dark);
+            install_cjk_fallback(&cc.egui_ctx);
             Ok(Box::new(ProbeApp::new(opts)))
         }),
     )
