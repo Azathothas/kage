@@ -365,8 +365,12 @@ impl eframe::App for ProbeApp {
 }
 
 /// Registers a system CJK fallback font so IME-committed text renders
-/// instead of showing tofu. egui's default fonts cover Latin only; the
-/// real port must do the equivalent (E05).
+/// instead of showing tofu. egui's default fonts cover Latin only and
+/// egui loads nothing from the system. PROBE ONLY: the path is hardcoded
+/// to this machine. The real port (E05) discovers fonts per platform
+/// instead — fontconfig on Linux, CoreText on macOS, DirectWrite on
+/// Windows — and bundles a CJK subset for the web build, where no
+/// system fonts are reachable from a canvas.
 #[cfg(not(target_arch = "wasm32"))]
 fn install_cjk_fallback(ctx: &egui::Context) {
     const CANDIDATES: [&str; 2] = [
