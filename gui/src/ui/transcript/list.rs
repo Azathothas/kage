@@ -67,6 +67,16 @@ impl List {
 
     /// Records the frame's scroll and decides whether the follow
     /// detached: a scroll that moved up while following detaches it.
+    pub fn on_scroll(&mut self, offset: f32, content: f32, viewport: f32) {
+        self.watch_scroll(offset, content, viewport);
+    }
+
+    /// Marks that the view itself moved the scroll, so the next frame's
+    /// offset is not read as the user's.
+    pub fn user_scrolled(&mut self) {
+        self.user_scrolled = true;
+    }
+
     fn watch_scroll(&mut self, offset: f32, content: f32, viewport: f32) {
         let at_bottom = offset + viewport >= content - DETACH_SLACK;
         if self.user_scrolled {

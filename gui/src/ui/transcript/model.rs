@@ -1077,7 +1077,7 @@ const DETAIL_BOTTOM: f32 = 10.0;
 
 /// The design's vertical margins around one row. An expanded row
 /// carries the margin of the detail or body that closes it.
-fn margins(row: &Row) -> (f32, f32) {
+pub fn margins(row: &Row) -> (f32, f32) {
     match row {
         Row::User { .. } | Row::Assistant { .. } => (18.0, 18.0),
         Row::Thinking { expanded, .. } => (
@@ -1103,7 +1103,7 @@ fn margins(row: &Row) -> (f32, f32) {
 
 /// The space two adjacent rows render with: the design's collapsed
 /// margins. The first row carries only its own top margin.
-fn gap(prev: Option<&Row>, row: &Row) -> f32 {
+pub fn gap(prev: Option<&Row>, row: &Row) -> f32 {
     let (top, _) = margins(row);
     match prev {
         Some(prev) => f32::max(margins(prev).1, top),

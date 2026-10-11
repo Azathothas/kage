@@ -191,6 +191,8 @@ pub struct Shell {
     splash: crate::ui::splash::Splash,
     /// When the eclipse started orbiting, for the working indicator.
     orbit: Option<std::time::Instant>,
+    /// The transcript in the chat column.
+    transcript: crate::ui::transcript::view::TranscriptView,
 }
 
 impl Shell {
@@ -234,6 +236,7 @@ impl Shell {
             palette: crate::ui::palette::Palette::default(),
             splash: crate::ui::splash::Splash::Showing,
             orbit: None,
+            transcript: crate::ui::transcript::view::TranscriptView::new(),
         }
     }
 
@@ -366,6 +369,9 @@ struct ShellApp {
     last_update_check: i64,
     /// The finished release check's inbox, while one is in flight.
     update_rx: Option<std::sync::mpsc::Receiver<Option<crate::update::CheckOutcome>>>,
+    /// The actions the transcript's rows raised this frame, for the
+    /// shell to carry out.
+    row_actions: Vec<crate::ui::transcript::tool_rows::RowAction>,
 }
 
 impl eframe::App for ShellApp {
@@ -434,9 +440,16 @@ impl ShellApp {
             );
         };
         let chat = |ui: &mut egui::Ui| {
+            if self.shell.store.active_id().is_some() {
+                let store = &self.shell.store;
+                let mut events = Vec::new();
+                self.shell.transcript.show(ui, store, &mut events);
+                self.row_actions.extend(events);
+                return;
+            }
+            // The welcome column: the brand mark, the eclipse while a
+            // turn runs, and the connection line.
             let palette = crate::theme::Palette::active_of(ui.ctx());
-            // The eclipse works indicator, and the welcome column's
-            // brand mark, until the transcript view arrives with E04.
             let running = self
                 .shell
                 .store
@@ -676,6 +689,7 @@ pub fn run() {
                 stream_clock: std::time::Instant::now(),
                 last_update_check: crate::clock::unix_seconds(),
                 update_rx: None,
+                row_actions: Vec::new(),
             }))
         }),
     )
