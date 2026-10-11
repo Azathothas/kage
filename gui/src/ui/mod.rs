@@ -12,3 +12,4 @@ pub mod shell;
 pub mod splash;
 pub mod status;
 pub mod toasts;
+pub mod transcript;
