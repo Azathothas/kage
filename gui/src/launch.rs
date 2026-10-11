@@ -457,9 +457,25 @@ impl ShellApp {
             // composer still mounts so a draft never resets.
             ui.vertical(|ui| {
                 if self.shell.store.active_id().is_some() {
+                    // The transcript takes what is left of the column;
+                    // the dock and the composer keep their own height
+                    // under it, so the field sits on the column's
+                    // bottom edge the way the old shell pinned it.
+                    let composer_h = COMPOSER_H;
+                    let dock_h = DOCK_H;
+                    let top_h = (ui.available_height() - composer_h - dock_h).max(0.0);
+                    let (top_rect, _) = ui.allocate_at_least(
+                        egui::vec2(ui.available_width(), top_h),
+                        egui::Sense::hover(),
+                    );
+                    let mut top = ui.new_child(
+                        egui::UiBuilder::new()
+                            .max_rect(top_rect)
+                            .layout(egui::Layout::top_down(egui::Align::Min)),
+                    );
                     let store = &self.shell.store;
                     let mut events = Vec::new();
-                    self.shell.transcript.show(ui, store, &mut events);
+                    self.shell.transcript.show(&mut top, store, &mut events);
                     self.row_actions.extend(events);
                 } else {
                     // The welcome column: the brand mark, the eclipse
@@ -788,6 +804,13 @@ impl ShellApp {
 
 /// The prompt the recording expects, once its session is open.
 const REPLAY_PROMPT: &str = "fix the null check";
+
+/// The composer column's height: the field's minimum, its toolbar and
+/// the hint line under it.
+const COMPOSER_H: f32 = 132.0;
+
+/// The dock row's height: the pills, with their wrap room.
+const DOCK_H: f32 = 72.0;
 
 /// The name the router spells a key by: the key's own name, lowercased
 /// for the letter keys, as egui prints it.
