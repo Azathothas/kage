@@ -627,6 +627,16 @@ impl ShellApp {
             self.shell
                 .composer
                 .show(ui, &mut self.shell.store, &commands, running, enter_sends);
+        match event {
+            crate::ui::composer::ComposerEvent::OpenGoal => {
+                // The goal dialog arrives with E07; the ask is carried
+                // for the shell to open it.
+            }
+            crate::ui::composer::ComposerEvent::ConfirmSwarm => {
+                // The swarm confirmation arrives with E07.
+            }
+            _ => {}
+        }
         if let crate::ui::composer::ComposerEvent::Send { steer } = event
             && let Some(text) = self.shell.composer.take_prompt()
         {
@@ -663,11 +673,10 @@ impl ShellApp {
                     self.shell.store.enter_plan()
                 }
             }
-            ("goal", "") => true,
-            ("goal", "clear") => self.shell.store.set_option("goal", ""),
-            ("goal", text) => self.shell.store.set_option("goal", text),
+            ("goal", "clear") => crate::ui::dock::save_goal(&mut self.shell.store, ""),
+            ("goal", text) => crate::ui::dock::save_goal(&mut self.shell.store, text),
             ("swarm", "off") => self.shell.store.set_option("swarm", "off"),
-            ("swarm", "on" | "") => true,
+            ("swarm", "on") => true,
             _ => false,
         }
     }

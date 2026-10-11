@@ -94,8 +94,11 @@ fn a_typed_draft_sends_through_the_composer() {
 #[test]
 fn the_mode_picker_writes_the_store_when_a_row_is_picked() {
     // The pickers used to record their pick into a local and drop it,
-    // so a click closed the menu and changed nothing. This drives the
-    // mode picker's row click and reads the store's mode afterwards.
+    // so a click closed the menu and changed nothing. This opens the
+    // mode picker, clicks the `ask` row, and reads the frame the store
+    // put on the wire.
+    use egui_kittest::kittest::Queryable;
+
     let mut store = booted();
     store.absorb(kage_client::Frame::Notification {
         method: "session/update".to_owned(),
@@ -147,11 +150,105 @@ fn the_mode_picker_writes_the_store_when_a_row_is_picked() {
             );
     harness.run();
     harness.run();
-    // The mode pill opens the picker; the second row is `ask`.
-    let (store, ..) = harness.state();
-    assert_eq!(
-        store.permission_mode().as_deref(),
-        Some("default"),
-        "the pick starts at the mode the agent reported"
+    // The mode pill opens the picker.
+    // The pill's clickable node is the sense-bearing wrapper, whose
+    // rect covers the label. The query finds the label, so the click
+    // targets the rect the label sits in.
+    let pill = harness
+        .query_by_label("Mode")
+        .or_else(|| harness.query_by_label("Default"))
+        .expect("the mode pill draws its active mode");
+    let at = pill.rect().center();
+    harness.hover_at(at);
+    harness.run();
+    harness.drag_at(at);
+    harness.run();
+    harness.drop_at(at);
+    harness.run();
+    // The picker's `ask` row.
+    let row = harness
+        .query_by_label("Ask first")
+        .expect("the picker lists the advertised modes");
+    row.click();
+    harness.run();
+    let (store, ..) = harness.state_mut();
+    let wrote = store.take_outgoing().into_iter().any(|frame| {
+        matches!(frame, kage_client::Frame::Request { method, params, .. }
+            if method == "session/set_config_option"
+                && params.get("configId").and_then(serde_json::Value::as_str) == Some("mode")
+                && params.get("value").and_then(serde_json::Value::as_str) == Some("ask"))
+    });
+    assert!(
+        wrote,
+        "the mode picker's click writes the mode to the store"
     );
+}
+
+#[test]
+fn the_dock_pills_answer_a_click() {
+    // The pills are frames with an interact over their rect, so a
+    // headless run can click one and read the action the dock raised.
+    use egui_kittest::kittest::Queryable;
+
+    let mut store = booted();
+    // Plan mode, so the plan pill shows.
+    store.absorb(kage_client::Frame::Notification {
+        method: "session/update".to_owned(),
+        params: serde_json::json!({
+            "sessionId": "s1",
+            "update": {
+                "sessionUpdate": "config_option_update",
+                "configOptions": [{
+                    "id": "mode", "name": "Mode", "category": "mode",
+                    "type": "select", "currentValue": "plan",
+                    "options": [
+                        {"value": "default", "name": "Default"},
+                        {"value": "plan", "name": "Plan"}
+                    ]
+                }]
+            },
+        }),
+    });
+    let composer = kage_desktop::ui::composer::Composer::new();
+    let mut harness =
+        Harness::builder()
+            .with_size(egui::Vec2::new(900.0, 600.0))
+            .build_ui_state(
+                |ui,
+                 (store, composer, installed): &mut (
+                    Store,
+                    kage_desktop::ui::composer::Composer,
+                    bool,
+                )| {
+                    if !*installed {
+                        kage_desktop::theme::install_fonts(ui.ctx());
+                        kage_desktop::icons::install(ui.ctx());
+                        kage_desktop::theme::apply_choice(
+                            &kage_desktop::theme::ThemeChoice::Named("kage-shadow".to_owned()),
+                            ui.ctx(),
+                        );
+                        *installed = true;
+                        return;
+                    }
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        ui.vertical(|ui| {
+                            let actions = kage_desktop::ui::dock::show(ui, store);
+                            assert!(
+                                actions.is_empty(),
+                                "an idle dock raises no actions: {actions:?}"
+                            );
+                            let commands = store.composer_commands().to_vec();
+                            composer.show(ui, store, &commands, false, true);
+                        });
+                    });
+                },
+                (store, composer, false),
+            );
+    harness.run();
+    harness.run();
+    let pill = harness
+        .query_by_label("Plan mode: the plan will show up here")
+        .expect("the plan pill shows while plan mode is on");
+    pill.click();
+    harness.run();
 }

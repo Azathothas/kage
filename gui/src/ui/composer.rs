@@ -124,18 +124,20 @@ pub enum BuiltinRun {
     NotMine,
 }
 
-/// The built-in command `text` runs, if it names one.
+/// The built-in command `text` runs, if it names one. A command with
+/// no arguments is a command with empty arguments, so a bare `/goal`
+/// names the goal command rather than falling through to the agent.
 #[must_use]
 pub fn builtin(text: &str) -> Option<Builtin<'_>> {
     let rest = text.trim_start().strip_prefix('/')?;
-    let (name, args) = rest.split_once(char::is_whitespace)?;
+    let (name, args) = match rest.split_once(char::is_whitespace) {
+        Some((name, args)) => (name, args.trim()),
+        None => (rest, ""),
+    };
     BUILTINS
         .iter()
         .find(|(builtin, ..)| *builtin == name)
-        .map(|_| Builtin {
-            name,
-            args: args.trim(),
-        })
+        .map(|_| Builtin { name, args })
 }
 
 /// One slash menu row.
@@ -712,6 +714,10 @@ fn show_suggestion_menu(
 /// The suggestion surface's width.
 const SUGGEST_W: f32 = 460.0;
 
+/// The width the composer's toolbar row takes, so the field beside it
+/// knows how much of the row is left.
+const TOOLBAR_W: f32 = 320.0;
+
 /// The suggestion surface's max height, before it scrolls.
 const SUGGEST_MAX_H: f32 = 300.0;
 
@@ -780,6 +786,10 @@ impl Composer {
     ) -> ComposerEvent {
         let palette = crate::theme::Palette::active_of(ui.ctx());
         let mut event = ComposerEvent::None;
+        // What the toolbar asked the shell for, carried out of the
+        // frame's borrow of the store.
+        let mut goal = false;
+        let mut confirm_swarm = false;
         let has_text = !self.draft.text.trim().is_empty();
 
         // The suggestion menu, over the field: the slash rows or the
@@ -801,12 +811,16 @@ impl Composer {
             ));
         let response = frame.show(ui, |ui| {
             ui.horizontal_top(|ui| {
+                // The field takes the row's remainder: the toolbar's
+                // controls sit to its right, so the field's width is
+                // the row's minus the toolbar's own row.
+                let field_w = (ui.available_width() - TOOLBAR_W).max(120.0);
                 ui.vertical(|ui| {
-                    ui.set_width(ui.available_width() - crate::theme::CTL_SM - crate::theme::SP_4);
+                    ui.set_width(field_w);
                     let edit = egui::TextEdit::multiline(&mut self.draft.text)
                         .id(egui::Id::new("composer-input"))
                         .hint_text(self.placeholder.as_str())
-                        .desired_width(f32::INFINITY)
+                        .desired_width(field_w)
                         .lock_focus(true);
                     let output = edit.show(ui);
                     if let Some(range) = output.cursor_range {
@@ -832,7 +846,32 @@ impl Composer {
                         crate::ui::toolbar::ToolbarEvent::Cancel => {
                             event = ComposerEvent::Stop;
                         }
-                        _ => {}
+                        crate::ui::toolbar::ToolbarEvent::OpenGoal => {
+                            goal = true;
+                        }
+                        crate::ui::toolbar::ToolbarEvent::TogglePlan => {
+                            if store.plan_on() {
+                                store.exit_plan();
+                            } else {
+                                store.enter_plan();
+                            }
+                        }
+                        crate::ui::toolbar::ToolbarEvent::ConfirmSwarm => {
+                            confirm_swarm = true;
+                        }
+                        crate::ui::toolbar::ToolbarEvent::SwarmOff => {
+                            store.set_option("swarm", "off");
+                        }
+                        crate::ui::toolbar::ToolbarEvent::SeedMention => {
+                            self.draft.insert(" @");
+                        }
+                        crate::ui::toolbar::ToolbarEvent::SeedSlash => {
+                            self.draft.text = "/".to_owned();
+                            self.draft.caret = 1;
+                        }
+                        crate::ui::toolbar::ToolbarEvent::Compact => {
+                            store.compact();
+                        }
                     }
                 }
             })
@@ -885,6 +924,14 @@ impl Composer {
             );
         }
 
+        // The goal and swarm asks outrank a send, so the frame reports
+        // the dialog rather than the prompt.
+        if goal {
+            event = ComposerEvent::OpenGoal;
+        } else if confirm_swarm {
+            event = ComposerEvent::ConfirmSwarm;
+        }
+
         // Enter sends, or adds a newline, per the preference. The
         // toolbar's own ask wins, so a click and a keypress in one
         // frame do not race.
@@ -899,6 +946,13 @@ impl Composer {
             }
         }
         event
+    }
+
+    /// Replaces the draft with `text`, the caret at its end. The dock's
+    /// edit action uses this, so the caret stays a valid byte offset.
+    pub fn set_draft(&mut self, text: String) {
+        self.draft.text = text;
+        self.draft.caret = self.draft.text.len();
     }
 
     /// Sets the placeholder, when it changed.
@@ -935,6 +989,10 @@ pub enum ComposerEvent {
     },
     /// Stop the run in flight.
     Stop,
+    /// Open the goal dialog.
+    OpenGoal,
+    /// Confirm swarm mode before it turns on.
+    ConfirmSwarm,
 }
 
 #[cfg(test)]

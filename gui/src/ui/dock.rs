@@ -393,7 +393,7 @@ fn goal_pill(
     } else {
         (crate::icons::Icon::Target, palette.accent)
     };
-    let response = egui::Frame::NONE
+    let inner = egui::Frame::NONE
         .fill(palette.surface)
         .stroke(egui::Stroke::new(1.0, palette.line))
         .corner_radius(egui::CornerRadius::same(crate::theme::R_FULL as u8))
@@ -408,9 +408,13 @@ fn goal_pill(
                         .size(crate::theme::FS_XS)
                         .color(color),
                 );
-            });
+            })
+            .response
         })
-        .response;
+        .inner;
+    let rect = inner.rect;
+    let id = egui::Id::new("dock-goal-pill").with(rect.top().to_bits());
+    let response = ui.interact(rect, id, egui::Sense::click());
     if response.clicked() {
         actions.push(DockAction::OpenGoal);
     }
@@ -441,7 +445,7 @@ fn plan_pill(
             PLAN_WAITING.to_owned(),
         )
     };
-    let response = egui::Frame::NONE
+    let inner = egui::Frame::NONE
         .fill(bg)
         .stroke(egui::Stroke::new(1.0, line))
         .corner_radius(egui::CornerRadius::same(crate::theme::R_FULL as u8))
@@ -456,9 +460,13 @@ fn plan_pill(
                         .size(crate::theme::FS_XS)
                         .color(fg),
                 );
-            });
+            })
+            .response
         })
-        .response;
+        .inner;
+    let rect = inner.rect;
+    let id = egui::Id::new("dock-plan-pill").with(rect.top().to_bits());
+    let response = ui.interact(rect, id, egui::Sense::click());
     if pending && response.clicked() {
         actions.push(DockAction::ScrollToPlan);
     }
@@ -667,7 +675,7 @@ fn pill(
     palette: &crate::theme::Palette,
     body: impl FnOnce(&mut egui::Ui),
 ) -> egui::Response {
-    egui::Frame::NONE
+    let inner = egui::Frame::NONE
         .fill(palette.surface)
         .stroke(egui::Stroke::new(1.0, palette.line))
         .corner_radius(egui::CornerRadius::same(crate::theme::R_FULL as u8))
@@ -677,9 +685,13 @@ fn pill(
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = crate::theme::SP_3;
                 body(ui);
-            });
+            })
+            .response
         })
-        .response
+        .inner;
+    let rect = inner.rect;
+    let id = egui::Id::new("dock-pill").with(rect.top().to_bits());
+    ui.interact(rect, id, egui::Sense::click())
 }
 
 #[cfg(test)]

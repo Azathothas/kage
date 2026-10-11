@@ -234,7 +234,10 @@ fn pill(
     palette: &Palette,
     body: impl FnOnce(&mut egui::Ui),
 ) -> egui::Response {
-    egui::Frame::NONE
+    // The contents measure first, inside a frame that carries the
+    // pill's fill and shape, and a Button is placed over the measured
+    // rect so the whole pill answers the pointer.
+    let inner = egui::Frame::NONE
         .fill(if open {
             palette.hover
         } else {
@@ -247,14 +250,25 @@ fn pill(
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
                 body(ui);
-            });
+            })
+            .response
         })
-        .response
+        .inner;
+    let rect = inner.rect;
+    let id = egui::Id::new("toolbar-pill")
+        .with(rect.left().to_bits())
+        .with(rect.top().to_bits());
+    let response = ui.interact(rect, id, egui::Sense::click());
+    if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::same(R_FULL as u8), palette.hover);
+    }
+    response
 }
 
 /// One toolbar pill that only carries a text label, dimmed.
 fn dimmed_pill(ui: &mut egui::Ui, label: &str, palette: &Palette, tip: &str) -> egui::Response {
-    let response = egui::Frame::NONE
+    egui::Frame::NONE
         .corner_radius(egui::CornerRadius::same(R_FULL as u8))
         .inner_margin(egui::Margin::symmetric(9, 0))
         .show(ui, |ui| {
@@ -265,8 +279,8 @@ fn dimmed_pill(ui: &mut egui::Ui, label: &str, palette: &Palette, tip: &str) -> 
                     .color(palette.faint),
             );
         })
-        .response;
-    response.on_hover_text(tip)
+        .response
+        .on_hover_text(tip)
 }
 
 /// A small mono chip, as the picker rows and the gauge carry.
@@ -351,7 +365,6 @@ pub fn show(
 ) -> Vec<ToolbarEvent> {
     let mut events = Vec::new();
     ui.horizontal(|ui| {
-        ui.set_height(PILL_H);
         ui.spacing_mut().item_spacing = egui::vec2(SP_2, 0.0);
         ui.add_space(SP_4);
         plus_button(ui, toolbar, store, &mut events);
@@ -526,7 +539,7 @@ fn plus_row_button(
     description: &str,
     tail: Option<&str>,
 ) -> egui::Response {
-    let response = egui::Frame::NONE
+    let inner = egui::Frame::NONE
         .fill(egui::Color32::TRANSPARENT)
         .corner_radius(egui::CornerRadius::same(R_MD as u8))
         .inner_margin(egui::Margin::symmetric(7, 6))
@@ -558,12 +571,14 @@ fn plus_row_button(
                         kbd(ui, tail, palette);
                     });
                 }
-            });
+            })
+            .response
         })
-        .response;
-    let hovered = response.hovered();
-    if hovered {
-        let rect = response.rect;
+        .inner;
+    let rect = inner.rect;
+    let id = egui::Id::new("plus-row").with(rect.top().to_bits());
+    let response = ui.interact(rect, id, egui::Sense::click());
+    if response.hovered() {
         ui.painter()
             .rect_filled(rect, egui::CornerRadius::same(R_MD as u8), palette.selected);
     }
@@ -582,7 +597,7 @@ fn dimmed_row(
     tail: Option<&str>,
     reason: &str,
 ) {
-    let response = egui::Frame::NONE
+    let inner = egui::Frame::NONE
         .corner_radius(egui::CornerRadius::same(R_MD as u8))
         .inner_margin(egui::Margin::symmetric(7, 6))
         .show(ui, |ui| {
@@ -612,9 +627,13 @@ fn dimmed_row(
                         kbd(ui, tail, palette);
                     });
                 }
-            });
+            })
+            .response
         })
-        .response;
+        .inner;
+    let rect = inner.rect;
+    let id = egui::Id::new("plus-dimmed-row").with(rect.top().to_bits());
+    let response = ui.interact(rect, id, egui::Sense::hover());
     let _ = response.on_hover_text(reason);
 }
 
@@ -694,7 +713,7 @@ fn mode_button(
                 let highlight = toolbar.mode_highlight();
                 for (index, row) in rows.iter().enumerate() {
                     let selected = index == highlight;
-                    let response = egui::Frame::NONE
+                    let inner = egui::Frame::NONE
                         .fill(if selected {
                             palette.selected
                         } else {
@@ -709,10 +728,12 @@ fn mode_button(
                                     .unwrap_or(palette.muted);
                                 crate::icons::icon(ui, pickers::mode_icon(&row.value), 14.0, tint);
                                 ui.vertical(|ui| {
-                                    ui.label(
-                                        egui::RichText::new(row.name.clone())
-                                            .size(FS_XS + 1.0)
-                                            .color(palette.ink),
+                                    let name = egui::RichText::new(row.name.clone())
+                                        .size(FS_XS + 1.0)
+                                        .color(palette.ink);
+                                    ui.add_sized(
+                                        [ui.available_width() - 60.0, 18.0],
+                                        egui::Label::new(name).selectable(false),
                                     );
                                     if let Some(description) = &row.description {
                                         ui.label(
@@ -751,9 +772,13 @@ fn mode_button(
                                             .color(palette.accent),
                                     );
                                 }
-                            });
+                            })
+                            .response
                         })
-                        .response;
+                        .inner;
+                    let rect = inner.rect;
+                    let id = egui::Id::new("mode-row").with(rect.top().to_bits());
+                    let response = ui.interact(rect, id, egui::Sense::click());
                     if response.clicked() {
                         store.set_permission(&row.value);
                         toolbar.close_pickers();
@@ -953,7 +978,7 @@ fn model_button(
                             .position(|candidate| candidate.id == row.id)
                             .unwrap_or(0);
                         let selected = index == highlight;
-                        let response = egui::Frame::NONE
+                        let inner = egui::Frame::NONE
                             .fill(if selected {
                                 palette.selected
                             } else {
@@ -1013,9 +1038,13 @@ fn model_button(
                                             },
                                         );
                                     }
-                                });
+                                })
+                                .response
                             })
-                            .response;
+                            .inner;
+                        let rect = inner.rect;
+                        let id = egui::Id::new("model-row").with(rect.top().to_bits());
+                        let response = ui.interact(rect, id, egui::Sense::click());
                         if response.clicked() {
                             store.set_option("model", &row.id);
                             toolbar.close_pickers();
@@ -1056,7 +1085,10 @@ fn model_button(
                                     );
                                 })
                                 .response;
-                            if response.clicked() {
+                            let rect = response.rect;
+                            let id = egui::Id::new("thinking-row").with(rect.top().to_bits());
+                            let clicked = ui.interact(rect, id, egui::Sense::click()).clicked();
+                            if clicked {
                                 store.set_option("thinking", &level.value);
                             }
                         }
