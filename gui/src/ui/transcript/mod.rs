@@ -15,3 +15,5 @@
 
 pub mod markdown;
 pub mod model;
+pub mod text_rows;
+pub mod tool_rows;
