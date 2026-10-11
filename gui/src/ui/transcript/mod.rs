@@ -13,4 +13,5 @@
 //! choices in [`UiState`] and the matches in [`FindMarks`] stay with
 //! their row across rebuilds.
 
+pub mod markdown;
 pub mod model;
