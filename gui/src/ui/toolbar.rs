@@ -662,10 +662,7 @@ fn mode_button(
     if !open {
         return Some(());
     }
-    let Some(rows) = store
-        .active_session()
-        .map(|session| pickers::mode_rows(session, ""))
-    else {
+    let Some(session_id) = store.active_id().map(str::to_owned) else {
         return Some(());
     };
     egui::Window::new("mode-picker")
@@ -688,21 +685,11 @@ fn mode_button(
                 if query.gained_focus() {
                     toolbar.mode_query().clear();
                 }
-                let rows: Vec<_> = rows
-                    .iter()
-                    .filter(|row| {
-                        let needle = pickers::picker_query(&toolbar.mode_query().clone());
-                        needle.is_empty()
-                            || format!(
-                                "{} {}",
-                                row.name,
-                                row.description.as_deref().unwrap_or_default()
-                            )
-                            .to_lowercase()
-                            .contains(&needle)
-                    })
-                    .cloned()
-                    .collect();
+                let rows = store
+                    .active_session()
+                    .filter(|session| session.id == session_id)
+                    .map(|session| pickers::mode_rows(session, &toolbar.mode_query().clone()))
+                    .unwrap_or_default();
                 let total = rows.len();
                 let highlight = toolbar.mode_highlight();
                 for (index, row) in rows.iter().enumerate() {
