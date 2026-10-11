@@ -225,16 +225,48 @@ pub fn thinking_label(store: &Store) -> Option<String> {
 
 /// One pill: 30px tall, fully round, muted text that fills and inks on
 /// hover or while its popover is open.
-fn pill_frame(ui: &mut egui::Ui, open: bool, palette: &Palette) -> egui::Response {
-    let widget = egui::Button::new("")
+/// One toolbar pill: a framed row of the widgets `body` draws, so the
+/// fill and the contents share one rect and the click covers the whole
+/// pill. Returns the pill's response.
+fn pill(
+    ui: &mut egui::Ui,
+    open: bool,
+    palette: &Palette,
+    body: impl FnOnce(&mut egui::Ui),
+) -> egui::Response {
+    egui::Frame::NONE
         .fill(if open {
             palette.hover
         } else {
             egui::Color32::TRANSPARENT
         })
         .corner_radius(egui::CornerRadius::same(R_FULL as u8))
-        .stroke(egui::Stroke::NONE);
-    ui.add(widget)
+        .inner_margin(egui::Margin::symmetric(9, 0))
+        .show(ui, |ui| {
+            ui.set_min_height(PILL_H);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                body(ui);
+            });
+        })
+        .response
+}
+
+/// One toolbar pill that only carries a text label, dimmed.
+fn dimmed_pill(ui: &mut egui::Ui, label: &str, palette: &Palette, tip: &str) -> egui::Response {
+    let response = egui::Frame::NONE
+        .corner_radius(egui::CornerRadius::same(R_FULL as u8))
+        .inner_margin(egui::Margin::symmetric(9, 0))
+        .show(ui, |ui| {
+            ui.set_min_height(PILL_H);
+            ui.label(
+                egui::RichText::new(label)
+                    .size(FS_XS + 1.0)
+                    .color(palette.faint),
+            );
+        })
+        .response;
+    response.on_hover_text(tip)
 }
 
 /// A small mono chip, as the picker rows and the gauge carry.
@@ -575,17 +607,7 @@ fn mode_button(
     let palette = Palette::active_of(ui.ctx());
     let open = toolbar.picker() == Some(Picker::Mode);
     let Some(option) = store.composer_option("mode") else {
-        let response = ui.add(
-            egui::Button::new(
-                egui::RichText::new("Mode")
-                    .size(FS_XS + 1.0)
-                    .color(palette.faint),
-            )
-            .fill(egui::Color32::TRANSPARENT)
-            .corner_radius(egui::CornerRadius::same(R_FULL as u8))
-            .min_size(egui::vec2(0.0, PILL_H)),
-        );
-        response.on_hover_text("the agent sent no mode config option");
+        dimmed_pill(ui, "Mode", palette, "the agent sent no mode config option");
         return Some(());
     };
     let active = store
@@ -593,17 +615,17 @@ fn mode_button(
         .unwrap_or_else(|| option.current_value.clone());
     let label = mode_label(store, &active);
     let tone = pickers::mode_tone(&active, palette);
-    let response = pill_frame(ui, open, palette);
     let text_color = tone.unwrap_or(palette.muted);
-    ui.painter().text(
-        response.rect.center() - egui::vec2(0.0, 6.0),
-        egui::Align2::CENTER_CENTER,
-        label,
-        egui::FontId::new(FS_XS + 1.0, family(FAMILY_BODY_MEDIUM)),
-        text_color,
-    );
-    crate::icons::icon(ui, pickers::mode_icon(&active), 14.0, text_color);
-    crate::icons::icon(ui, Icon::ChevronDown, 12.0, palette.faint);
+    let response = pill(ui, open, palette, |ui| {
+        crate::icons::icon(ui, pickers::mode_icon(&active), 14.0, text_color);
+        ui.label(
+            egui::RichText::new(label)
+                .size(FS_XS + 1.0)
+                .family(family(FAMILY_BODY_MEDIUM))
+                .color(text_color),
+        );
+        crate::icons::icon(ui, Icon::ChevronDown, 12.0, palette.faint);
+    });
     if response.clicked() {
         toolbar.toggle_picker(Picker::Mode);
     }
@@ -799,38 +821,36 @@ fn model_button(
     let model = store.composer_option("model");
     let thinking = store.composer_option("thinking");
     if model.is_none() && thinking.is_none() {
-        let response = ui.add(
-            egui::Button::new(
-                egui::RichText::new("Model")
-                    .size(FS_XS + 1.0)
-                    .color(palette.faint),
-            )
-            .fill(egui::Color32::TRANSPARENT)
-            .corner_radius(egui::CornerRadius::same(R_FULL as u8))
-            .min_size(egui::vec2(0.0, PILL_H)),
+        dimmed_pill(
+            ui,
+            "Model",
+            palette,
+            "the agent sent no model or thinking config option",
         );
-        response.on_hover_text("the agent sent no model or thinking config option");
         return Some(());
     }
     let label = model_label(store);
     let level = thinking_label(store);
-    let response = pill_frame(ui, open, palette);
-    let mut text = label;
-    if let Some(level) = &level {
-        text.push_str(&format!(" \u{b7} {level}"));
-    }
-    ui.painter().text(
-        response.rect.center() - egui::vec2(0.0, 6.0),
-        egui::Align2::CENTER_CENTER,
-        text,
-        egui::FontId::new(FS_XS + 1.0, family(FAMILY_BODY_MEDIUM)),
-        if level.is_some() {
-            palette.ink
-        } else {
-            palette.muted
-        },
-    );
-    crate::icons::icon(ui, Icon::ChevronDown, 12.0, palette.faint);
+    // The level label trails a middle dot and drops when thinking is
+    // off, as the web client's label does.
+    let text = match &level {
+        Some(level) => format!("{label} \u{b7} {level}"),
+        None => label,
+    };
+    let ink = if level.is_some() {
+        palette.ink
+    } else {
+        palette.muted
+    };
+    let response = pill(ui, open, palette, |ui| {
+        ui.label(
+            egui::RichText::new(text)
+                .size(FS_XS + 1.0)
+                .family(family(FAMILY_BODY_MEDIUM))
+                .color(ink),
+        );
+        crate::icons::icon(ui, Icon::ChevronDown, 12.0, palette.faint);
+    });
     if response.clicked() {
         toolbar.toggle_picker(Picker::Model);
     }
@@ -1009,16 +1029,14 @@ fn compact_button(
         return Some(());
     }
     let palette = Palette::active_of(ui.ctx());
-    let response = ui.add(
-        egui::Button::new(
+    let response = pill(ui, false, palette, |ui| {
+        crate::icons::icon(ui, crate::icons::Icon::Layers, 14.0, palette.warn);
+        ui.label(
             egui::RichText::new("Compact")
                 .size(FS_XS + 1.0)
                 .color(palette.warn),
-        )
-        .fill(egui::Color32::TRANSPARENT)
-        .corner_radius(egui::CornerRadius::same(R_FULL as u8))
-        .min_size(egui::vec2(0.0, PILL_H)),
-    );
+        );
+    });
     if response.clicked() {
         events.push(ToolbarEvent::Compact);
     }
@@ -1041,19 +1059,16 @@ fn context_ring(
     let percent = pickers::fill_percent(used, size);
     let hot = pickers::compacts_soon(used, size);
     let ring = if hot { palette.warn } else { palette.accent };
-    let response = ui.add(
-        egui::Button::new(
+    let response = pill(ui, false, palette, |ui| {
+        ui.label(
             egui::RichText::new(format!("{percent}%"))
                 .size(FS_2XS)
                 .family(family(FAMILY_MONO_REGULAR))
                 .color(palette.faint),
-        )
-        .fill(egui::Color32::TRANSPARENT)
-        .corner_radius(egui::CornerRadius::same(R_FULL as u8))
-        .min_size(egui::vec2(0.0, PILL_H)),
-    );
+        );
+    });
     let rect = response.rect;
-    let center = rect.center() - egui::vec2(22.0, 0.0);
+    let center = rect.left_center() + egui::vec2(9.0, 0.0);
     let radius = 9.0;
     ui.painter()
         .circle_stroke(center, radius, egui::Stroke::new(2.0, palette.fill_hover));
