@@ -14,6 +14,7 @@ pub mod keys;
 pub mod palette;
 pub mod pickers;
 pub mod shell;
+pub mod sidebar;
 pub mod splash;
 pub mod status;
 pub mod toasts;

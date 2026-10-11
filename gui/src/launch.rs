@@ -198,6 +198,8 @@ pub struct Shell {
     /// The composer under the chat column: the field, its toolbar and
     /// its suggestion menus.
     composer: crate::ui::composer::Composer,
+    /// The sidebar's search query and collapsed projects.
+    sidebar: crate::ui::sidebar::Sidebar,
 }
 
 impl Shell {
@@ -244,6 +246,7 @@ impl Shell {
             transcript: crate::ui::transcript::view::TranscriptView::new(),
             find: crate::ui::find::FindBar::new(),
             composer: crate::ui::composer::Composer::new(),
+            sidebar: crate::ui::sidebar::Sidebar::new(),
         }
     }
 
@@ -432,14 +435,34 @@ impl ShellApp {
 
         banner.show(ui, &gate);
 
-        let sidebar = |ui: &mut egui::Ui| {
-            let palette = crate::theme::Palette::active_of(ui.ctx());
-            ui.label(
-                egui::RichText::new("kage")
-                    .size(crate::theme::FS_LG)
-                    .color(palette.ink_strong)
-                    .family(crate::theme::family(crate::theme::FAMILY_BODY_SEMIBOLD)),
+        // The panel draws the sidebar twice while narrow, so its state
+        // rides in a cell the closure borrows once. The rows the
+        // sidebar lists are read once, before the chat column takes
+        // `self` for its mutable state, and handed to the closure as
+        // data; the closure's own events are carried out afterwards.
+        let sidebar = std::cell::RefCell::new(std::mem::take(&mut self.shell.sidebar));
+        let sidebar_rows = crate::ui::sidebar::sidebar_rows(&self.shell.store);
+        let sidebar_grouped = self.shell.store.prefs().group_by_project;
+        let (link_name, link_status) = crate::ui::sidebar::connect_lines(&self.shell.store);
+        let sidebar_palette = crate::theme::Palette::active_of(ui.ctx());
+        let (dot, halo) = crate::ui::sidebar::connect_dot(sidebar_palette, &self.shell.store);
+        let sidebar_link = (link_name, link_status, dot, halo);
+        let sidebar_events: std::cell::RefCell<Vec<crate::ui::sidebar::SidebarEvent>> =
+            std::cell::RefCell::new(Vec::new());
+        let sidebar_draw = |ui: &mut egui::Ui| {
+            let events = crate::ui::sidebar::show_rows(
+                ui,
+                &mut sidebar.borrow_mut(),
+                &sidebar_rows,
+                sidebar_grouped,
+                (
+                    sidebar_link.0.as_str(),
+                    sidebar_link.1.as_str(),
+                    sidebar_link.2,
+                    sidebar_link.3,
+                ),
             );
+            sidebar_events.borrow_mut().extend(events);
         };
         let workbench = |ui: &mut egui::Ui| {
             let palette = crate::theme::Palette::active_of(ui.ctx());
@@ -512,7 +535,9 @@ impl ShellApp {
                 self.show_composer(ui);
             });
         };
-        crate::ui::shell::show(ui, &mut panels, sidebar, chat, workbench);
+        crate::ui::shell::show(ui, &mut panels, sidebar_draw, chat, workbench);
+        self.shell.sidebar = sidebar.into_inner();
+        self.carry_sidebar(sidebar_events.into_inner());
 
         crate::ui::status::status_bar(ui, self.shell.store());
 
@@ -537,6 +562,35 @@ impl ShellApp {
         self.shell.panels = panels;
         self.shell.palette = palette;
         self.shell.toasts = toasts;
+    }
+
+    /// Carries out what the sidebar's controls asked for.
+    fn carry_sidebar(&mut self, events: Vec<crate::ui::sidebar::SidebarEvent>) {
+        for event in events {
+            match event {
+                crate::ui::sidebar::SidebarEvent::NewSession(dir) => {
+                    if let Some(dir) = dir {
+                        self.shell.store.set_project(Some(dir));
+                    }
+                    self.shell.store.show_welcome();
+                }
+                crate::ui::sidebar::SidebarEvent::Activate(id) => {
+                    self.shell.store.set_active(id);
+                }
+                crate::ui::sidebar::SidebarEvent::OpenPalette => {
+                    self.shell.palette.open();
+                }
+                crate::ui::sidebar::SidebarEvent::OpenSettings => {}
+                crate::ui::sidebar::SidebarEvent::Collapse => {
+                    self.shell.panels.toggle_sidebar();
+                }
+                crate::ui::sidebar::SidebarEvent::ToggleGrouping => {
+                    self.shell.store.update_prefs(|prefs| {
+                        prefs.group_by_project = !prefs.group_by_project;
+                    });
+                }
+            }
+        }
     }
 
     /// Draws the dock row: the pills the session's state names, over
