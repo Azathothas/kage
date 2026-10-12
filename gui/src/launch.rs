@@ -206,6 +206,8 @@ pub struct Shell {
     dialogs: crate::ui::dialog::Dialogs,
     /// The approval card over the open permission asks.
     approval: crate::ui::approval::Approval,
+    /// The settings dialog over the shell.
+    settings: crate::ui::settings::SettingsView,
 }
 
 impl Shell {
@@ -256,6 +258,7 @@ impl Shell {
             workbench: crate::ui::workbench::Workbench::new(),
             dialogs: crate::ui::dialog::Dialogs::new(),
             approval: crate::ui::approval::Approval::new(),
+            settings: crate::ui::settings::SettingsView::new(),
         }
     }
 
@@ -601,6 +604,12 @@ impl ShellApp {
             let events = self.shell.dialogs.show(ui, &self.shell.store, self.born);
             self.carry_dialog(events);
         }
+        // The settings dialog sits above the dialog layer: a dialog it
+        // opens from the palette must not answer beneath it.
+        if self.shell.settings.is_open() {
+            let events = self.shell.settings.show(ui, &self.shell.store);
+            self.carry_settings(events, ui.ctx());
+        }
         toasts.show(ui);
         splash.show(ui, orbit);
         let _ = context;
@@ -665,6 +674,45 @@ impl ShellApp {
                     self.shell.dialogs.browse(id);
                 }
             }
+        }
+    }
+
+    /// Carries out what the settings dialog asked for. A page the
+    /// engine's configuration backs asks for a fresh snapshot, so an
+    /// edit to config.toml shows on the next visit.
+    fn carry_settings(
+        &mut self,
+        events: Vec<crate::ui::settings::SettingsEvent>,
+        ctx: &egui::Context,
+    ) {
+        for event in events {
+            match event {
+                crate::ui::settings::SettingsEvent::Theme(choice) => {
+                    self.shell
+                        .store
+                        .update_prefs(|prefs| prefs.theme = choice.clone());
+                    crate::theme::apply_choice(&choice, ctx);
+                }
+                crate::ui::settings::SettingsEvent::Flip(field) => {
+                    self.shell.store.update_prefs(|prefs| match field {
+                        "enter_sends" => prefs.enter_sends = !prefs.enter_sends,
+                        "group_by_project" => prefs.group_by_project = !prefs.group_by_project,
+                        "confirm_swarm" => prefs.confirm_swarm = !prefs.confirm_swarm,
+                        "constellation" => prefs.constellation = !prefs.constellation,
+                        "fuel" => prefs.fuel = !prefs.fuel,
+                        _ => {}
+                    });
+                }
+                crate::ui::settings::SettingsEvent::Mode(value) => {
+                    let _ = self.shell.store.set_permission(&value);
+                }
+                crate::ui::settings::SettingsEvent::Restore(id) => {
+                    self.shell.store.restore(&id);
+                }
+            }
+        }
+        if self.shell.settings.is_open() && self.shell.settings.section().reads_config() {
+            self.shell.store.ask_config();
         }
     }
 
@@ -887,6 +935,9 @@ impl ShellApp {
 
     /// The active key context: a modal above the shell.
     fn context(&self) -> crate::ui::keys::Context {
+        if self.shell.settings.is_open() {
+            return crate::ui::keys::Context::Settings;
+        }
         if self.shell.dialogs.is_open() {
             return crate::ui::keys::Context::Dialog;
         }
@@ -991,8 +1042,21 @@ impl ShellApp {
             Action::ToggleWorkbench => self.shell.panels.toggle_workbench(),
             Action::OpenPalette => self.shell.palette.open(),
             Action::OpenFind => self.shell.find.open(),
-            Action::OpenSettings | Action::OpenProviders => {}
-            Action::CloseDialog => self.shell.dialogs.close(),
+            Action::OpenSettings => self
+                .shell
+                .settings
+                .open(crate::ui::settings::Section::General),
+            Action::OpenProviders => self
+                .shell
+                .settings
+                .open(crate::ui::settings::Section::Providers),
+            Action::CloseDialog => {
+                if self.shell.settings.is_open() {
+                    self.shell.settings.close();
+                } else {
+                    self.shell.dialogs.close();
+                }
+            }
             Action::SendPrompt
             | Action::ToggleSwarm
             | Action::TogglePlan

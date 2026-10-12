@@ -287,7 +287,7 @@ pub fn bindings() -> Vec<Binding> {
             context: Context::Settings,
             key: "Escape",
             mods: Mods::default(),
-            action: OpenSettings,
+            action: CloseDialog,
         },
         // Inside the input's own context, so it wins over the toolkit's
         // outdent binding while the composer is focused.

@@ -17,6 +17,8 @@ pub mod find;
 pub mod keys;
 pub mod palette;
 pub mod pickers;
+pub mod settings;
+pub mod settings_config;
 pub mod shell;
 pub mod sidebar;
 pub mod splash;
