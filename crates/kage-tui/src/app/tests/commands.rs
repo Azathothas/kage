@@ -723,3 +723,16 @@ fn plan_command_toggles_sets_and_plans_one_task() {
         other => panic!("expected the task prompt, got {other:?}"),
     }
 }
+
+#[test]
+fn undo_command_sends_an_undo_request() {
+    let (tx, rx) = mpsc::channel();
+    let mut app = app_with_defaults(shared_buffer(), tx);
+    let registry: Vec<&CommandSpec> = BUILTIN_COMMANDS.iter().collect();
+    let result = app.run_command_validated("undo", &registry);
+    assert!(
+        matches!(result, CommandResult::Done(None)),
+        "expected Done(None), got {result:?}"
+    );
+    assert_eq!(rx.try_recv(), Ok(RunRequest::UndoSession));
+}

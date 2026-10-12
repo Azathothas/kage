@@ -678,6 +678,170 @@ fn recorded_session(h: &Harness, dir: &std::path::Path) -> (SessionId, std::path
     (id, path)
 }
 
+/// A session with `count` recorded exchanges in `dir`.
+fn recorded_exchanges(
+    h: &Harness,
+    dir: &std::path::Path,
+    count: usize,
+) -> (SessionId, std::path::PathBuf) {
+    let id = SessionId::new();
+    let (recorder, path) = recorder_in(dir, id);
+    h.open(id, Some(recorder));
+    for i in 0..count {
+        prompt(&h.engine, id, &format!("round {i}"), Delivery::Steer);
+        until_runs_end(&h.events, 1);
+    }
+    (id, path)
+}
+
+#[test]
+fn undo_drops_the_last_exchange_and_returns_its_prompt() {
+    let dir = tempfile::tempdir().unwrap();
+    let h = harness(MockProvider::replaying(text_turn("reply")));
+    let (id, path) = recorded_exchanges(&h, dir.path(), 2);
+    assert_eq!(kage_session::replay(&path).unwrap().history.len(), 4);
+
+    h.engine.send(Command::to(id, CommandKind::Undo));
+    // Undone publishes after the SessionChanged reseat, so waiting for
+    // it collects both.
+    let seen = wait_for(&h.events, |e| {
+        matches!(e.event, Event::Host(HostEvent::Undone { .. }))
+    });
+    let (forked, messages) = seen
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::Host(HostEvent::SessionChanged { path, messages, .. }) => {
+                Some((path.clone(), messages.clone()))
+            }
+            _ => None,
+        })
+        .expect("undo reseats onto the fork");
+    assert_ne!(forked, path);
+    assert!(forked.exists());
+    // Two exchanges were recorded; the fork keeps only the first.
+    assert_eq!(messages.len(), 2);
+    assert_eq!(
+        kage_session::replay(&forked).unwrap().history.len(),
+        2,
+        "the fork keeps the first exchange only"
+    );
+    let undone = seen
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::Host(HostEvent::Undone { prompt }) => prompt.clone(),
+            _ => None,
+        })
+        .expect("undo reports the removed prompt");
+    assert_eq!(
+        undone.first(),
+        Some(&Content::Text {
+            text: "round 1".into()
+        })
+    );
+    // The undone session is live: the next prompt appends to the fork.
+    // The reseat re-keys the session to the fork's own id.
+    let live = seen
+        .iter()
+        .rev()
+        .find_map(|e| match &e.event {
+            Event::Host(HostEvent::SessionChanged { .. }) => Some(e.session),
+            _ => None,
+        })
+        .expect("the forked session id");
+    prompt(&h.engine, live, "again", Delivery::Steer);
+    until_runs_end(&h.events, 1);
+    assert_eq!(
+        kage_session::replay(&forked).unwrap().history.len(),
+        4,
+        "the next exchange lands on the fork"
+    );
+    assert_eq!(
+        kage_session::replay(&path).unwrap().history.len(),
+        4,
+        "the abandoned file is untouched"
+    );
+}
+
+#[test]
+fn undo_on_a_session_without_prompts_reports_nothing_to_undo() {
+    let dir = tempfile::tempdir().unwrap();
+    let h = harness(MockProvider::replaying(text_turn("reply")));
+    let (id, path) = recorded_session(&h, dir.path());
+    // Strip the recorded exchange: only the header stays.
+    let header = kage_session::replay(&path).unwrap().header;
+    std::fs::write(&path, serde_json::to_string(&{
+        kage_session::SessionEntry::Header(header)
+    })
+    .unwrap()
+    + "\n")
+    .unwrap();
+
+    h.engine.send(Command::to(id, CommandKind::Undo));
+    let seen = wait_for(&h.events, |e| {
+        matches!(
+            e.event,
+            Event::Host(HostEvent::Notice { level: NoticeLevel::Error, .. })
+        )
+    });
+    assert!(
+        format!("{:?}", seen.last().unwrap().event).contains("nothing to undo")
+    );
+    assert_eq!(kage_session::replay(&path).unwrap().history.len(), 0);
+}
+
+#[test]
+fn undo_keeps_entries_older_than_the_last_prompt() {
+    let dir = tempfile::tempdir().unwrap();
+    let h = harness(MockProvider::replaying(text_turn("reply")));
+    let (id, path) = recorded_exchanges(&h, dir.path(), 2);
+    // A label recorded between the exchanges, so it precedes the last
+    // prompt and must survive the undo cut.
+    let mut entries: Vec<kage_session::SessionEntry> =
+        kage_session::SessionReader::iter(&path)
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+    let anchor = entries
+        .iter()
+        .find_map(|e| match e {
+            kage_session::SessionEntry::Message(m) => Some(m.id),
+            _ => None,
+        })
+        .unwrap();
+    entries.insert(
+        3,
+        kage_session::SessionEntry::Label(kage_session::Label {
+            id: kage_session::EntryId::new(),
+            ts: chrono::Utc::now(),
+            text: "milestone".to_owned(),
+            anchor,
+        }),
+    );
+    // The live recorder holds the file's append lock, so replace the
+    // file instead of reopening it.
+    let rewritten = entries
+        .iter()
+        .map(|e| serde_json::to_string(e).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    std::fs::write(&path, rewritten).unwrap();
+
+    h.engine.send(Command::to(id, CommandKind::Undo));
+    let seen = wait_for(&h.events, is_session_changed);
+    let Event::Host(HostEvent::SessionChanged { path: forked, .. }) =
+        &seen.last().unwrap().event
+    else {
+        unreachable!()
+    };
+    let kept: Vec<kage_session::SessionEntry> = kage_session::SessionReader::iter(forked)
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(kept.len(), 4, "header, two messages, the label");
+    assert!(matches!(&kept[3], kage_session::SessionEntry::Label(l) if l.text == "milestone"));
+}
+
 #[test]
 fn load_session_switches_to_the_stored_conversation() {
     let dir = tempfile::tempdir().unwrap();

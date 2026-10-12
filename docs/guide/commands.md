@@ -58,6 +58,7 @@ The table lists every built-in command.
 | `/export [file]`          | Write the session transcript to a Markdown file (defaults to `<session-id-prefix>.md` in the working directory) |
 | `/tree`                   | Browse the session fork forest (resume, fork, delete). Agent sessions sit under their parent with an `agent: ` label. |
 | `/clone`                  | Duplicate the session to a new id and continue in the clone |
+| `/undo` | Drop the last exchange: the session forks just before its last prompt and continues on the copy, and the removed prompt goes back into the editor to edit and resend. Refused while a run is in flight |
 | `/keybindings` / `/keys`  | List active key mappings per mode with their owners |
 | `/attach [path]` / `/img` | Attach a png, jpeg, gif or webp image to the next prompt: a file `path`, or the OS clipboard image when no path is given. A toast warns when the model does not accept images. To include a text file, mention it as `@path` in the prompt instead |
 | `/mouse [on\|off\|toggle]` | Control terminal mouse capture                |

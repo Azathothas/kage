@@ -287,6 +287,15 @@ pub enum HostEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         content: Option<Vec<Content>>,
     },
+    /// A [`CommandKind::Undo`] was answered: the session now ends
+    /// before its last user prompt, and `prompt` is that prompt, for
+    /// the client to put back into its editor. Never recorded. Live.
+    Undone {
+        /// The removed user prompt, or `None` when it carried no
+        /// restorable content.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prompt: Option<Vec<Content>>,
+    },
 }
 
 /// One member of a [`HostEvent::AgentSpawned`] swarm batch: what its
@@ -579,6 +588,11 @@ pub enum CommandKind {
         #[serde(default)]
         switch: bool,
     },
+    /// Drop the last user prompt and everything after it: fork the
+    /// session at the entry before that prompt and continue on the
+    /// copy, answering with [`HostEvent::Undone`]. Refused while a run
+    /// is in flight.
+    Undo,
     /// Fork the session stored at `path` at its latest entry.
     ForkFile {
         /// Session file.
@@ -1020,6 +1034,9 @@ mod tests {
             HostEvent::PromptWithdrawn {
                 delivery: Delivery::Queue,
                 content: Some(rich_message().content),
+            },
+            HostEvent::Undone {
+                prompt: Some(rich_message().content),
             },
         ]
     }

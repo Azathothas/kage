@@ -837,6 +837,7 @@ impl Dispatcher {
             CommandKind::NewSession => self.new_session(id),
             CommandKind::LoadSession { path } => self.load_session(id, &path),
             CommandKind::Fork { at, switch } => self.fork(id, at.as_deref(), switch),
+            CommandKind::Undo => self.undo(id),
             CommandKind::ForkFile { path } => self.fork_file(id, &path),
             CommandKind::Clone => self.clone_session(id),
             CommandKind::DeleteSession { path } => self.delete_session(id, &path),

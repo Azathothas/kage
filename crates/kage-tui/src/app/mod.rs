@@ -175,6 +175,12 @@ pub enum RunRequest {
         /// most recent entry.
         at: String,
     },
+    /// Drop the last user prompt and everything after it: the worker
+    /// forks the session just before that prompt and continues on the
+    /// copy, so the transcript and history lose the undone exchange.
+    /// The removed prompt comes back in
+    /// [`kage_core::protocol::HostEvent::Undone`] for the editor.
+    UndoSession,
     /// Duplicate the active session to a fresh id and reseat the
     /// runtime onto the copy. Unlike [`RunRequest::ForkSession`], the
     /// original file is frozen as a snapshot and every subsequent turn

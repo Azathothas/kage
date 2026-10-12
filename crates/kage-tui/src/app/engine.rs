@@ -56,6 +56,13 @@ impl App {
             self.pending_withdrawn(envelope.session, *delivery, content.clone());
             return;
         }
+        if let Event::Host(HostEvent::Undone { prompt }) = &envelope.event {
+            if let Some(prompt) = prompt {
+                self.restore_prompt_into_editor(prompt.clone());
+            }
+            self.toast(NoticeLevel::Info, "undid the last exchange".into());
+            return;
+        }
         if let Event::Host(
             HostEvent::SessionChanged { .. }
             | HostEvent::TitleChanged { .. }
@@ -145,6 +152,12 @@ impl App {
             return;
         };
         self.pending.remove(at);
+        self.restore_prompt_into_editor(content);
+    }
+
+    /// Put a prompt's text and images back into the editor, above any
+    /// draft: the recall and undo paths share this.
+    fn restore_prompt_into_editor(&mut self, content: Vec<Content>) {
         let mut text = String::new();
         for item in content {
             match item {
@@ -263,6 +276,7 @@ impl App {
             HostEvent::McpServers { servers } => self.set_mcp_servers(servers),
             // Handled before this dispatch, in `apply_envelope`.
             HostEvent::PromptWithdrawn { .. }
+            | HostEvent::Undone { .. }
             | HostEvent::TitleChanged { .. }
             | HostEvent::AgentSpawned { .. }
             | HostEvent::AgentPaused { .. } => {}
@@ -392,6 +406,7 @@ impl App {
             HostEvent::UsageUpdated { .. } => true,
             // Handled before this dispatch, in `apply_envelope`.
             HostEvent::PromptWithdrawn { .. }
+            | HostEvent::Undone { .. }
             | HostEvent::StateChanged { .. }
             | HostEvent::TitleChanged { .. }
             | HostEvent::SessionChanged { .. }

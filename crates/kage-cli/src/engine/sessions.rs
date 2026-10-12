@@ -22,6 +22,29 @@ fn find_last_entry(path: &std::path::Path) -> Result<Option<EntryId>, kage_sessi
     Ok(last)
 }
 
+/// Locate `path`'s last user prompt for an undo: the entry id to cut
+/// before (the entry preceding the last user message, or the header
+/// when the prompt is the first), and that message's content. `None`
+/// when the session holds no user message after a header.
+fn last_user_prompt(
+    path: &std::path::Path,
+) -> Result<Option<(EntryId, Vec<Content>)>, kage_session::SessionError> {
+    let reader = SessionReader::iter(path)?;
+    let mut prev: Option<EntryId> = None;
+    let mut found: Option<(EntryId, Vec<Content>)> = None;
+    for item in reader {
+        let entry = item?;
+        if let kage_session::SessionEntry::Message(message) = &entry
+            && message.message.role == Role::User
+            && let Some(cut) = prev
+        {
+            found = Some((cut, message.message.content.clone()));
+        }
+        prev = Some(entry.id());
+    }
+    Ok(found)
+}
+
 /// Copy `src` up through entry `at` (an id prefix, or the latest entry)
 /// into a new session file next to it. Returns the new path and id.
 pub(super) fn fork_session(src: &Path, at: Option<&str>) -> Result<(PathBuf, SessionId), String> {
@@ -447,6 +470,44 @@ impl super::Dispatcher {
             Ok((_, new_id)) => self.info(id, format!("forked session: {}", short_id(new_id))),
             Err(err) => self.error(id, format!("fork: {err}")),
         }
+    }
+
+    /// Drop the last user prompt and everything after it: fork the
+    /// session just before that prompt and continue on the copy. The
+    /// removed prompt goes back to the client in
+    /// [`HostEvent::Undone`] so it can offer it for a retry.
+    pub(super) fn undo(&mut self, id: SessionId) {
+        if self.refuse_for_agent(id, "undo") || !self.ensure_idle(id, "undo") {
+            return;
+        }
+        let Some(src) = self.sessions[&id].path.clone() else {
+            self.error(id, "undo: the session is not recorded".to_owned());
+            return;
+        };
+        let prompt = match last_user_prompt(&src) {
+            Ok(Some((cut, prompt))) => {
+                let cut = cut.to_string();
+                match fork_session(&src, Some(&cut)) {
+                    Ok((dst, _)) => {
+                        self.load_session(id, &dst);
+                        Some(prompt)
+                    }
+                    Err(err) => {
+                        self.error(id, format!("undo: {err}"));
+                        return;
+                    }
+                }
+            }
+            Ok(None) => {
+                self.error(id, "undo: nothing to undo".to_owned());
+                return;
+            }
+            Err(err) => {
+                self.error(id, format!("undo: {err}"));
+                return;
+            }
+        };
+        self.bus.publish(id, HostEvent::Undone { prompt });
     }
 
     pub(super) fn fork_file(&self, id: SessionId, path: &Path) {

@@ -197,6 +197,10 @@ impl App {
                 let _ = self.send_request(RunRequest::CompactNow);
                 None
             }
+            "undo" => {
+                let _ = self.send_request(RunRequest::UndoSession);
+                None
+            }
             "settings" => {
                 self.open_settings();
                 None
