@@ -202,6 +202,8 @@ pub struct Shell {
     sidebar: crate::ui::sidebar::Sidebar,
     /// The right panel's tabs, filters and selections.
     workbench: crate::ui::workbench::Workbench,
+    /// The modal dialog layer over the shell.
+    dialogs: crate::ui::dialog::Dialogs,
 }
 
 impl Shell {
@@ -250,6 +252,7 @@ impl Shell {
             composer: crate::ui::composer::Composer::new(),
             sidebar: crate::ui::sidebar::Sidebar::new(),
             workbench: crate::ui::workbench::Workbench::new(),
+            dialogs: crate::ui::dialog::Dialogs::new(),
         }
     }
 
@@ -395,6 +398,9 @@ struct ShellApp {
     row_actions: Vec<crate::ui::transcript::tool_rows::RowAction>,
     /// The window's context, for the modal key contexts.
     ctx: egui::Context,
+    /// When this window was built, the clock the dialogs' fields and
+    /// the constellation twinkle on.
+    born: std::time::Instant,
 }
 
 impl eframe::App for ShellApp {
@@ -580,6 +586,17 @@ impl ShellApp {
                 let _ = entry;
             }
         }
+        // The dialog layer sits above every panel, over the palette
+        // too: a dialog the palette opens must not answer beneath it.
+        if let Some(id) = self.shell.dialogs.browsing()
+            && let Some(read) = self.shell.store.folders(id).cloned()
+        {
+            self.shell.dialogs.answer_folders(id, read);
+        }
+        if self.shell.dialogs.is_open() {
+            let events = self.shell.dialogs.show(ui, &self.shell.store, self.born);
+            self.carry_dialog(events);
+        }
         toasts.show(ui);
         splash.show(ui, orbit);
         let _ = context;
@@ -620,6 +637,33 @@ impl ShellApp {
     }
 
     /// Carries out what the workbench's panes asked for.
+    /// Carries out what the dialogs asked for.
+    fn carry_dialog(&mut self, events: Vec<crate::ui::dialog::DialogEvent>) {
+        for event in events {
+            match event {
+                crate::ui::dialog::DialogEvent::SaveGoal(text) => {
+                    let _ = self.shell.store.set_option("goal", &text);
+                }
+                crate::ui::dialog::DialogEvent::EnableSwarm(permission) => {
+                    if let Some(permission) = &permission {
+                        let _ = self.shell.store.set_permission(permission);
+                    }
+                    let _ = self.shell.store.set_option("swarm", "on");
+                }
+                crate::ui::dialog::DialogEvent::Rewind(prompt) => {
+                    let _ = self.shell.store.rewind(prompt);
+                }
+                crate::ui::dialog::DialogEvent::SetProject(path) => {
+                    self.shell.store.set_project(Some(path));
+                }
+                crate::ui::dialog::DialogEvent::Browse(path) => {
+                    let id = self.shell.store.ask_folders(path.as_deref());
+                    self.shell.dialogs.browse(id);
+                }
+            }
+        }
+    }
+
     fn carry_workbench(&mut self, events: Vec<crate::ui::workbench::WorkbenchEvent>) {
         for event in events {
             match event {
@@ -736,11 +780,15 @@ impl ShellApp {
                 .show(ui, &mut self.shell.store, &commands, running, enter_sends);
         match event {
             crate::ui::composer::ComposerEvent::OpenGoal => {
-                // The goal dialog arrives with E07; the ask is carried
-                // for the shell to open it.
+                self.shell
+                    .dialogs
+                    .show_dialog(crate::ui::dialog::DialogKind::Goal, &mut self.shell.store);
             }
             crate::ui::composer::ComposerEvent::ConfirmSwarm => {
-                // The swarm confirmation arrives with E07.
+                self.shell.dialogs.show_dialog(
+                    crate::ui::dialog::DialogKind::ConfirmSwarm,
+                    &mut self.shell.store,
+                );
             }
             _ => {}
         }
@@ -802,6 +850,9 @@ impl ShellApp {
 
     /// The active key context: a modal above the shell.
     fn context(&self) -> crate::ui::keys::Context {
+        if self.shell.dialogs.is_open() {
+            return crate::ui::keys::Context::Dialog;
+        }
         if self.shell.palette.is_open() {
             return crate::ui::keys::Context::Palette;
         }
@@ -859,6 +910,7 @@ impl ShellApp {
             Action::OpenPalette => self.shell.palette.open(),
             Action::OpenFind => self.shell.find.open(),
             Action::OpenSettings | Action::OpenProviders => {}
+            Action::CloseDialog => self.shell.dialogs.close(),
             Action::SendPrompt
             | Action::ToggleSwarm
             | Action::TogglePlan
@@ -1024,6 +1076,7 @@ pub fn run() {
                 update_rx: None,
                 row_actions: Vec::new(),
                 ctx: cc.egui_ctx.clone(),
+                born: std::time::Instant::now(),
             }))
         }),
     )

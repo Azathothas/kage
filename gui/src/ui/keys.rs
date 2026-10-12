@@ -123,6 +123,8 @@ pub enum Action {
     TogglePlan,
     /// Open the goal dialog.
     SetGoal,
+    /// Close the open dialog.
+    CloseDialog,
     /// Show the agents pane in the workbench.
     ShowAgents,
     /// Show the changes pane in the workbench.
@@ -255,7 +257,7 @@ pub fn bindings() -> Vec<Binding> {
             context: Context::Dialog,
             key: "Escape",
             mods: Mods::default(),
-            action: SetGoal,
+            action: CloseDialog,
         },
         Binding {
             context: Context::Picker,

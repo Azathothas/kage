@@ -9,6 +9,7 @@ pub mod agents;
 pub mod composer;
 pub mod constellation;
 pub mod copy;
+pub mod dialog;
 pub mod dock;
 pub mod eclipse;
 pub mod find;
