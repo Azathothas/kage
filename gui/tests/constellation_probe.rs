@@ -10,6 +10,8 @@ use egui_kittest::Harness;
 use kage_desktop::ui::agents::Phase;
 use kage_desktop::ui::constellation::{ConstellationEvent, Star, field_height, layout, show};
 
+mod testutil;
+
 /// A harness over the constellation of `stars`.
 fn harness_for(stars: &[Star]) -> Harness<'static, (Vec<Star>, Vec<ConstellationEvent>, bool)> {
     let stars = stars.to_vec();
@@ -17,14 +19,7 @@ fn harness_for(stars: &[Star]) -> Harness<'static, (Vec<Star>, Vec<Constellation
         .with_size(egui::Vec2::new(600.0, 200.0))
         .build_ui_state(
             |ui, (stars, events, installed): &mut (Vec<Star>, Vec<ConstellationEvent>, bool)| {
-                if !*installed {
-                    kage_desktop::theme::install_fonts(ui.ctx());
-                    kage_desktop::icons::install(ui.ctx());
-                    kage_desktop::theme::apply_choice(
-                        &kage_desktop::theme::ThemeChoice::Named("kage-shadow".to_owned()),
-                        ui.ctx(),
-                    );
-                    *installed = true;
+                if testutil::theme_installed(installed, ui.ctx()) {
                     return;
                 }
                 let (asked, _animate) = show(ui, stars, None, Instant::now());
@@ -77,14 +72,7 @@ fn a_field_of_ended_members_asks_for_no_frame() {
         .with_size(egui::Vec2::new(600.0, 200.0))
         .build_ui_state(
             |ui, (stars, animated, installed): &mut (Vec<Star>, bool, bool)| {
-                if !*installed {
-                    kage_desktop::theme::install_fonts(ui.ctx());
-                    kage_desktop::icons::install(ui.ctx());
-                    kage_desktop::theme::apply_choice(
-                        &kage_desktop::theme::ThemeChoice::Named("kage-shadow".to_owned()),
-                        ui.ctx(),
-                    );
-                    *installed = true;
+                if testutil::theme_installed(installed, ui.ctx()) {
                     return;
                 }
                 let (_, animate) = show(ui, stars, None, Instant::now());

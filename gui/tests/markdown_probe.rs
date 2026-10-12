@@ -7,6 +7,8 @@ use std::collections::HashMap;
 use egui_kittest::Harness;
 use kage_desktop::ui::transcript::markdown::{Pipeline, THEME_DAWN, THEME_SHADOW};
 
+mod testutil;
+
 /// A golden markdown document: headings, lists, a table, nested code,
 /// links, inline styles and a CJK line.
 const GOLDEN: &str = r#"# kage
@@ -48,12 +50,7 @@ fn harness_for(theme: &str, streaming: bool) -> Harness<'static, (String, bool)>
         .with_size(egui::Vec2::new(600.0, 800.0))
         .build_ui_state(
             |ui, (theme, streaming): &mut (String, bool)| {
-                kage_desktop::theme::install_fonts(ui.ctx());
-                kage_desktop::icons::install(ui.ctx());
-                kage_desktop::theme::apply_choice(
-                    &kage_desktop::theme::ThemeChoice::Named(theme.clone()),
-                    ui.ctx(),
-                );
+                testutil::install_theme(ui.ctx(), theme);
                 let mut pipeline = Pipeline::new();
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     pipeline.show("golden", GOLDEN, *streaming, ui);
@@ -108,11 +105,7 @@ fn the_pipeline_parses_only_the_streaming_entry_per_frame() {
         .with_size(egui::Vec2::new(600.0, 800.0))
         .build_ui_state(
             |ui, state: &mut State| {
-                kage_desktop::theme::install_fonts(ui.ctx());
-                kage_desktop::theme::apply_choice(
-                    &kage_desktop::theme::ThemeChoice::Named("kage-shadow".to_owned()),
-                    ui.ctx(),
-                );
+                testutil::install_theme(ui.ctx(), "kage-shadow");
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     state.pipeline.show("done", "# done", false, ui);
                     state.pipeline.show("tail", "streaming", true, ui);
@@ -168,7 +161,7 @@ fn the_cjk_line_renders_glyphs_now_that_a_fallback_loads() {
             .with_size(egui::Vec2::new(600.0, 120.0))
             .build_ui_state(
                 |ui, width: &mut Option<f32>| {
-                    kage_desktop::theme::install_fonts(ui.ctx());
+                    testutil::install_theme(ui.ctx(), "kage-shadow");
                     let fid = egui::FontId::new(28.0, egui::FontFamily::Proportional);
                     let galley = ui.ctx().fonts_mut(|f| {
                         f.layout(text.to_owned(), fid, egui::Color32::WHITE, f32::INFINITY)

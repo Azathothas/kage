@@ -6,6 +6,8 @@ use std::collections::HashMap;
 
 use egui_kittest::Harness;
 
+mod testutil;
+
 /// The app draws: fonts and icon loaders installed once, the theme
 /// choice applied, and the body the caller draws in the central panel.
 struct Probe {
@@ -26,12 +28,9 @@ fn harness(theme: &str, size: [f32; 2], body: Body) -> Harness<'static, Probe> {
         .with_size(egui::Vec2::new(size[0], size[1]))
         .build_ui_state(
             |ui, probe: &mut Probe| {
-                if !probe.installed {
+                if testutil::theme_installed(&mut probe.installed, ui.ctx()) {
                     // Fonts become active at the start of the next
                     // pass, so the themed style follows one pass later.
-                    kage_desktop::theme::install_fonts(ui.ctx());
-                    kage_desktop::icons::install(ui.ctx());
-                    probe.installed = true;
                     return;
                 }
                 kage_desktop::theme::apply_choice(

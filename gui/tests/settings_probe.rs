@@ -8,6 +8,8 @@ use egui_kittest::{Harness, kittest::Queryable};
 use kage_desktop::store::Store;
 use kage_desktop::ui::settings::{Section, SettingsEvent, SettingsView};
 
+mod testutil;
+
 /// The configuration snapshot the recorded engine answers with.
 fn config_answer() -> serde_json::Value {
     serde_json::json!({
@@ -48,14 +50,7 @@ fn harness_for(store: Store) -> Harness<'static, Probe> {
         .with_size(egui::Vec2::new(1000.0, 760.0))
         .build_ui_state(
             |ui, (store, settings, events, answered, installed): &mut Probe| {
-                if !*installed {
-                    kage_desktop::theme::install_fonts(ui.ctx());
-                    kage_desktop::icons::install(ui.ctx());
-                    kage_desktop::theme::apply_choice(
-                        &kage_desktop::theme::ThemeChoice::Named("kage-shadow".to_owned()),
-                        ui.ctx(),
-                    );
-                    *installed = true;
+                if testutil::theme_installed(installed, ui.ctx()) {
                     return;
                 }
                 events.extend(settings.show(
@@ -88,11 +83,8 @@ fn harness_for(store: Store) -> Harness<'static, Probe> {
         )
 }
 
-/// How many nodes carry `label`. The nav label and the page title of
-/// the General page share a word, so a count is the honest query.
-fn count(harness: &Harness<'_, Probe>, label: &str) -> usize {
-    harness.query_all_by_label(label).count()
-}
+// The nav label and the page title of the General page share a word,
+// so a count is the honest query; testutil owns the accesskit rules.
 
 /// A store with one open session.
 fn booted() -> Store {
@@ -152,16 +144,24 @@ fn the_dialog_draws_its_nav_and_the_general_page() {
         // open page reads twice; every other section reads once.
         let wanted = if section == Section::General { 2 } else { 1 };
         assert_eq!(
-            count(&harness, section.label()),
+            testutil::count(&harness, section.label()),
             wanted,
             "the nav row {} draws",
             section.label()
         );
     }
-    assert_eq!(count(&harness, "Appearance"), 1, "the first group draws");
-    assert_eq!(count(&harness, "Enter sends"), 1, "the input toggle draws");
     assert_eq!(
-        count(&harness, "Group sessions by project"),
+        testutil::count(&harness, "Appearance"),
+        1,
+        "the first group draws"
+    );
+    assert_eq!(
+        testutil::count(&harness, "Enter sends"),
+        1,
+        "the input toggle draws"
+    );
+    assert_eq!(
+        testutil::count(&harness, "Group sessions by project"),
         1,
         "the session toggle draws"
     );
@@ -175,8 +175,16 @@ fn a_nav_click_switches_the_page() {
     harness.run();
     harness.get_by_label("About").click();
     harness.run();
-    assert_eq!(count(&harness, "Protocol"), 1, "the About page draws");
-    assert_eq!(count(&harness, "Appearance"), 0, "the General page is gone");
+    assert_eq!(
+        testutil::count(&harness, "Protocol"),
+        1,
+        "the About page draws"
+    );
+    assert_eq!(
+        testutil::count(&harness, "Appearance"),
+        0,
+        "the General page is gone"
+    );
     assert_eq!(
         harness.state().1.section(),
         Section::About,
@@ -205,27 +213,27 @@ fn the_providers_page_reads_the_snapshot_and_the_session() {
     harness.run();
     harness.run();
     assert_eq!(
-        count(&harness, "Providers \u{b7} 3"),
+        testutil::count(&harness, "Providers \u{b7} 3"),
         1,
         "the page counts its rows"
     );
     assert_eq!(
-        count(&harness, "lab  openai  config.toml  key from LAB_KEY"),
+        testutil::count(&harness, "lab  openai  config.toml  key from LAB_KEY"),
         1,
         "the custom provider's row draws"
     );
     assert_eq!(
-        count(&harness, "http://lab:8080 \u{b7} 1 model"),
+        testutil::count(&harness, "http://lab:8080 \u{b7} 1 model"),
         1,
         "the custom provider's endpoint and model count draw"
     );
     assert_eq!(
-        count(&harness, "deepseek  key from DS"),
+        testutil::count(&harness, "deepseek  key from DS"),
         1,
         "the override's row draws"
     );
     assert_eq!(
-        count(&harness, "no models listed \u{b7} headers: X-Org"),
+        testutil::count(&harness, "no models listed \u{b7} headers: X-Org"),
         1,
         "a provider with no models says so"
     );
@@ -238,17 +246,17 @@ fn the_mcp_page_shows_the_transport_and_the_live_status() {
     harness.run();
     harness.run();
     assert_eq!(
-        count(&harness, "lab-mcp --port 9"),
+        testutil::count(&harness, "lab-mcp --port 9"),
         1,
         "the stdio server's command line draws"
     );
     assert_eq!(
-        count(&harness, "https://mcp.example.com"),
+        testutil::count(&harness, "https://mcp.example.com"),
         1,
         "the http server's url draws"
     );
     assert_eq!(
-        count(&harness, "lab  stdio  status unknown"),
+        testutil::count(&harness, "lab  stdio  status unknown"),
         1,
         "an unreported server reads status unknown"
     );
@@ -260,10 +268,18 @@ fn the_permissions_page_shows_the_modes_and_the_rules() {
     harness.state_mut().1.open(Section::Permissions);
     harness.run();
     harness.run();
-    assert_eq!(count(&harness, "Ask"), 1, "the session's mode cards draw");
-    assert_eq!(count(&harness, "Plan"), 0, "the plan mode is not a card");
     assert_eq!(
-        count(
+        testutil::count(&harness, "Ask"),
+        1,
+        "the session's mode cards draw"
+    );
+    assert_eq!(
+        testutil::count(&harness, "Plan"),
+        0,
+        "the plan mode is not a card"
+    );
+    assert_eq!(
+        testutil::count(
             &harness,
             "default ask \u{b7} allow cargo * \u{b7} deny rm *"
         ),
@@ -278,13 +294,21 @@ fn the_plugins_page_lists_the_configured_plugins() {
     harness.state_mut().1.open(Section::Plugins);
     harness.run();
     harness.run();
-    assert_eq!(count(&harness, "/plug"), 1, "the plugin directory draws");
     assert_eq!(
-        count(&harness, "Only these load: lab"),
+        testutil::count(&harness, "/plug"),
+        1,
+        "the plugin directory draws"
+    );
+    assert_eq!(
+        testutil::count(&harness, "Only these load: lab"),
         1,
         "the allowlist draws"
     );
-    assert_eq!(count(&harness, "lab  net"), 1, "the plugin's grants draw");
+    assert_eq!(
+        testutil::count(&harness, "lab  net"),
+        1,
+        "the plugin's grants draw"
+    );
 }
 
 #[test]
@@ -294,16 +318,32 @@ fn the_keyboard_page_lists_the_shell_bindings() {
     harness.run();
     harness.run();
     assert_eq!(
-        count(&harness, "Command palette"),
+        testutil::count(&harness, "Command palette"),
         1,
         "the app bindings draw"
     );
-    assert_eq!(count(&harness, "Newline"), 1, "the composer keys draw");
-    assert_eq!(count(&harness, "Ctrl"), 8, "the modifier caps draw");
-    assert_eq!(count(&harness, "K"), 1, "the palette's key cap draws");
-    assert_eq!(count(&harness, "Esc"), 2, "the interrupt's two caps draw");
     assert_eq!(
-        count(&harness, "Answer approval"),
+        testutil::count(&harness, "Newline"),
+        1,
+        "the composer keys draw"
+    );
+    assert_eq!(
+        testutil::count(&harness, "Ctrl"),
+        8,
+        "the modifier caps draw"
+    );
+    assert_eq!(
+        testutil::count(&harness, "K"),
+        1,
+        "the palette's key cap draws"
+    );
+    assert_eq!(
+        testutil::count(&harness, "Esc"),
+        2,
+        "the interrupt's two caps draw"
+    );
+    assert_eq!(
+        testutil::count(&harness, "Answer approval"),
         1,
         "the approval digits row draws"
     );
@@ -350,7 +390,7 @@ fn an_empty_archive_says_so() {
     harness.run();
     harness.run();
     assert_eq!(
-        count(
+        testutil::count(
             &harness,
             "Nothing archived. Archive a session from its \u{2026} menu."
         ),

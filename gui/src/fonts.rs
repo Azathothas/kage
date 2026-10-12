@@ -112,8 +112,12 @@ mod tests {
 
     #[test]
     fn the_probe_codepoint_is_the_cjk_measurement_character() {
-        assert_eq!(PROBE_CODEPOINT, 0x5F71, "影");
-        assert_eq!(char::from_u32(PROBE_CODEPOINT), Some('影'));
+        assert_eq!(PROBE_CODEPOINT, 0x5F71, "the CJK measurement glyph");
+        assert_eq!(
+            char::from_u32(PROBE_CODEPOINT),
+            Some('\u{5F71}'),
+            "the codepoint is the glyph"
+        );
     }
 
     #[test]

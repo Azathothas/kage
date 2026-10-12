@@ -8,6 +8,8 @@ use egui_kittest::{Harness, kittest::Queryable};
 use kage_desktop::store::Store;
 use kage_desktop::ui::settings::{Section, SettingsEvent, SettingsView};
 
+mod testutil;
+
 /// The directory models.dev answers with, as the picker lists it.
 fn directory_answer() -> serde_json::Value {
     serde_json::json!({
@@ -68,14 +70,7 @@ fn harness_for(store: Store) -> Harness<'static, Probe> {
         .with_size(egui::Vec2::new(1000.0, 760.0))
         .build_ui_state(
             |ui, (store, settings, events, answered, installed): &mut Probe| {
-                if !*installed {
-                    kage_desktop::theme::install_fonts(ui.ctx());
-                    kage_desktop::icons::install(ui.ctx());
-                    kage_desktop::theme::apply_choice(
-                        &kage_desktop::theme::ThemeChoice::Named("kage-shadow".to_owned()),
-                        ui.ctx(),
-                    );
-                    *installed = true;
+                if testutil::theme_installed(installed, ui.ctx()) {
                     return;
                 }
                 events.extend(settings.show(
@@ -117,20 +112,6 @@ fn harness_for(store: Store) -> Harness<'static, Probe> {
             },
             (store, SettingsView::new(), Vec::new(), Vec::new(), false),
         )
-}
-
-/// How many nodes carry `label`.
-fn count(harness: &Harness<'_, Probe>, label: &str) -> usize {
-    harness.query_all_by_label(label).count()
-}
-
-/// Whether some text field holds `text`. A field's text is the node's
-/// value, not its label.
-fn field_holds(harness: &Harness<'_, Probe>, text: &str) -> bool {
-    use egui_kittest::kittest::NodeT as _;
-    harness
-        .query_all_by(|node| node.role() == egui::accesskit::Role::TextInput)
-        .any(|node| node.accesskit_node().value().as_deref() == Some(text))
 }
 
 /// A store with one open session.
@@ -193,24 +174,32 @@ fn the_providers_page_add_button_opens_the_provider_form() {
     harness.state_mut().1.open(Section::Providers);
     settle(&mut harness);
     assert_eq!(
-        count(&harness, "Add custom provider"),
+        testutil::count(&harness, "Add custom provider"),
         1,
         "the page draws its add button"
     );
     harness.get_by_label("Add custom provider").click();
     harness.run();
     assert_eq!(
-        count(&harness, "Add provider"),
+        testutil::count(&harness, "Add provider"),
         1,
         "the provider form draws over the page"
     );
     assert_eq!(
-        count(&harness, "Add custom provider"),
+        testutil::count(&harness, "Add custom provider"),
         0,
         "the page it opened from is gone"
     );
-    assert_eq!(count(&harness, "Base URL"), 1, "the endpoint field draws");
-    assert_eq!(count(&harness, "Models"), 1, "the models table draws");
+    assert_eq!(
+        testutil::count(&harness, "Base URL"),
+        1,
+        "the endpoint field draws"
+    );
+    assert_eq!(
+        testutil::count(&harness, "Models"),
+        1,
+        "the models table draws"
+    );
 }
 
 #[test]
@@ -230,12 +219,12 @@ fn the_providers_page_edit_button_opens_the_form_on_that_row() {
         .click();
     harness.run();
     assert_eq!(
-        count(&harness, "Edit lab"),
+        testutil::count(&harness, "Edit lab"),
         1,
         "the form names the custom provider it edits"
     );
     assert!(
-        field_holds(&harness, "http://lab:8080"),
+        testutil::field_holds(&harness, "http://lab:8080"),
         "the endpoint field carries the saved value"
     );
 }
@@ -246,28 +235,32 @@ fn the_mcp_page_add_button_opens_the_server_form() {
     harness.state_mut().1.open(Section::Mcp);
     settle(&mut harness);
     assert_eq!(
-        count(&harness, "Add server"),
+        testutil::count(&harness, "Add server"),
         1,
         "the page draws its add button"
     );
     harness.get_by_label("Add server").click();
     harness.run();
     assert_eq!(
-        count(&harness, "Add MCP server"),
+        testutil::count(&harness, "Add MCP server"),
         1,
         "the MCP form draws over the page"
     );
     assert_eq!(
-        count(&harness, "Add server"),
+        testutil::count(&harness, "Add server"),
         0,
         "the page it opened from is gone"
     );
     assert_eq!(
-        count(&harness, "Transport"),
+        testutil::count(&harness, "Transport"),
         1,
         "the transport choice draws"
     );
-    assert_eq!(count(&harness, "stdio"), 1, "the stdio segment draws");
+    assert_eq!(
+        testutil::count(&harness, "stdio"),
+        1,
+        "the stdio segment draws"
+    );
 }
 
 #[test]
@@ -276,26 +269,34 @@ fn the_acp_page_add_button_opens_the_agent_form() {
     harness.state_mut().1.open(Section::Acp);
     settle(&mut harness);
     assert_eq!(
-        count(&harness, "Add ACP agent"),
+        testutil::count(&harness, "Add ACP agent"),
         1,
         "the page draws its add button"
     );
     assert_eq!(
-        count(&harness, "npx -y claude-code-acp"),
+        testutil::count(&harness, "npx -y claude-code-acp"),
         1,
         "the configured agent's command line draws"
     );
     harness.get_by_label("Add ACP agent").click();
     harness.run();
     assert_eq!(
-        count(&harness, "Add ACP agent"),
+        testutil::count(&harness, "Add ACP agent"),
         1,
         "the form's own title reuses the page's add label"
     );
-    assert_eq!(count(&harness, "Command"), 1, "the command field draws");
-    assert_eq!(count(&harness, "Arguments"), 1, "the arguments field draws");
     assert_eq!(
-        count(&harness, "Test handshake"),
+        testutil::count(&harness, "Command"),
+        1,
+        "the command field draws"
+    );
+    assert_eq!(
+        testutil::count(&harness, "Arguments"),
+        1,
+        "the arguments field draws"
+    );
+    assert_eq!(
+        testutil::count(&harness, "Test handshake"),
         1,
         "the handshake button draws"
     );
@@ -309,12 +310,12 @@ fn the_acp_page_edit_button_opens_the_form_on_that_agent() {
     harness.get_by_label("Edit").click();
     harness.run();
     assert_eq!(
-        count(&harness, "Edit acp:claude"),
+        testutil::count(&harness, "Edit acp:claude"),
         1,
         "the form names the agent it edits"
     );
     assert!(
-        field_holds(&harness, "npx"),
+        testutil::field_holds(&harness, "npx"),
         "the command field carries its value"
     );
 }
@@ -327,18 +328,22 @@ fn the_directory_button_opens_the_models_dev_picker() {
     harness.get_by_label("Import from models.dev").click();
     harness.run();
     assert_eq!(
-        count(&harness, "Import from models.dev"),
+        testutil::count(&harness, "Import from models.dev"),
         1,
         "the picker draws under the button that opened it"
     );
-    assert_eq!(count(&harness, "Search"), 1, "the search field draws");
     assert_eq!(
-        count(&harness, "Reading the directory"),
+        testutil::count(&harness, "Search"),
+        1,
+        "the search field draws"
+    );
+    assert_eq!(
+        testutil::count(&harness, "Reading the directory"),
         0,
         "the answer landed: the picker lists its providers"
     );
     assert!(
-        count(&harness, "Lab") >= 1,
+        testutil::count(&harness, "Lab") >= 1,
         "the provider the directory lists draws"
     );
 }
@@ -351,14 +356,14 @@ fn the_escape_key_leaves_a_form_before_the_dialog() {
     harness.get_by_label("Add server").click();
     harness.run();
     assert_eq!(
-        count(&harness, "Add MCP server"),
+        testutil::count(&harness, "Add MCP server"),
         1,
         "the form draws before the key"
     );
     harness.key_press(egui::Key::Escape);
     harness.run();
     assert_eq!(
-        count(&harness, "Add server"),
+        testutil::count(&harness, "Add server"),
         1,
         "the key left the form and the page is back"
     );

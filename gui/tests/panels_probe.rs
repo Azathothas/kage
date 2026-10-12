@@ -8,6 +8,8 @@ use std::collections::HashMap;
 use egui_kittest::{Harness, kittest::Queryable};
 use kage_desktop::ui::shell::Panels;
 
+mod testutil;
+
 /// A harness over the panels at `width`, drawing the three bodies as
 /// labeled columns so the geometry is readable.
 fn harness_for(width: f32, panels: Panels) -> Harness<'static, Panels> {
@@ -15,12 +17,7 @@ fn harness_for(width: f32, panels: Panels) -> Harness<'static, Panels> {
         .with_size(egui::Vec2::new(width, 600.0))
         .build_ui_state(
             |ui, panels: &mut Panels| {
-                kage_desktop::theme::install_fonts(ui.ctx());
-                kage_desktop::icons::install(ui.ctx());
-                kage_desktop::theme::apply_choice(
-                    &kage_desktop::theme::ThemeChoice::Named("kage-shadow".to_owned()),
-                    ui.ctx(),
-                );
+                testutil::install_theme(ui.ctx(), "kage-shadow");
                 kage_desktop::ui::shell::show(
                     ui,
                     panels,

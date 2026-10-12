@@ -8,6 +8,8 @@ use kage_desktop::prefs::{Channel, Prefs};
 use kage_desktop::store::Store;
 use kage_desktop::ui::settings::{Install, Section, SettingsEvent, SettingsView, UpdateState};
 
+mod testutil;
+
 /// The probe's harness state: the store, the dialog, what it asked
 /// for, the release state the row reads, and the font-install flag.
 type Probe = (Store, SettingsView, Vec<SettingsEvent>, UpdateState, bool);
@@ -40,14 +42,7 @@ fn harness_for(prefs: Prefs, updates: UpdateState) -> Harness<'static, Probe> {
         .with_size(egui::Vec2::new(1000.0, 760.0))
         .build_ui_state(
             |ui, (store, settings, events, updates, installed): &mut Probe| {
-                if !*installed {
-                    kage_desktop::theme::install_fonts(ui.ctx());
-                    kage_desktop::icons::install(ui.ctx());
-                    kage_desktop::theme::apply_choice(
-                        &kage_desktop::theme::ThemeChoice::Named("kage-shadow".to_owned()),
-                        ui.ctx(),
-                    );
-                    *installed = true;
+                if testutil::theme_installed(installed, ui.ctx()) {
                     return;
                 }
                 events.extend(settings.show(ui, store, updates));
@@ -64,11 +59,6 @@ fn about_page(prefs: Prefs, updates: UpdateState) -> Harness<'static, Probe> {
     harness
 }
 
-/// How many nodes carry `label`.
-fn count(harness: &Harness<'_, Probe>, label: &str) -> usize {
-    harness.query_all_by_label(label).count()
-}
-
 /// Preferences that saw one check on the stable channel.
 fn checked() -> Prefs {
     Prefs {
@@ -83,16 +73,20 @@ fn checked() -> Prefs {
 fn the_row_says_when_no_check_has_run() {
     let harness = about_page(Prefs::default(), UpdateState::default());
     assert_eq!(
-        count(&harness, "engine: no check has run yet"),
+        testutil::count(&harness, "engine: no check has run yet"),
         1,
         "the engine line says what it does not know"
     );
     assert_eq!(
-        count(&harness, "desktop: no check has run yet"),
+        testutil::count(&harness, "desktop: no check has run yet"),
         1,
         "the desktop line says the same"
     );
-    assert_eq!(count(&harness, "Check now"), 1, "the row can check now");
+    assert_eq!(
+        testutil::count(&harness, "Check now"),
+        1,
+        "the row can check now"
+    );
 }
 
 #[test]
@@ -104,12 +98,12 @@ fn a_current_client_is_told_it_is_current() {
     prefs.latest_cli_version = Some("0.1.0".to_owned());
     let harness = about_page(prefs, UpdateState::default());
     assert_eq!(
-        count(&harness, "engine 0.1.0; current with 0.1.0"),
+        testutil::count(&harness, "engine 0.1.0; current with 0.1.0"),
         1,
         "the engine is current"
     );
     assert!(
-        count(&harness, "desktop 0.0.1 is available") == 0,
+        testutil::count(&harness, "desktop 0.0.1 is available") == 0,
         "a lower latest is not newer"
     );
 }
@@ -121,17 +115,17 @@ fn an_install_button_appears_for_each_thing_that_is_behind() {
     prefs.latest_desktop_version = Some("9.9.9".to_owned());
     let harness = about_page(prefs, UpdateState::default());
     assert_eq!(
-        count(&harness, "Install engine"),
+        testutil::count(&harness, "Install engine"),
         1,
         "a newer engine offers its install"
     );
     assert_eq!(
-        count(&harness, "Install desktop"),
+        testutil::count(&harness, "Install desktop"),
         1,
         "a newer client offers its install"
     );
     assert_eq!(
-        count(&harness, "Installing\u{2026}"),
+        testutil::count(&harness, "Installing\u{2026}"),
         0,
         "nothing is installing yet"
     );
@@ -147,12 +141,12 @@ fn an_install_in_flight_reads_as_installing() {
     };
     let harness = about_page(prefs, updates);
     assert_eq!(
-        count(&harness, "Installing\u{2026}"),
+        testutil::count(&harness, "Installing\u{2026}"),
         1,
         "the button shows the download is running"
     );
     assert_eq!(
-        count(&harness, "Install engine"),
+        testutil::count(&harness, "Install engine"),
         0,
         "the plain label is gone"
     );
@@ -164,7 +158,7 @@ fn a_failed_check_names_its_error() {
     prefs.check_error = Some("the release list did not load".to_owned());
     let harness = about_page(prefs, UpdateState::default());
     assert_eq!(
-        count(&harness, "last check failed: the release list did not load"),
+        testutil::count(&harness, "last check failed: the release list did not load"),
         1,
         "the refusal draws under the lines"
     );
@@ -180,7 +174,7 @@ fn an_install_note_reports_what_happened() {
     };
     let harness = about_page(prefs, updates);
     assert_eq!(
-        count(&harness, "the download did not load"),
+        testutil::count(&harness, "the download did not load"),
         1,
         "the note draws under the buttons"
     );

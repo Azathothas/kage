@@ -5,6 +5,8 @@
 use egui_kittest::Harness;
 use kage_desktop::store::Store;
 
+mod testutil;
+
 #[test]
 fn the_composer_sits_under_the_transcript_column() {
     let mut store = Store::new("/w", false);
@@ -27,14 +29,7 @@ fn the_composer_sits_under_the_transcript_column() {
                 kage_desktop::ui::composer::Composer,
                 bool,
             )| {
-                if !*installed {
-                    kage_desktop::theme::install_fonts(ui.ctx());
-                    kage_desktop::icons::install(ui.ctx());
-                    kage_desktop::theme::apply_choice(
-                        &kage_desktop::theme::ThemeChoice::Named("kage-shadow".to_owned()),
-                        ui.ctx(),
-                    );
-                    *installed = true;
+                if testutil::theme_installed(installed, ui.ctx()) {
                     return;
                 }
                 // The shell's three panels, the chat column carrying

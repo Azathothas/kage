@@ -8,6 +8,8 @@ use egui_kittest::{Harness, kittest::Queryable};
 use kage_desktop::store::Store;
 use kage_desktop::ui::approval::{Approval, ApprovalEvent};
 
+mod testutil;
+
 /// A harness over the approval card with `store`'s session open.
 fn harness_for(store: Store) -> Harness<'static, (Store, Approval, Vec<ApprovalEvent>, bool)> {
     Harness::builder()
@@ -19,14 +21,7 @@ fn harness_for(store: Store) -> Harness<'static, (Store, Approval, Vec<ApprovalE
                 Vec<ApprovalEvent>,
                 bool,
             )| {
-                if !*installed {
-                    kage_desktop::theme::install_fonts(ui.ctx());
-                    kage_desktop::icons::install(ui.ctx());
-                    kage_desktop::theme::apply_choice(
-                        &kage_desktop::theme::ThemeChoice::Named("kage-shadow".to_owned()),
-                        ui.ctx(),
-                    );
-                    *installed = true;
+                if testutil::theme_installed(installed, ui.ctx()) {
                     return;
                 }
                 events.extend(approval.show(ui, store));

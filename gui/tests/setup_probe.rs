@@ -5,6 +5,8 @@
 use egui_kittest::{Harness, kittest::Queryable};
 use kage_desktop::ui::setup::{SetupEvent, SetupView};
 
+mod testutil;
+
 /// The probe's harness state: the screen, what it asked for, and the
 /// one-frame font-install flag.
 type Probe = (SetupView, Option<SetupEvent>, bool);
@@ -15,14 +17,7 @@ fn harness_for(view: SetupView) -> Harness<'static, Probe> {
         .with_size(egui::Vec2::new(1000.0, 760.0))
         .build_ui_state(
             |ui, (screen, asked, installed): &mut Probe| {
-                if !*installed {
-                    kage_desktop::theme::install_fonts(ui.ctx());
-                    kage_desktop::icons::install(ui.ctx());
-                    kage_desktop::theme::apply_choice(
-                        &kage_desktop::theme::ThemeChoice::Named("kage-shadow".to_owned()),
-                        ui.ctx(),
-                    );
-                    *installed = true;
+                if testutil::theme_installed(installed, ui.ctx()) {
                     return;
                 }
                 screen.show(ui);
@@ -36,41 +31,32 @@ fn harness_for(view: SetupView) -> Harness<'static, Probe> {
         )
 }
 
-/// How many nodes carry `label`.
-fn count(harness: &Harness<'_, Probe>, label: &str) -> usize {
-    harness.query_all_by_label(label).count()
-}
-
-/// How many text fields draw. A field's text is its value, so the
-/// probes read them by role.
-fn text_fields(harness: &Harness<'_, Probe>) -> usize {
-    harness
-        .query_all_by(|node| node.role() == egui::accesskit::Role::TextInput)
-        .count()
-}
-
-/// The one text field, by its order on screen.
-fn field<'a>(harness: &'a Harness<'a, Probe>) -> egui_kittest::Node<'a> {
-    harness
-        .query_all_by(|node| node.role() == egui::accesskit::Role::TextInput)
-        .next()
-        .expect("the path field draws")
-}
-
 #[test]
 fn the_screen_says_what_is_missing_and_how_to_fix_it() {
     let mut harness = harness_for(SetupView::new());
     harness.run();
     assert_eq!(
-        count(&harness, "kage is not installed"),
+        testutil::count(&harness, "kage is not installed"),
         1,
         "the screen names the problem"
     );
-    assert_eq!(text_fields(&harness), 1, "the path field draws");
-    assert_eq!(count(&harness, "Use"), 1, "the probe button draws");
-    assert_eq!(count(&harness, "Check again"), 1, "the retry button draws");
     assert_eq!(
-        count(
+        testutil::field_values(&harness).len(),
+        1,
+        "the path field draws"
+    );
+    assert_eq!(
+        testutil::count(&harness, "Use"),
+        1,
+        "the probe button draws"
+    );
+    assert_eq!(
+        testutil::count(&harness, "Check again"),
+        1,
+        "the retry button draws"
+    );
+    assert_eq!(
+        testutil::count(
             &harness,
             "cargo install --locked --git https://github.com/QaidVoid/kage kage-cli"
         ),
@@ -78,12 +64,12 @@ fn the_screen_says_what_is_missing_and_how_to_fix_it() {
         "the cargo install command draws"
     );
     assert_eq!(
-        count(&harness, "nix profile install github:QaidVoid/kage"),
+        testutil::count(&harness, "nix profile install github:QaidVoid/kage"),
         1,
         "the nix command draws"
     );
     assert_eq!(
-        count(&harness, "https://github.com/QaidVoid/kage/releases/latest"),
+        testutil::count(&harness, "https://github.com/QaidVoid/kage/releases/latest"),
         1,
         "the release page draws"
     );
@@ -102,7 +88,7 @@ fn an_empty_path_is_refused_where_the_user_can_see_it() {
     );
     assert_eq!(harness.state().1, None, "nothing is handed to the shell");
     assert_eq!(
-        count(&harness, "Enter the path to a kage binary."),
+        testutil::count(&harness, "Enter the path to a kage binary."),
         1,
         "the refusal draws on the screen"
     );
@@ -112,9 +98,13 @@ fn an_empty_path_is_refused_where_the_user_can_see_it() {
 fn a_program_that_is_not_kage_is_refused_with_why() {
     let mut harness = harness_for(SetupView::new());
     harness.run();
-    field(&harness).click();
+    testutil::first_field(&harness)
+        .expect("the path field draws")
+        .click();
     harness.run();
-    field(&harness).type_text("true");
+    testutil::first_field(&harness)
+        .expect("the path field draws")
+        .type_text("true");
     harness.run();
     harness.get_by_label("Use").click();
     harness.run();
@@ -139,9 +129,13 @@ fn a_probed_binary_is_handed_to_the_shell() {
     let path = stub.to_string_lossy().into_owned();
     let mut harness = harness_for(SetupView::new());
     harness.run();
-    field(&harness).click();
+    testutil::first_field(&harness)
+        .expect("the path field draws")
+        .click();
     harness.run();
-    field(&harness).type_text(&path);
+    testutil::first_field(&harness)
+        .expect("the path field draws")
+        .type_text(&path);
     harness.run();
     harness.get_by_label("Use").click();
     harness.run();

@@ -8,20 +8,15 @@ use egui_kittest::{Harness, kittest::Queryable};
 use kage_desktop::store::Store;
 use kage_desktop::ui::dialog::{DialogEvent, DialogKind, Dialogs};
 
+mod testutil;
+
 /// A harness over the dialog layer with `store`'s session open.
 fn harness_for(store: Store) -> Harness<'static, (Store, Dialogs, Vec<DialogEvent>, bool)> {
     Harness::builder()
         .with_size(egui::Vec2::new(900.0, 700.0))
         .build_ui_state(
         |ui, (store, dialogs, events, installed): &mut (Store, Dialogs, Vec<DialogEvent>, bool)| {
-            if !*installed {
-                kage_desktop::theme::install_fonts(ui.ctx());
-                kage_desktop::icons::install(ui.ctx());
-                kage_desktop::theme::apply_choice(
-                    &kage_desktop::theme::ThemeChoice::Named("kage-shadow".to_owned()),
-                    ui.ctx(),
-                );
-                *installed = true;
+            if testutil::theme_installed(installed, ui.ctx()) {
                 return;
             }
             let asked = dialogs.show(ui, store, std::time::Instant::now());

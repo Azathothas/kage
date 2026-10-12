@@ -8,6 +8,8 @@ use kage_desktop::store::{Command, Store};
 use kage_desktop::transport::{State, replay};
 use kage_desktop::ui::transcript::view::TranscriptView;
 
+mod testutil;
+
 /// Carries out the store's pending commands the way the shell does.
 fn run_commands(store: &mut Store) {
     for command in store.take_commands() {
@@ -52,12 +54,9 @@ fn harness_for(width: f32) -> Harness<'static, (TranscriptView, Store, bool)> {
         .with_size(egui::Vec2::new(width, 700.0))
         .build_ui_state(
             |ui, (view, store, started): &mut (TranscriptView, Store, bool)| {
-                if !*started {
+                if testutil::theme_installed(started, ui.ctx()) {
                     // Fonts become active at the start of the next
                     // pass, so the themed style follows one pass later.
-                    kage_desktop::theme::install_fonts(ui.ctx());
-                    kage_desktop::icons::install(ui.ctx());
-                    *started = true;
                     return;
                 }
                 kage_desktop::theme::apply_choice(

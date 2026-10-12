@@ -6,6 +6,8 @@ use egui_kittest::Harness;
 use kage_desktop::store::Store;
 use kage_desktop::ui::composer::Composer;
 
+mod testutil;
+
 /// A harness over the composer and the dock row, drawing them over a
 /// store the caller has booted.
 fn harness(store: Store) -> Harness<'static, (Store, Composer, bool)> {
@@ -13,14 +15,7 @@ fn harness(store: Store) -> Harness<'static, (Store, Composer, bool)> {
         .with_size(egui::Vec2::new(900.0, 600.0))
         .build_ui_state(
             |ui, (store, composer, installed): &mut (Store, Composer, bool)| {
-                if !*installed {
-                    kage_desktop::theme::install_fonts(ui.ctx());
-                    kage_desktop::icons::install(ui.ctx());
-                    kage_desktop::theme::apply_choice(
-                        &kage_desktop::theme::ThemeChoice::Named("kage-shadow".to_owned()),
-                        ui.ctx(),
-                    );
-                    *installed = true;
+                if testutil::theme_installed(installed, ui.ctx()) {
                     return;
                 }
                 egui::CentralPanel::default().show(ui, |ui| {
@@ -129,14 +124,7 @@ fn the_mode_picker_writes_the_store_when_a_row_is_picked() {
                     kage_desktop::ui::composer::Composer,
                     bool,
                 )| {
-                    if !*installed {
-                        kage_desktop::theme::install_fonts(ui.ctx());
-                        kage_desktop::icons::install(ui.ctx());
-                        kage_desktop::theme::apply_choice(
-                            &kage_desktop::theme::ThemeChoice::Named("kage-shadow".to_owned()),
-                            ui.ctx(),
-                        );
-                        *installed = true;
+                    if testutil::theme_installed(installed, ui.ctx()) {
                         return;
                     }
                     egui::CentralPanel::default().show(ui, |ui| {
@@ -220,14 +208,7 @@ fn the_dock_pills_answer_a_click() {
                     kage_desktop::ui::composer::Composer,
                     bool,
                 )| {
-                    if !*installed {
-                        kage_desktop::theme::install_fonts(ui.ctx());
-                        kage_desktop::icons::install(ui.ctx());
-                        kage_desktop::theme::apply_choice(
-                            &kage_desktop::theme::ThemeChoice::Named("kage-shadow".to_owned()),
-                            ui.ctx(),
-                        );
-                        *installed = true;
+                    if testutil::theme_installed(installed, ui.ctx()) {
                         return;
                     }
                     egui::CentralPanel::default().show(ui, |ui| {

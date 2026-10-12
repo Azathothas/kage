@@ -12,6 +12,8 @@ use egui_kittest::{Harness, kittest::Queryable};
 use kage_desktop::store::Store;
 use kage_desktop::ui::workbench::{Tab, Workbench, show};
 
+mod testutil;
+
 /// A harness over the workbench with `store`'s session open.
 fn harness_for(store: Store) -> Harness<'static, (Store, Workbench, bool)> {
     Harness::builder()
@@ -21,12 +23,7 @@ fn harness_for(store: Store) -> Harness<'static, (Store, Workbench, bool)> {
                 if !*installed {
                     // The fonts bind at the start of the next pass, so
                     // the themed style follows one pass later.
-                    kage_desktop::theme::install_fonts(ui.ctx());
-                    kage_desktop::icons::install(ui.ctx());
-                    kage_desktop::theme::apply_choice(
-                        &kage_desktop::theme::ThemeChoice::Named("kage-shadow".to_owned()),
-                        ui.ctx(),
-                    );
+                    testutil::install_theme(ui.ctx(), "kage-shadow");
                     *installed = true;
                     return;
                 }

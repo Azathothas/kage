@@ -12,6 +12,8 @@ use std::collections::HashMap;
 use egui_kittest::{Harness, kittest::Queryable};
 use kage_desktop::ui::shell::Panels;
 
+mod testutil;
+
 /// The SPIKE's viewport, the parity rig's reference size.
 const SPIKE_VIEWPORT: [f32; 2] = [1252.0, 1317.0];
 
@@ -26,12 +28,7 @@ fn harness_for(theme: &str, workbench: bool) -> Harness<'static, (String, bool)>
         .with_size(egui::Vec2::new(SPIKE_VIEWPORT[0], SPIKE_VIEWPORT[1]))
         .build_ui_state(
             |ui, (theme, workbench): &mut (String, bool)| {
-                kage_desktop::theme::install_fonts(ui.ctx());
-                kage_desktop::icons::install(ui.ctx());
-                kage_desktop::theme::apply_choice(
-                    &kage_desktop::theme::ThemeChoice::Named(theme.clone()),
-                    ui.ctx(),
-                );
+                testutil::install_theme(ui.ctx(), theme);
                 kage_desktop::ui::shell::show(
                     ui,
                     &mut panels_for(*workbench),

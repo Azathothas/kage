@@ -6,6 +6,8 @@
 use egui_kittest::Harness;
 use kage_desktop::ui::transcript::list::List;
 
+mod testutil;
+
 /// The list under probe, with the frame's draws counted.
 #[derive(Default)]
 struct Probe {
@@ -26,11 +28,7 @@ fn harness() -> Harness<'static, Probe> {
         .with_size(egui::Vec2::new(900.0, 600.0))
         .build_ui_state(
             |ui, probe: &mut Probe| {
-                kage_desktop::theme::install_fonts(ui.ctx());
-                kage_desktop::theme::apply_choice(
-                    &kage_desktop::theme::ThemeChoice::Named("kage-shadow".to_owned()),
-                    ui.ctx(),
-                );
+                testutil::install_theme(ui.ctx(), "kage-shadow");
                 let signatures: Vec<u64> = (0..probe.rows as u64).collect();
                 let mut measured = 0usize;
                 probe.list.sync(&signatures, |_| {
