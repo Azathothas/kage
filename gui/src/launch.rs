@@ -204,6 +204,8 @@ pub struct Shell {
     workbench: crate::ui::workbench::Workbench,
     /// The modal dialog layer over the shell.
     dialogs: crate::ui::dialog::Dialogs,
+    /// The approval card over the open permission asks.
+    approval: crate::ui::approval::Approval,
 }
 
 impl Shell {
@@ -253,6 +255,7 @@ impl Shell {
             sidebar: crate::ui::sidebar::Sidebar::new(),
             workbench: crate::ui::workbench::Workbench::new(),
             dialogs: crate::ui::dialog::Dialogs::new(),
+            approval: crate::ui::approval::Approval::new(),
         }
     }
 
@@ -561,6 +564,7 @@ impl ShellApp {
                     });
                 }
                 self.show_dock(ui);
+                self.show_approval(ui);
                 self.show_composer(ui);
             });
         };
@@ -692,6 +696,39 @@ impl ShellApp {
 
     /// Draws the dock row: the pills the session's state names, over
     /// the composer. The rows carry the shell's follow-up actions.
+    /// Draws the approval card over the dock row: the oldest open
+    /// permission ask of the active session and its subagents, with
+    /// the digit keys while it holds them.
+    fn show_approval(&mut self, ui: &mut egui::Ui) {
+        let open = self.shell.store.active_asks().len();
+        let events = self.shell.approval.show(ui, &self.shell.store);
+        self.carry_approval(events);
+        // A first ask takes the digit keys; the last one closing hands
+        // them back to the shell.
+        if open > 0 {
+            if let Some(ask) = self.shell.store.active_asks().first() {
+                let request = ask.1.request_id.clone();
+                self.shell.approval.focus(&request);
+            }
+        } else {
+            self.shell.approval.blur();
+        }
+    }
+
+    /// Carries out what the approval card asked for.
+    fn carry_approval(&mut self, events: Vec<crate::ui::approval::ApprovalEvent>) {
+        for event in events {
+            match event {
+                crate::ui::approval::ApprovalEvent::Reply(session, request, decision) => {
+                    let _ = self
+                        .shell
+                        .store
+                        .reply_permission(&session, request, &decision);
+                }
+            }
+        }
+    }
+
     fn show_dock(&mut self, ui: &mut egui::Ui) {
         let actions = crate::ui::dock::show(ui, &self.shell.store);
         for action in actions {
@@ -890,10 +927,55 @@ impl ShellApp {
                 repeat: false,
             };
             let Some(action) = crate::ui::keys::dispatch(self.context(), &press) else {
+                // The approval card's digits are not the shell's
+                // bindings: they answer the oldest open ask while the
+                // card holds the keys and no field has them.
+                if press.mods == crate::ui::keys::Mods::default()
+                    && let Some(digit) = press.key.parse::<usize>().ok()
+                    && self.approve_digit(digit)
+                {
+                    continue;
+                }
                 continue;
             };
             self.carry(action);
         }
+    }
+
+    /// Answers the oldest open permission ask with the option the
+    /// 1-based `digit` names. Reports whether the card took it, so a
+    /// digit aimed at a field or at the shell is left alone.
+    fn approve_digit(&mut self, digit: usize) -> bool {
+        let Some((session_id, ask)) = self
+            .shell
+            .store
+            .active_asks()
+            .first()
+            .map(|(session_id, ask)| ((*session_id).to_owned(), (*ask).clone()))
+        else {
+            return false;
+        };
+        let Some(action) = self.shell.approval.digit(digit, &ask) else {
+            return false;
+        };
+        let decision = match action {
+            crate::ui::approval::DigitAction::Answer(index) => ask
+                .options
+                .get(index)
+                .map(|option| kage_client::PermissionDecision::Option(option.option_id.clone())),
+            crate::ui::approval::DigitAction::Toggle(index) => {
+                self.shell.approval.toggle(ask.request_id.clone(), index);
+                return true;
+            }
+        };
+        if let Some(decision) = decision {
+            let _ =
+                self.shell
+                    .store
+                    .reply_permission(&session_id, ask.request_id.clone(), &decision);
+            self.shell.approval.forget(&ask.request_id);
+        }
+        true
     }
 
     /// Carries out one routed action.

@@ -6,6 +6,7 @@
 //! shell only wires keys and store data in.
 
 pub mod agents;
+pub mod approval;
 pub mod composer;
 pub mod constellation;
 pub mod copy;
