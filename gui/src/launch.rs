@@ -208,6 +208,12 @@ pub struct Shell {
     approval: crate::ui::approval::Approval,
     /// The settings dialog over the shell.
     settings: crate::ui::settings::SettingsView,
+    /// The setup screen, shown in place of the shell while no engine
+    /// could start.
+    setup: crate::ui::setup::SetupView,
+    /// Whether the shell replays a recording: the replay always
+    /// connects, so it never shows setup.
+    replay: bool,
 }
 
 impl Shell {
@@ -259,7 +265,66 @@ impl Shell {
             dialogs: crate::ui::dialog::Dialogs::new(),
             approval: crate::ui::approval::Approval::new(),
             settings: crate::ui::settings::SettingsView::new(),
+            setup: crate::ui::setup::SetupView::new(),
+            replay,
         }
+    }
+
+    /// Whether the setup screen shows instead of the shell: the link
+    /// was refused and nothing else carries it. A replay never lands
+    /// here: it connects on its own.
+    #[must_use]
+    pub fn needs_setup(&self) -> bool {
+        !self.replay && matches!(self.store.connect(), crate::transport::State::Refused(_))
+    }
+
+    /// Starts `program` as the engine and lets it connect again.
+    pub fn use_engine(&mut self, program: String, ctx: &egui::Context) {
+        let config = StdioConfig {
+            program,
+            args: vec!["rpc".to_owned()],
+        };
+        self.replace_transport(Box::new(StdioTransport::new(config)), ctx);
+    }
+
+    /// Looks for `kage` again: the saved path if the setup screen once
+    /// named one, else the PATH.
+    pub fn retry_engine(&mut self, saved: Option<&str>, ctx: &egui::Context) {
+        let config = match saved {
+            Some(program) => StdioConfig {
+                program: program.to_owned(),
+                args: vec!["rpc".to_owned()],
+            },
+            None => StdioConfig::engine(),
+        };
+        self.replace_transport(
+            Box::new(crate::transport::stdio::StdioTransport::new(config)),
+            ctx,
+        );
+    }
+
+    /// Swaps in `transport` and restarts the pump thread behind it.
+    fn replace_transport(&mut self, mut transport: Box<dyn Transport>, ctx: &egui::Context) {
+        self._pump = None;
+        let (events, incoming) = async_channel::unbounded();
+        transport.start(events.clone());
+        let (tx, rx) = std::sync::mpsc::channel::<Event>();
+        let ctx = ctx.clone();
+        let pump = std::thread::Builder::new()
+            .name("kage-pump".to_owned())
+            .spawn(move || {
+                while let Ok(event) = incoming.recv_blocking() {
+                    if tx.send(event).is_err() {
+                        return;
+                    }
+                    ctx.request_repaint();
+                }
+            })
+            .expect("the pump thread starts");
+        self.transport = transport;
+        self.inbox = rx;
+        self._pump = Some(pump);
+        self.store.set_connect(crate::transport::State::Connecting);
     }
 
     /// The connection's link, for the status bar.
@@ -399,6 +464,17 @@ struct ShellApp {
     last_update_check: i64,
     /// The finished release check's inbox, while one is in flight.
     update_rx: Option<std::sync::mpsc::Receiver<Option<crate::update::CheckOutcome>>>,
+    /// The finished install's inbox, while one is in flight.
+    install_rx: Option<
+        std::sync::mpsc::Receiver<(
+            crate::ui::settings::Install,
+            Result<std::path::PathBuf, String>,
+        )>,
+    >,
+    /// Which install the in-flight download is for.
+    installing: Option<crate::ui::settings::Install>,
+    /// What the last install ended with, as the Updates row reads it.
+    install_note: Option<(bool, String)>,
     /// The actions the transcript's rows raised this frame, for the
     /// shell to carry out.
     row_actions: Vec<crate::ui::transcript::tool_rows::RowAction>,
@@ -416,6 +492,7 @@ impl eframe::App for ShellApp {
         self.shell.flush_outgoing();
         self.pump_update_check();
         self.apply_update();
+        self.apply_install();
         self.route_keys(&ctx);
         if self.stream {
             if self.stream_clock.elapsed() >= Duration::from_secs_f64(1.0 / 30.0) {
@@ -436,12 +513,50 @@ impl eframe::App for ShellApp {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
         self.shell.toasts.expire(web_time::Instant::now());
+        if self.shell.needs_setup() {
+            self.draw_setup(ui);
+            return;
+        }
         self.draw(ui);
         self.find_keys();
     }
 }
 
 impl ShellApp {
+    /// Draws the setup screen in place of the shell, and carries what
+    /// it asked for: a probed binary becomes the engine, a retry looks
+    /// on the PATH again, and a chosen path is remembered so the next
+    /// launch starts without the screen.
+    fn draw_setup(&mut self, ui: &mut egui::Ui) {
+        egui::Area::new(egui::Id::new("kage-setup"))
+            .anchor(egui::Align2::LEFT_TOP, egui::Vec2::ZERO)
+            .order(egui::Order::Foreground)
+            .interactable(true)
+            .movable(false)
+            .show(ui.ctx(), |ui| {
+                let palette = crate::theme::Palette::active_of(ui.ctx());
+                ui.set_min_size(ui.ctx().viewport_rect().size());
+                egui::Frame::NONE.fill(palette.bg).show(ui, |ui| {
+                    ui.centered_and_justified(|ui| {
+                        self.shell.setup.show(ui);
+                    });
+                });
+            });
+        let saved = self.shell.store.prefs().kage_path.clone();
+        match self.shell.setup.take_asked() {
+            Some(crate::ui::setup::SetupEvent::Use(program)) => {
+                self.shell
+                    .store
+                    .update_prefs(|prefs| prefs.kage_path = Some(program.clone()));
+                self.shell.use_engine(program, ui.ctx());
+            }
+            Some(crate::ui::setup::SetupEvent::Retry) => {
+                self.shell.retry_engine(saved.as_deref(), ui.ctx());
+            }
+            None => {}
+        }
+    }
+
     /// Draws the frame: the gate banner over the three panels, the
     /// status bar under them, and the chrome (splash, palette,
     /// toasts) over the top.
@@ -607,7 +722,15 @@ impl ShellApp {
         // The settings dialog sits above the dialog layer: a dialog it
         // opens from the palette must not answer beneath it.
         if self.shell.settings.is_open() {
-            let events = self.shell.settings.show(ui, &mut self.shell.store);
+            let updates = crate::ui::settings::UpdateState {
+                installing: self.installing,
+                checking: self.update_rx.is_some(),
+                install_note: self.install_note.clone(),
+            };
+            let events = self
+                .shell
+                .settings
+                .show(ui, &mut self.shell.store, &updates);
             self.carry_settings(events, ui.ctx());
         }
         toasts.show(ui);
@@ -709,6 +832,17 @@ impl ShellApp {
                 crate::ui::settings::SettingsEvent::Restore(id) => {
                     self.shell.store.restore(&id);
                 }
+                crate::ui::settings::SettingsEvent::Channel(channel) => {
+                    self.shell
+                        .store
+                        .update_prefs(|prefs| prefs.channel = channel);
+                    self.check_releases(true);
+                }
+                crate::ui::settings::SettingsEvent::CheckNow => self.check_releases(true),
+                crate::ui::settings::SettingsEvent::Install(which) => {
+                    self.start_install(which);
+                }
+                crate::ui::settings::SettingsEvent::OpenReleases => crate::update::open_releases(),
                 crate::ui::settings::SettingsEvent::ProviderForm(_)
                 | crate::ui::settings::SettingsEvent::McpForm(_)
                 | crate::ui::settings::SettingsEvent::AcpForm(_)
@@ -1128,6 +1262,95 @@ impl ShellApp {
         self.update_rx = Some(rx);
     }
 
+    /// Runs a release check on its own thread when the daily throttle
+    /// allows it, or past it when `force` is set, and applies the
+    /// answer on the UI thread.
+    fn check_releases(&mut self, force: bool) {
+        if self.update_rx.is_some() {
+            return;
+        }
+        let now = crate::clock::unix_seconds();
+        if !force && now < self.last_update_check + 24 * 60 * 60 {
+            return;
+        }
+        self.last_update_check = now;
+        let prefs = self.shell.store.prefs().clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("kage-update-check".to_owned())
+            .spawn(move || {
+                let outcome = crate::update::run_check(&prefs, force);
+                let _ = tx.send(outcome);
+            })
+            .expect("the check thread starts");
+        self.update_rx = Some(rx);
+    }
+
+    /// Downloads the newest release of `which` on its own thread: the
+    /// download blocks on the network, so it never sits in the frame.
+    /// One at a time; a second click while one runs is ignored.
+    fn start_install(&mut self, which: crate::ui::settings::Install) {
+        if self.installing.is_some() {
+            return;
+        }
+        self.installing = Some(which);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("kage-install".to_owned())
+            .spawn(move || {
+                let result = match which {
+                    crate::ui::settings::Install::Engine => crate::update::install_latest(),
+                    crate::ui::settings::Install::Desktop => {
+                        crate::update::install_desktop_latest()
+                    }
+                };
+                let _ = tx.send((which, result));
+            })
+            .expect("the install thread starts");
+        self.install_rx = Some(rx);
+    }
+
+    /// Applies a finished install: the engine is restarted on the new
+    /// binary, the desktop waits for the next launch, and a refusal
+    /// rides a toast.
+    fn apply_install(&mut self) {
+        let Some(rx) = self.install_rx.take() else {
+            return;
+        };
+        let Ok((which, result)) = rx.try_recv() else {
+            self.install_rx = Some(rx);
+            return;
+        };
+        self.installing = None;
+        let ctx = self.ctx.clone();
+        let (tone, text) = match result {
+            Ok(path) if which == crate::ui::settings::Install::Engine => {
+                let program = path.display().to_string();
+                self.shell
+                    .store
+                    .update_prefs(|prefs| prefs.kage_path = Some(program.clone()));
+                self.shell.use_engine(program, &ctx);
+                (
+                    kage_client::wire::NoticeTone::Success,
+                    "engine installed; restarting it".to_owned(),
+                )
+            }
+            Ok(path) => (
+                kage_client::wire::NoticeTone::Success,
+                format!(
+                    "desktop installed at {}; restart kage to apply",
+                    path.display()
+                ),
+            ),
+            Err(why) => (kage_client::wire::NoticeTone::Error, why),
+        };
+        self.install_note = Some((
+            matches!(tone, kage_client::wire::NoticeTone::Success),
+            text.clone(),
+        ));
+        self.shell.store.note(tone, text);
+    }
+
     /// Applies a finished release check to the preferences, once.
     fn apply_update(&mut self) {
         let Some(rx) = self.update_rx.take() else {
@@ -1229,6 +1452,9 @@ pub fn run() {
                 stream_clock: std::time::Instant::now(),
                 last_update_check: crate::clock::unix_seconds(),
                 update_rx: None,
+                install_rx: None,
+                installing: None,
+                install_note: None,
                 row_actions: Vec::new(),
                 ctx: cc.egui_ctx.clone(),
                 born: std::time::Instant::now(),

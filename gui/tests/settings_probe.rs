@@ -58,7 +58,11 @@ fn harness_for(store: Store) -> Harness<'static, Probe> {
                     *installed = true;
                     return;
                 }
-                events.extend(settings.show(ui, store));
+                events.extend(settings.show(
+                    ui,
+                    store,
+                    &kage_desktop::ui::settings::UpdateState::default(),
+                ));
                 // The shell asks for a snapshot while a config page
                 // shows; the probe does the same, so the recorded
                 // answer lands in the store.

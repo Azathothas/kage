@@ -74,6 +74,9 @@ ureq = "2.10"
 # Unpacks the engine release archive (tar.xz, or zip on Windows) in
 # the setup screen's downloader.
 compak = "0.2"
+# The native file dialog the setup screen's Browse opens, through the
+# XDG portal. Not on wasm: the browser build never runs a local binary.
+rfd = "0.17"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # Exact versions so the wasm-bindgen CLI (0.2.129 installed) stays in

@@ -24,6 +24,7 @@ pub mod pickers;
 pub mod provider_form;
 pub mod settings;
 pub mod settings_config;
+pub mod setup;
 pub mod shell;
 pub mod sidebar;
 pub mod splash;

@@ -207,6 +207,16 @@ fn key_caps(binding: &crate::ui::keys::Binding) -> String {
     caps.join(" ")
 }
 
+/// Which updater an install button is running, so a second click
+/// cannot stack a second download.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Install {
+    /// The engine binary behind `kage rpc`.
+    Engine,
+    /// This client, which takes effect at the next launch.
+    Desktop,
+}
+
 /// What the settings dialog asks the shell to carry out.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SettingsEvent {
@@ -227,6 +237,14 @@ pub enum SettingsEvent {
     /// Open the provider directory picker; `named` reads one the user
     /// names instead of models.dev.
     Directory(bool),
+    /// Follow this release channel from now on, and check it at once.
+    Channel(crate::prefs::Channel),
+    /// Run a release check now, past the daily throttle.
+    CheckNow,
+    /// Download the newest release of `which`.
+    Install(Install),
+    /// Open the releases page in the platform's browser.
+    OpenReleases,
 }
 
 /// Which page of the settings dialog shows, and whether it is open.
@@ -334,6 +352,7 @@ impl Settings {
         ui: &mut egui::Ui,
         store: &mut Store,
         palette: &Palette,
+        updates: &UpdateState,
         events: &mut Vec<SettingsEvent>,
     ) -> FormOutcome {
         self.follow(store);
@@ -347,7 +366,7 @@ impl Settings {
                 None => FormOutcome::Done(false),
             },
             None => {
-                page(ui, store, self.section, palette, events);
+                page(ui, store, self.section, palette, updates, events);
                 FormOutcome::Done(false)
             }
         }
@@ -410,7 +429,13 @@ impl SettingsView {
     }
 
     /// Draws the dialog over `ui`, reporting what it asked for.
-    pub fn show(&mut self, ui: &mut egui::Ui, store: &mut Store) -> Vec<SettingsEvent> {
+    /// `updates` is what the About page's release row reads.
+    pub fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        store: &mut Store,
+        updates: &UpdateState,
+    ) -> Vec<SettingsEvent> {
         if !self.settings.is_open() {
             return Vec::new();
         }
@@ -488,7 +513,13 @@ impl SettingsView {
                                             close = true;
                                         }
                                     });
-                                    outcome = self.settings.show(ui, store, palette, &mut events);
+                                    outcome = self.settings.show(
+                                        ui,
+                                        store,
+                                        palette,
+                                        updates,
+                                        &mut events,
+                                    );
                                 });
                             });
                         });
@@ -620,6 +651,7 @@ fn page(
     store: &mut Store,
     section: Section,
     palette: &Palette,
+    updates: &UpdateState,
     events: &mut Vec<SettingsEvent>,
 ) {
     egui::ScrollArea::vertical()
@@ -648,7 +680,7 @@ fn page(
                 Section::Keyboard => keyboard(ui, store, palette),
                 Section::Lab => lab(ui, store, palette, events),
                 Section::Archived => archived(ui, store, palette, events),
-                Section::About => about(ui, store, palette),
+                Section::About => about(ui, store, palette, updates, events),
             }
         });
 }
@@ -1021,7 +1053,13 @@ fn archived(ui: &mut egui::Ui, store: &Store, palette: &Palette, events: &mut Ve
 }
 
 /// The About page: the mark, the versions and the protocol.
-fn about(ui: &mut egui::Ui, store: &Store, palette: &Palette) {
+fn about(
+    ui: &mut egui::Ui,
+    store: &Store,
+    palette: &Palette,
+    update_state: &UpdateState,
+    events: &mut Vec<SettingsEvent>,
+) {
     let state = store.state();
     let engine = state
         .agent
@@ -1065,6 +1103,213 @@ fn about(ui: &mut egui::Ui, store: &Store, palette: &Palette) {
             palette,
         );
     });
+    updates(ui, store, palette, update_state, events);
+}
+/// What the release check and the installs in the Updates row are
+/// doing right now. The shell owns it; the page only reads it, so a
+/// second install cannot stack on a first.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct UpdateState {
+    /// Which install the in-flight download is for.
+    pub installing: Option<Install>,
+    /// Whether a release check is running, past the daily throttle.
+    pub checking: bool,
+    /// What the last install ended with: true when it worked.
+    pub install_note: Option<(bool, String)>,
+}
+
+/// The Updates row: what the last release check saw for the engine and
+/// this client, the channel choice, a manual re-check, and the install
+/// buttons a newer build puts on screen.
+fn updates(
+    ui: &mut egui::Ui,
+    store: &Store,
+    palette: &Palette,
+    update_state: &UpdateState,
+    events: &mut Vec<SettingsEvent>,
+) {
+    let prefs = store.prefs();
+    let engine = store
+        .state()
+        .agent
+        .as_ref()
+        .and_then(|agent| agent.version.clone());
+    let desktop = env!("CARGO_PKG_VERSION");
+    let nightly = prefs.channel == crate::prefs::Channel::Nightly;
+    let (engine_line, desktop_line) = if nightly {
+        let engine_line = match prefs.latest_nightly.as_ref() {
+            Some(build) => format!(
+                "engine: nightly {} ({}) published",
+                build.date,
+                &build.commit[..build.commit.len().min(7)]
+            ),
+            None => "engine: no nightly seen yet".to_owned(),
+        };
+        let desktop_line = match prefs.latest_nightly.as_ref() {
+            Some(build) if option_env!("KAGE_BUILD_SHA").is_some_and(|sha| sha == build.commit) => {
+                format!("desktop {desktop}; on the {} nightly", build.date)
+            }
+            Some(build) => format!("desktop {desktop}; nightly {} available", build.date),
+            None => "desktop: no nightly seen yet".to_owned(),
+        };
+        (engine_line, desktop_line)
+    } else {
+        let engine_line = match (prefs.latest_cli_version.as_deref(), engine.as_deref()) {
+            (Some(latest), Some(now)) if crate::update::is_newer(latest, now) => {
+                format!("engine {now}; {latest} is available")
+            }
+            (Some(latest), Some(now)) => format!("engine {now}; current with {latest}"),
+            (Some(latest), None) => format!("engine version unknown; {latest} is available"),
+            (None, _) => "engine: no check has run yet".to_owned(),
+        };
+        let desktop_line = match prefs.latest_desktop_version.as_deref() {
+            Some(latest) if crate::update::is_newer(latest, desktop) => {
+                format!("desktop {desktop}; {latest} is available")
+            }
+            Some(latest) => format!("desktop {desktop}; current with {latest}"),
+            None => "desktop: no check has run yet".to_owned(),
+        };
+        (engine_line, desktop_line)
+    };
+    let engine_behind = if nightly {
+        prefs.latest_nightly.is_some()
+    } else {
+        matches!(
+            (prefs.latest_cli_version.as_deref(), engine.as_deref()),
+            (Some(latest), Some(now)) if crate::update::is_newer(latest, now)
+        )
+    };
+    let desktop_behind = if nightly {
+        prefs.latest_nightly.as_ref().is_some_and(|build| {
+            option_env!("KAGE_BUILD_SHA").is_some_and(|sha| sha != build.commit)
+        })
+    } else {
+        prefs
+            .latest_desktop_version
+            .as_deref()
+            .is_some_and(|latest| crate::update::is_newer(latest, desktop))
+    };
+    row(
+        ui,
+        "Updates",
+        "The public releases, checked at most once a day",
+        |ui| {
+            ui.vertical(|ui| {
+                ui.add(
+                    egui::Label::new(egui::RichText::new(&engine_line).size(FS_XS))
+                        .selectable(false),
+                );
+                ui.add(
+                    egui::Label::new(egui::RichText::new(&desktop_line).size(FS_XS))
+                        .selectable(false),
+                );
+                if let Some(why) = &prefs.check_error {
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(format!("last check failed: {why}"))
+                                .size(FS_XS)
+                                .color(palette.warn),
+                        )
+                        .selectable(false),
+                    );
+                }
+                ui.horizontal(|ui| {
+                    let stable = crate::ui::forms::button(
+                        ui,
+                        "Stable",
+                        if nightly {
+                            crate::ui::forms::Tone::Plain
+                        } else {
+                            crate::ui::forms::Tone::Primary
+                        },
+                        palette,
+                    );
+                    if stable.clicked() {
+                        events.push(SettingsEvent::Channel(crate::prefs::Channel::Latest));
+                    }
+                    let nightly_button = crate::ui::forms::button(
+                        ui,
+                        "Nightly",
+                        if nightly {
+                            crate::ui::forms::Tone::Primary
+                        } else {
+                            crate::ui::forms::Tone::Plain
+                        },
+                        palette,
+                    );
+                    if nightly_button.clicked() {
+                        events.push(SettingsEvent::Channel(crate::prefs::Channel::Nightly));
+                    }
+                    let check = crate::ui::forms::button(
+                        ui,
+                        if update_state.checking {
+                            "Checking\u{2026}"
+                        } else {
+                            "Check now"
+                        },
+                        crate::ui::forms::Tone::Plain,
+                        palette,
+                    );
+                    if check.clicked() {
+                        events.push(SettingsEvent::CheckNow);
+                    }
+                    if engine_behind {
+                        let label = if update_state.installing == Some(Install::Engine) {
+                            "Installing\u{2026}"
+                        } else {
+                            "Install engine"
+                        };
+                        let install = crate::ui::forms::button(
+                            ui,
+                            label,
+                            crate::ui::forms::Tone::Primary,
+                            palette,
+                        );
+                        if install.clicked() {
+                            events.push(SettingsEvent::Install(Install::Engine));
+                        }
+                    }
+                    if desktop_behind {
+                        let label = if update_state.installing == Some(Install::Desktop) {
+                            "Installing\u{2026}"
+                        } else {
+                            "Install desktop"
+                        };
+                        let install = crate::ui::forms::button(
+                            ui,
+                            label,
+                            crate::ui::forms::Tone::Primary,
+                            palette,
+                        );
+                        if install.clicked() {
+                            events.push(SettingsEvent::Install(Install::Desktop));
+                        }
+                    }
+                    if crate::ui::forms::button(
+                        ui,
+                        "Releases",
+                        crate::ui::forms::Tone::Plain,
+                        palette,
+                    )
+                    .clicked()
+                    {
+                        events.push(SettingsEvent::OpenReleases);
+                    }
+                });
+                if let Some((ok, text)) = &update_state.install_note {
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(text).size(FS_XS).color(if *ok {
+                            palette.ok
+                        } else {
+                            palette.warn
+                        }))
+                        .selectable(false),
+                    );
+                }
+            });
+        },
+        palette,
+    );
 }
 
 /// A group heading above a page section.
