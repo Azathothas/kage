@@ -103,16 +103,20 @@ jobs:
           ref: ${{ env.TAG }}
 
       - name: Toolchain
-        run: rustup toolchain install nightly --profile minimal --target wasm32-unknown-unknown
+        run: rustup toolchain install --profile minimal --target wasm32-unknown-unknown
 
       # The CLI has to match the wasm-bindgen crate gui/Cargo.lock pins.
       - uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
         with:
           tool: wasm-bindgen@0.2.129
 
+      # Stable only: the previous GPUI web build needed nightly for
+      # `stdarch_wasm_atomic_wait`, which the egui stack does not use.
+      # `--no-default-features` drops the native binary target, which
+      # has no entry on wasm32; the cdylib is the whole bundle.
       - name: Build
         run: |
-          cargo +nightly build --release --locked --target wasm32-unknown-unknown
+          cargo build --release --locked --target wasm32-unknown-unknown --no-default-features
           wasm-bindgen --out-dir web --target web \
             target/wasm32-unknown-unknown/release/kage_desktop.wasm
 
@@ -122,19 +126,24 @@ jobs:
           mkdir -p "$bundle/assets/icons"
           cp web/index.html web/favicon.svg web/boot.js web/kage_desktop.js \
             web/kage_desktop_bg.wasm "$bundle/"
-          manifest="$(cargo metadata --format-version 1 --locked \
-            | jq -r '.packages[] | select(.name == "gpui-kit-assets") | .manifest_path')"
-          cp "$(dirname "$manifest")"/assets/icons/*.svg "$bundle/assets/icons/"
+          # The browser loads its icons and fonts from the bundle
+          # (FR-52), so they ship beside the wasm instead of being
+          # fetched from an origin. They are the crate's own assets.
+          cp assets/icons/*.svg "$bundle/assets/icons/"
+          cp -R assets/fonts "$bundle/assets/fonts"
           tar -C ../web-bundle -cJf ../kage-web.tar.xz web
 
       - name: Verify bundle
         run: |
           listing="$(tar -tJf ../kage-web.tar.xz)"
           echo "$listing"
-          echo "$listing" | grep -qx 'web/favicon.svg' || {
-            echo 'the web bundle is missing web/favicon.svg' >&2
-            exit 1
-          }
+          for wanted in web/favicon.svg web/boot.js web/kage_desktop.js \
+            web/kage_desktop_bg.wasm web/assets/icons/a-large-small.svg; do
+            echo "$listing" | grep -qx "$wanted" || {
+              echo "the web bundle is missing $wanted" >&2
+              exit 1
+            }
+          done
 
       - uses: svenstaro/upload-release-action@29e53e917877a24fad85510ded594ab3c9ca12de # 2.11.5
         with:
