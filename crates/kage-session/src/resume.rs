@@ -1,12 +1,16 @@
 //! Replay a session file back into an in-memory history.
 //!
-//! [`replay`] walks every entry of a session and reconstructs the
-//! [`Vec<Message>`] that the loop's `cx.history` would hold immediately
-//! after the last recorded entry. Compactions are applied exactly as the
-//! loop applied them at write time: the named number of leading messages
-//! is dropped and replaced by a synthetic user message carrying the
-//! recorded summary text, matching the role and framing the live loop
-//! inserts so a resumed history is byte-identical to a fresh one.
+//! [`replay`] walks the active chain of a session, as
+//! [`crate::tree::SessionTree`] defines it, and reconstructs the
+//! [`Vec<Message>`] that the loop's `cx.history` would hold
+//! immediately after the last recorded entry. Compactions are applied
+//! exactly as the loop applied them at write time: the named number of
+//! leading messages is dropped and replaced by a synthetic user
+//! message carrying the recorded summary text, matching the role and
+//! framing the live loop inserts so a resumed history is
+//! byte-identical to a fresh one. Entries on abandoned branches are
+//! skipped, so model, title, usage and compaction are all
+//! chain-local.
 //!
 //! [`find_by_prefix`] and [`find_last`] resolve a session file path from a
 //! directory either by id prefix or by most-recent header timestamp.
@@ -19,9 +23,9 @@ use chrono::{DateTime, Utc};
 use kage_core::protocol::CompactionCounts;
 use kage_core::{Content, Message, MessageId, Role};
 
-use crate::entry::{Compaction, FORMAT_VERSION, Header, SessionEntry};
+use crate::entry::{Compaction, Header, SessionEntry};
 use crate::error::SessionError;
-use crate::reader::SessionReader;
+use crate::tree::SessionTree;
 
 /// Result of replaying a session: enough state to seed an `AgentContext`
 /// and resume from the last recorded turn.
@@ -105,10 +109,10 @@ fn capped(mut message: Message) -> Message {
     message
 }
 
-/// Replay every entry of `path`, returning the final history.
+/// Replay the active chain of `path`, returning the final history.
 pub fn replay(path: &Path) -> Result<ReplayResult, SessionError> {
-    let mut reader = SessionReader::iter(path)?;
-    let header = first_header(path, &mut reader)?;
+    let tree = SessionTree::read(path)?;
+    let header = tree.header().clone();
 
     let mut model = kage_core::canonical_model(&header.model);
     let mut thinking_level: Option<String> = None;
@@ -126,14 +130,12 @@ pub fn replay(path: &Path) -> Result<ReplayResult, SessionError> {
     let mut tool_durations: HashMap<String, u64> = HashMap::new();
     let mut usage_total = ReplayUsage::default();
     let mut compaction = None;
-    for item in reader {
-        let entry = item?;
+    for (node, entry) in tree.iter() {
+        if !tree.is_active(node.id) {
+            continue;
+        }
         match entry {
-            SessionEntry::Header(_) => {
-                return Err(SessionError::SecondHeader {
-                    path: path.to_path_buf(),
-                });
-            }
+            SessionEntry::Header(_) | SessionEntry::Branch(_) | SessionEntry::Label(_) => {}
             SessionEntry::Message(m) => {
                 if let Some(u) = m.usage {
                     usage_total.input = usage_total.input.saturating_add(u.input);
@@ -166,23 +168,22 @@ pub fn replay(path: &Path) -> Result<ReplayResult, SessionError> {
                         _ => {}
                     }
                 }
-                history.push(capped(Arc::unwrap_or_clone(m.message)));
+                history.push(capped(Arc::unwrap_or_clone(Arc::clone(&m.message))));
             }
             SessionEntry::Compaction(c) => {
                 compaction = Some(CompactionCounts {
                     summarized: c.summarized,
                     kept: c.kept,
                 });
-                apply_compaction(&mut history, c);
+                apply_compaction(&mut history, c.clone());
             }
             SessionEntry::ModelChange(mc) => model = kage_core::canonical_model(&mc.model),
-            SessionEntry::ThinkingLevelChange(t) => thinking_level = Some(t.level),
-            SessionEntry::Title(t) => title = Some(t.title),
+            SessionEntry::ThinkingLevelChange(t) => thinking_level = Some(t.level.clone()),
+            SessionEntry::Title(t) => title = Some(t.title.clone()),
             SessionEntry::Custom(c) => {
-                agent |= crate::list::is_agent_marker(&c);
-                read_mode(&c, &mut swarm_mode, &mut plan_mode);
+                agent |= crate::list::is_agent_marker(c);
+                read_mode(c, &mut swarm_mode, &mut plan_mode);
             }
-            SessionEntry::Label(_) => {}
         }
     }
     Ok(ReplayResult {
@@ -198,33 +199,6 @@ pub fn replay(path: &Path) -> Result<ReplayResult, SessionError> {
         compaction,
         agent,
     })
-}
-
-/// The validated header of `path`, read from `reader`. A file with
-/// content whose only line is torn never completed its header; only a
-/// truly empty file is `Empty`.
-fn first_header(path: &Path, reader: &mut SessionReader) -> Result<Header, SessionError> {
-    let Some(first) = reader.next() else {
-        if reader.torn_trailing() {
-            return Err(SessionError::MissingHeader {
-                path: path.to_path_buf(),
-            });
-        }
-        return Err(SessionError::Empty {
-            path: path.to_path_buf(),
-        });
-    };
-    let first = first.map_err(|e| match e {
-        SessionError::Decode { .. } | SessionError::Io { .. } => e,
-        other => unreachable!("reader items are decode or io errors only: {other}"),
-    })?;
-    let SessionEntry::Header(header) = first else {
-        return Err(SessionError::MissingHeader {
-            path: path.to_path_buf(),
-        });
-    };
-    ensure_supported_version(path, header.version)?;
-    Ok(header)
 }
 
 /// Read a swarm or plan mode toggle from a custom entry into the
@@ -263,18 +237,6 @@ fn apply_compaction(history: &mut Vec<Message>, compaction: Compaction) {
             ts: compaction.ts,
         }),
     );
-}
-
-/// Reject a header whose schema version this build cannot interpret.
-fn ensure_supported_version(path: &Path, version: u32) -> Result<(), SessionError> {
-    if version == FORMAT_VERSION {
-        return Ok(());
-    }
-    Err(SessionError::UnsupportedVersion {
-        path: path.to_path_buf(),
-        found: version,
-        supported: FORMAT_VERSION,
-    })
 }
 
 /// Find the session file in `dir` whose id starts with `prefix`. Returns
@@ -611,6 +573,89 @@ mod tests {
             ],
         );
         assert_eq!(replay(&path).unwrap().title.as_deref(), Some("second"));
+    }
+
+    /// The file an in-place undo of everything but the first exchange
+    /// produces, plus one new prompt on the new branch.
+    fn branched(path: &std::path::Path) {
+        let header = fresh_header();
+        let kept = message_entry(Role::User, "kept");
+        let reply = message_entry(Role::Assistant, "reply");
+        let dropped = message_entry(Role::User, "dropped");
+        let dropped_reply = message_entry(Role::Assistant, "dropped reply");
+        let marker = SessionEntry::Branch(crate::entry::BranchEntry {
+            id: EntryId::new(),
+            ts: Utc::now(),
+            at: reply.id(),
+        });
+        let redo = message_entry(Role::User, "redo");
+        write(
+            path,
+            header,
+            &[kept, reply, dropped, dropped_reply, marker, redo],
+        );
+    }
+
+    #[test]
+    fn replay_follows_the_active_branch() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("s.jsonl");
+        branched(&path);
+        let history = replay(&path).unwrap().history;
+        let texts: Vec<&str> = history
+            .iter()
+            .map(|m| match &m.content[0] {
+                Content::Text { text } => text.as_str(),
+                other => panic!("expected text, got {other:?}"),
+            })
+            .collect();
+        assert_eq!(texts, ["kept", "reply", "redo"]);
+    }
+
+    #[test]
+    fn replay_takes_state_entries_from_the_active_chain_only() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("s.jsonl");
+        let header = fresh_header();
+        let kept = message_entry(Role::User, "kept");
+        let title = SessionEntry::Title(crate::entry::SessionTitle {
+            id: EntryId::new(),
+            ts: Utc::now(),
+            title: "abandoned".into(),
+        });
+        let change = SessionEntry::ModelChange(ModelChange {
+            id: EntryId::new(),
+            ts: Utc::now(),
+            model: "openai:gpt-4o".into(),
+        });
+        // The marker rewinds to the header: the title and the model
+        // change above it are abandoned, and the prompt below is the
+        // only thing left on the active chain.
+        let marker = SessionEntry::Branch(crate::entry::BranchEntry {
+            id: EntryId::new(),
+            ts: Utc::now(),
+            at: header.id,
+        });
+        let redo = message_entry(Role::User, "redo");
+        write(&path, header, &[kept, title, change, marker, redo]);
+
+        let result = replay(&path).unwrap();
+        assert_eq!(result.title, None, "the abandoned title is skipped");
+        assert_eq!(
+            result.model, "anthropic/claude",
+            "the abandoned model change is skipped"
+        );
+        assert_eq!(result.history.len(), 1);
+    }
+
+    #[test]
+    fn replay_reads_a_version_one_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("old.jsonl");
+        let mut header = fresh_header();
+        header.version = 1;
+        write(&path, header, &[message_entry(Role::User, "hello")]);
+        assert_eq!(replay(&path).unwrap().history.len(), 1);
     }
 
     #[test]

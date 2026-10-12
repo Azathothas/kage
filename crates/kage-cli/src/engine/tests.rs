@@ -175,7 +175,10 @@ fn prompt(engine: &Engine, session: SessionId, text: &str, delivery: Delivery) {
 }
 
 fn prompt_content(engine: &Engine, session: SessionId, content: Vec<Content>, delivery: Delivery) {
-    engine.send(Command::to(session, CommandKind::Prompt { content, delivery }));
+    engine.send(Command::to(
+        session,
+        CommandKind::Prompt { content, delivery },
+    ));
 }
 
 /// Collect envelopes until `count` runs have ended.
@@ -193,9 +196,17 @@ fn until_runs_end(events: &Receiver<Envelope>, count: usize) -> Vec<Envelope> {
 }
 
 fn wait_for(events: &Receiver<Envelope>, pred: impl Fn(&Envelope) -> bool) -> Vec<Envelope> {
-    let mut seen = Vec::new();
+    let mut seen: Vec<Envelope> = Vec::new();
     loop {
-        let envelope = events.recv_timeout(WAIT).expect("engine stalled");
+        let Ok(envelope) = events.recv_timeout(WAIT) else {
+            let recent: Vec<String> = seen
+                .iter()
+                .rev()
+                .take(5)
+                .map(|e| format!("{:?}", e.event))
+                .collect();
+            panic!("engine stalled; last events: {recent:?}")
+        };
         let done = pred(&envelope);
         seen.push(envelope);
         if done {
@@ -376,7 +387,10 @@ fn steered_image_prompt_is_delivered_at_the_next_turn() {
         .filter_map(|e| match &e.event {
             Event::Loop(LoopEvent::MessageAppended { message }) => Some((
                 message.role,
-                message.content.iter().any(|c| matches!(c, Content::Image { .. })),
+                message
+                    .content
+                    .iter()
+                    .any(|c| matches!(c, Content::Image { .. })),
             )),
             _ => None,
         })
@@ -695,36 +709,30 @@ fn recorded_exchanges(
 }
 
 #[test]
-fn undo_drops_the_last_exchange_and_returns_its_prompt() {
+fn undo_branches_the_session_in_place_and_returns_its_prompt() {
     let dir = tempfile::tempdir().unwrap();
     let h = harness(MockProvider::replaying(text_turn("reply")));
     let (id, path) = recorded_exchanges(&h, dir.path(), 2);
     assert_eq!(kage_session::replay(&path).unwrap().history.len(), 4);
 
     h.engine.send(Command::to(id, CommandKind::Undo));
-    // Undone publishes after the SessionChanged reseat, so waiting for
+    // Undone publishes after the SessionChanged reload, so waiting for
     // it collects both.
     let seen = wait_for(&h.events, |e| {
         matches!(e.event, Event::Host(HostEvent::Undone { .. }))
     });
-    let (forked, messages) = seen
+    let (changed, messages, same_id) = seen
         .iter()
         .find_map(|e| match &e.event {
             Event::Host(HostEvent::SessionChanged { path, messages, .. }) => {
-                Some((path.clone(), messages.clone()))
+                Some((path.clone(), messages.clone(), e.session))
             }
             _ => None,
         })
-        .expect("undo reseats onto the fork");
-    assert_ne!(forked, path);
-    assert!(forked.exists());
-    // Two exchanges were recorded; the fork keeps only the first.
-    assert_eq!(messages.len(), 2);
-    assert_eq!(
-        kage_session::replay(&forked).unwrap().history.len(),
-        2,
-        "the fork keeps the first exchange only"
-    );
+        .expect("undo reloads the session");
+    assert_eq!(changed, path, "undo keeps the same file");
+    assert_eq!(same_id, id, "undo keeps the same session id");
+    assert_eq!(messages.len(), 2, "the first exchange stays");
     let undone = seen
         .iter()
         .find_map(|e| match &e.event {
@@ -738,27 +746,124 @@ fn undo_drops_the_last_exchange_and_returns_its_prompt() {
             text: "round 1".into()
         })
     );
-    // The undone session is live: the next prompt appends to the fork.
-    // The reseat re-keys the session to the fork's own id.
-    let live = seen
-        .iter()
-        .rev()
-        .find_map(|e| match &e.event {
-            Event::Host(HostEvent::SessionChanged { .. }) => Some(e.session),
-            _ => None,
-        })
-        .expect("the forked session id");
-    prompt(&h.engine, live, "again", Delivery::Steer);
+    // The file holds a branch marker now; replay follows the active
+    // branch, and the abandoned exchange stays in the file.
+    assert_eq!(kage_session::replay(&path).unwrap().history.len(), 2);
+    // The next prompt appends to the same file on the new branch.
+    prompt(&h.engine, id, "again", Delivery::Steer);
     until_runs_end(&h.events, 1);
+    let tree = kage_session::SessionTree::read(&path).unwrap();
     assert_eq!(
-        kage_session::replay(&forked).unwrap().history.len(),
-        4,
-        "the next exchange lands on the fork"
+        tree.walk().len(),
+        6,
+        "the abandoned branch stays in the file"
     );
     assert_eq!(
         kage_session::replay(&path).unwrap().history.len(),
         4,
-        "the abandoned file is untouched"
+        "replay follows the active branch only"
+    );
+}
+
+#[test]
+fn undo_and_rewind_navigate_the_branch_tree() {
+    fn text(prompt: &kage_core::protocol::PastPrompt) -> &str {
+        match &prompt.prompt[0] {
+            Content::Text { text } => text,
+            other => panic!("expected text, got {other:?}"),
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let h = harness(MockProvider::replaying(text_turn("reply")));
+    let (id, path) = recorded_exchanges(&h, dir.path(), 2);
+
+    // Undo the last exchange and re-prompt on the new branch.
+    h.engine.send(Command::to(id, CommandKind::Undo));
+    wait_for(&h.events, |e| {
+        matches!(e.event, Event::Host(HostEvent::Undone { .. }))
+    });
+    prompt(&h.engine, id, "redo", Delivery::Steer);
+    until_runs_end(&h.events, 1);
+
+    // The tree: round 0 -> round 1 on the original thread, redo
+    // branching off round 0 after the undo. Depth-first, the active
+    // head comes last, and only the head is active.
+    h.engine.send(Command::to(id, CommandKind::ListPrompts));
+    let rows = wait_for(&h.events, |e| {
+        matches!(e.event, Event::Host(HostEvent::PromptList { .. }))
+    });
+    let prompts = rows
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::Host(HostEvent::PromptList { prompts }) => Some(prompts.clone()),
+            _ => None,
+        })
+        .expect("the prompt list");
+    let texts: Vec<&str> = prompts.iter().map(text).collect();
+    assert_eq!(texts, ["round 0", "round 1", "redo"]);
+    let depths: Vec<u32> = prompts.iter().map(|p| p.depth).collect();
+    assert_eq!(
+        depths,
+        [0, 0, 1],
+        "the original thread is flat, redo branched once"
+    );
+    let actives: Vec<bool> = prompts.iter().map(|p| p.active).collect();
+    assert_eq!(
+        actives,
+        [false, false, true],
+        "only the head prompt is active"
+    );
+
+    // Rewind to the original second prompt: it stays, and the session
+    // continues from it on the original branch.
+    let round1 = prompts[1].at.clone();
+    h.engine
+        .send(Command::to(id, CommandKind::Rewind { at: round1 }));
+    let seen = wait_for(&h.events, |e| {
+        matches!(e.event, Event::Host(HostEvent::Undone { .. }))
+    });
+    let undone = seen
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::Host(HostEvent::Undone { prompt }) => Some(prompt.clone()),
+            _ => None,
+        })
+        .expect("rewind answers with Undone");
+    assert!(
+        undone.is_none(),
+        "the picked prompt is not moved to the editor"
+    );
+    assert_eq!(
+        kage_session::replay(&path).unwrap().history.len(),
+        4,
+        "the session continues from round 1's reply"
+    );
+
+    // The kept prompt stays reachable for undo: it drops it back into
+    // the editor.
+    h.engine.send(Command::to(id, CommandKind::Undo));
+    let seen = wait_for(&h.events, |e| {
+        matches!(e.event, Event::Host(HostEvent::Undone { .. }))
+    });
+    let undone = seen
+        .iter()
+        .rev()
+        .find_map(|e| match &e.event {
+            Event::Host(HostEvent::Undone { prompt }) => Some(prompt.clone()),
+            _ => None,
+        })
+        .expect("undo answers with Undone");
+    let undone = undone.expect("undo returns the kept prompt");
+    assert_eq!(
+        undone.first(),
+        Some(&Content::Text {
+            text: "round 1".into()
+        })
+    );
+    assert_eq!(
+        kage_session::replay(&path).unwrap().history.len(),
+        2,
+        "the session continues from round 0's reply"
     );
 }
 
@@ -769,23 +874,23 @@ fn undo_on_a_session_without_prompts_reports_nothing_to_undo() {
     let (id, path) = recorded_session(&h, dir.path());
     // Strip the recorded exchange: only the header stays.
     let header = kage_session::replay(&path).unwrap().header;
-    std::fs::write(&path, serde_json::to_string(&{
-        kage_session::SessionEntry::Header(header)
-    })
-    .unwrap()
-    + "\n")
+    std::fs::write(
+        &path,
+        serde_json::to_string(&{ kage_session::SessionEntry::Header(header) }).unwrap() + "\n",
+    )
     .unwrap();
 
     h.engine.send(Command::to(id, CommandKind::Undo));
     let seen = wait_for(&h.events, |e| {
         matches!(
             e.event,
-            Event::Host(HostEvent::Notice { level: NoticeLevel::Error, .. })
+            Event::Host(HostEvent::Notice {
+                level: NoticeLevel::Error,
+                ..
+            })
         )
     });
-    assert!(
-        format!("{:?}", seen.last().unwrap().event).contains("nothing to undo")
-    );
+    assert!(format!("{:?}", seen.last().unwrap().event).contains("nothing to undo"));
     assert_eq!(kage_session::replay(&path).unwrap().history.len(), 0);
 }
 
@@ -793,53 +898,91 @@ fn undo_on_a_session_without_prompts_reports_nothing_to_undo() {
 fn undo_keeps_entries_older_than_the_last_prompt() {
     let dir = tempfile::tempdir().unwrap();
     let h = harness(MockProvider::replaying(text_turn("reply")));
-    let (id, path) = recorded_exchanges(&h, dir.path(), 2);
     // A label recorded between the exchanges, so it precedes the last
-    // prompt and must survive the undo cut.
-    let mut entries: Vec<kage_session::SessionEntry> =
-        kage_session::SessionReader::iter(&path)
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap();
-    let anchor = entries
-        .iter()
-        .find_map(|e| match e {
-            kage_session::SessionEntry::Message(m) => Some(m.id),
-            _ => None,
-        })
-        .unwrap();
-    entries.insert(
-        3,
-        kage_session::SessionEntry::Label(kage_session::Label {
-            id: kage_session::EntryId::new(),
+    // prompt and sits on the branch the undo opens.
+    let id = SessionId::new();
+    let path = dir.path().join(format!("{id}.jsonl"));
+    let message = |role: kage_core::Role,
+                   text: &str,
+                   parent: Option<kage_core::MessageId>|
+     -> kage_session::MessageEntry {
+        kage_session::MessageEntry {
+            id: EntryId::new(),
             ts: chrono::Utc::now(),
-            text: "milestone".to_owned(),
-            anchor,
-        }),
-    );
-    // The live recorder holds the file's append lock, so replace the
-    // file instead of reopening it.
-    let rewritten = entries
-        .iter()
-        .map(|e| serde_json::to_string(e).unwrap())
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n";
-    std::fs::write(&path, rewritten).unwrap();
+            message: std::sync::Arc::new(kage_core::Message::new(
+                role,
+                vec![Content::Text {
+                    text: text.to_owned(),
+                }],
+                parent,
+            )),
+            usage: None,
+        }
+    };
+    let u0 = message(kage_core::Role::User, "round 0", None);
+    let u0_entry = u0.id;
+    let a0 = message(kage_core::Role::Assistant, "reply", Some(u0.message.id));
+    let u1 = message(kage_core::Role::User, "round 1", Some(a0.message.id));
+    let a1 = message(kage_core::Role::Assistant, "reply", Some(u1.message.id));
+    let header = Header {
+        version: FORMAT_VERSION,
+        session: id,
+        id: EntryId::new(),
+        ts: chrono::Utc::now(),
+        cwd: "/tmp".into(),
+        model: "mock/m".into(),
+        system_prompt: String::new(),
+        parent_session: None,
+        parent_entry: None,
+    };
+    {
+        let mut writer = SessionWriter::create(&path, header).unwrap();
+        for entry in [
+            kage_session::SessionEntry::Message(u0),
+            kage_session::SessionEntry::Message(a0),
+            kage_session::SessionEntry::Label(kage_session::Label {
+                id: EntryId::new(),
+                ts: chrono::Utc::now(),
+                text: "milestone".to_owned(),
+                anchor: u0_entry,
+            }),
+            kage_session::SessionEntry::Message(u1),
+            kage_session::SessionEntry::Message(a1),
+        ] {
+            writer.append(&entry).unwrap();
+        }
+    }
+    let writer = SessionWriter::open(&path).unwrap();
+    h.open(id, Some(Recorder::new(writer, None)));
 
     h.engine.send(Command::to(id, CommandKind::Undo));
     let seen = wait_for(&h.events, is_session_changed);
-    let Event::Host(HostEvent::SessionChanged { path: forked, .. }) =
-        &seen.last().unwrap().event
+    let Event::Host(HostEvent::SessionChanged { messages, .. }) = &seen.last().unwrap().event
     else {
         unreachable!()
     };
-    let kept: Vec<kage_session::SessionEntry> = kage_session::SessionReader::iter(forked)
+    assert_eq!(messages.len(), 2, "only the first exchange survives");
+    // The label stays in the file, on the active chain: the branch
+    // marker continues the session from it.
+    let kept: Vec<kage_session::SessionEntry> = kage_session::SessionReader::iter(&path)
         .unwrap()
         .collect::<Result<_, _>>()
         .unwrap();
-    assert_eq!(kept.len(), 4, "header, two messages, the label");
+    assert_eq!(
+        kept.len(),
+        7,
+        "header, the first exchange, the label, the abandoned second exchange, the marker"
+    );
     assert!(matches!(&kept[3], kage_session::SessionEntry::Label(l) if l.text == "milestone"));
+    assert!(
+        kept.iter()
+            .any(|e| matches!(e, kage_session::SessionEntry::Branch(_)))
+    );
+    assert_eq!(
+        kage_session::replay(&path).unwrap().history.len(),
+        2,
+        "replay follows the branch the undo opened"
+    );
 }
 
 /// The entry ids of `path`'s user prompts, in file order.
@@ -850,9 +993,7 @@ fn user_prompt_ids(path: &std::path::Path) -> Vec<EntryId> {
         .unwrap()
         .into_iter()
         .filter_map(|entry| match entry {
-            kage_session::SessionEntry::Message(m)
-                if m.message.role == kage_core::Role::User =>
-            {
+            kage_session::SessionEntry::Message(m) if m.message.role == kage_core::Role::User => {
                 Some(m.id)
             }
             _ => None,
@@ -861,7 +1002,7 @@ fn user_prompt_ids(path: &std::path::Path) -> Vec<EntryId> {
 }
 
 #[test]
-fn rewind_drops_the_picked_prompt_and_everything_after() {
+fn rewind_keeps_the_picked_prompt_and_drops_the_rest() {
     let dir = tempfile::tempdir().unwrap();
     let h = harness(MockProvider::replaying(text_turn("reply")));
     let (id, path) = recorded_exchanges(&h, dir.path(), 3);
@@ -874,14 +1015,18 @@ fn rewind_drops_the_picked_prompt_and_everything_after() {
     // like every entry this test writes.
     let at = ids[1].to_string();
     let cut = at.len() - 4;
-    h.engine
-        .send(Command::to(id, CommandKind::Rewind { at: at[..cut].to_owned() }));
-    // Undone publishes after the SessionChanged reseat, so waiting for
+    h.engine.send(Command::to(
+        id,
+        CommandKind::Rewind {
+            at: at[..cut].to_owned(),
+        },
+    ));
+    // Undone publishes after the SessionChanged reload, so waiting for
     // it collects both.
     let seen = wait_for(&h.events, |e| {
         matches!(e.event, Event::Host(HostEvent::Undone { .. }))
     });
-    let (forked, messages) = seen
+    let (changed, messages) = seen
         .iter()
         .find_map(|e| match &e.event {
             Event::Host(HostEvent::SessionChanged { path, messages, .. }) => {
@@ -889,26 +1034,31 @@ fn rewind_drops_the_picked_prompt_and_everything_after() {
             }
             _ => None,
         })
-        .expect("rewind reseats onto the fork");
-    assert!(forked.exists());
-    assert_eq!(messages.len(), 2, "only the first exchange survives");
+        .expect("rewind reloads the session");
+    assert_eq!(changed, path, "rewind keeps the same file");
+    // The picked prompt's full turn stays: the prompt and its reply.
+    assert_eq!(messages.len(), 4, "the picked turn is kept whole");
     assert_eq!(
-        kage_session::replay(&forked).unwrap().history.len(),
-        2,
-        "the fork keeps the first exchange only"
+        kage_session::replay(&path).unwrap().history.len(),
+        4,
+        "the session continues from the turn's reply"
+    );
+    let tree = kage_session::SessionTree::read(&path).unwrap();
+    assert_eq!(
+        tree.walk().len(),
+        6,
+        "the abandoned branch stays in the file"
     );
     let undone = seen
         .iter()
         .find_map(|e| match &e.event {
-            Event::Host(HostEvent::Undone { prompt }) => prompt.clone(),
+            Event::Host(HostEvent::Undone { prompt }) => Some(prompt.clone()),
             _ => None,
         })
-        .expect("rewind reports the removed prompt");
-    assert_eq!(
-        undone.first(),
-        Some(&Content::Text {
-            text: "round 1".into()
-        })
+        .expect("rewind answers with Undone");
+    assert!(
+        undone.is_none(),
+        "the picked turn stays in the conversation, not the editor"
     );
 }
 
@@ -918,8 +1068,12 @@ fn rewind_with_an_unknown_entry_reports_an_error() {
     let h = harness(MockProvider::replaying(text_turn("reply")));
     let (id, path) = recorded_exchanges(&h, dir.path(), 1);
 
-    h.engine
-        .send(Command::to(id, CommandKind::Rewind { at: "zzzzzz".to_owned() }));
+    h.engine.send(Command::to(
+        id,
+        CommandKind::Rewind {
+            at: "zzzzzz".to_owned(),
+        },
+    ));
     let seen = wait_for(&h.events, |e| {
         matches!(
             e.event,
@@ -929,9 +1083,7 @@ fn rewind_with_an_unknown_entry_reports_an_error() {
             })
         )
     });
-    assert!(
-        format!("{:?}", seen.last().unwrap().event).contains("no user prompt matches")
-    );
+    assert!(format!("{:?}", seen.last().unwrap().event).contains("no user prompt matches"));
     assert_eq!(
         kage_session::replay(&path).unwrap().history.len(),
         2,

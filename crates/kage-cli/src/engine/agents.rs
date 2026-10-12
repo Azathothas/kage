@@ -996,9 +996,11 @@ pub(super) fn depth_of(session: &Session) -> u8 {
 }
 
 /// What a forked child copies from `from`'s session file: every entry
-/// up to the latest message that is not an assistant's tool call, so
-/// the copy never ends on a call that was never answered. Read once
-/// per swarm call: the children of `batch` reuse `cache`.
+/// on the active branch (see [`kage_session::SessionTree`]) up to the
+/// latest message that is not an assistant's tool call, so the copy
+/// never ends on a call that was never answered and never carries an
+/// exchange a rewind abandoned. Read once per swarm call: the
+/// children of `batch` reuse `cache`.
 fn fork_snapshot<'a>(
     cache: &'a mut Option<(ToolCallId, kage_session::Snapshot)>,
     from: &Session,
@@ -1017,8 +1019,10 @@ fn fork_snapshot<'a>(
     {
         return Ok(&cache.as_ref().expect("checked above").1);
     }
+    let tree = kage_session::SessionTree::read(src)
+        .map_err(|err| format!("cannot fork: the session file could not be read: {err}"))?;
     let answered = |entry: &kage_session::SessionEntry| match entry {
-        kage_session::SessionEntry::Message(message) => {
+        kage_session::SessionEntry::Message(message) if tree.is_active(entry.id()) => {
             message.message.role != Role::Assistant
                 || !message
                     .message

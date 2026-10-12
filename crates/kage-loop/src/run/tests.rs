@@ -19,9 +19,7 @@ fn temp_workdir(name: &str) -> std::path::PathBuf {
 
 /// A single text block, the shape a steering hook returns.
 fn text_steering(text: impl Into<String>) -> Vec<Content> {
-    vec![Content::Text {
-        text: text.into(),
-    }]
+    vec![Content::Text { text: text.into() }]
 }
 
 #[test]

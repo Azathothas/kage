@@ -403,7 +403,8 @@ fn recall_pulls_the_newest_pending_prompt_back_into_the_editor() {
 }
 
 #[test]
-fn recall_when_the_engine_queue_was_empty_keeps_the_row() {    let (mut app, _rx, events) = app_with_events();
+fn recall_when_the_engine_queue_was_empty_keeps_the_row() {
+    let (mut app, _rx, events) = app_with_events();
     lock(app.session_usage.as_ref().unwrap()).working = true;
     app.handle_submit("still queued".into(), true);
     feed(
@@ -510,20 +511,22 @@ fn undo_restores_the_removed_prompt_into_the_editor() {
     feed(
         &mut app,
         &events,
-        vec![kage_core::protocol::HostEvent::Undone {
-            prompt: Some(vec![
-                kage_core::Content::Text {
-                    text: "redo me".into(),
-                },
-                kage_core::Content::Image {
-                    source: kage_core::ImageSource::Base64 {
-                        data: "AAAA".into(),
+        vec![
+            kage_core::protocol::HostEvent::Undone {
+                prompt: Some(vec![
+                    kage_core::Content::Text {
+                        text: "redo me".into(),
                     },
-                    mime: "image/png".into(),
-                },
-            ]),
-        }
-        .into()],
+                    kage_core::Content::Image {
+                        source: kage_core::ImageSource::Base64 {
+                            data: "AAAA".into(),
+                        },
+                        mime: "image/png".into(),
+                    },
+                ]),
+            }
+            .into(),
+        ],
     );
     // Images attach at the editor's end, so with a draft present the
     // chip lands after it (same as prompt recall).

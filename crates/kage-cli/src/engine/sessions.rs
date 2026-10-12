@@ -1,57 +1,108 @@
 //! Session file operations: fork, clone, export, and the engine commands
-//! that replace, copy, or drop a session.
+//! that branch, copy, or drop a session.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use chrono::Utc;
 use kage_core::protocol::{CompactionCounts, HostEvent, NoticeLevel, PastPrompt};
 use kage_core::{Content, Role, SessionId};
-use kage_session::{EntryId, SessionReader, SessionWriter};
+use kage_session::{BranchEntry, EntryId, SessionEntry, SessionTree, SessionWriter};
 
-/// Read the JSONL session at `path` and return the id of its final
-/// non-header entry, or `None` if the file holds only a header.
+/// Read the JSONL session at `path` and return the id of its active
+/// head, the entry a fork with no cut point copies through, or `None`
+/// if the file holds only a header.
 fn find_last_entry(path: &std::path::Path) -> Result<Option<EntryId>, kage_session::SessionError> {
-    let reader = SessionReader::iter(path)?;
-    let mut last = None;
-    for item in reader {
-        let entry = item?;
-        if !matches!(entry, kage_session::SessionEntry::Header(_)) {
-            last = Some(entry.id());
-        }
-    }
-    Ok(last)
+    let tree = SessionTree::read(path)?;
+    Ok((tree.head() != tree.root()).then_some(tree.head()))
 }
 
-/// One user prompt in a session file that a rewind can target.
+/// One user prompt in a session's branch tree that a rewind can target.
 struct PromptEntry {
     /// The prompt's own message entry.
     at: EntryId,
-    /// The entry before the prompt: the id to fork at so the copy
-    /// ends before the prompt.
+    /// The entry the conversation continues from to drop the prompt
+    /// and everything after it: the prompt's tree parent.
     cut: EntryId,
+    /// The last entry of the prompt's turn: the prompt, its reply and
+    /// the state recorded before the next prompt. The entry a rewind
+    /// keeps the conversation at.
+    turn_end: EntryId,
     /// The prompt's content.
     content: Vec<Content>,
+    /// How many branch edges sit above the prompt, for the picker's
+    /// indentation.
+    depth: u32,
+    /// Whether the prompt is the head the conversation would continue
+    /// from.
+    active: bool,
 }
 
-/// Every user message after the header of `path`, in file order, each
-/// with the entry to fork at to drop it and everything after it.
-fn user_prompts(path: &std::path::Path) -> Result<Vec<PromptEntry>, kage_session::SessionError> {
-    let reader = SessionReader::iter(path)?;
-    let mut prev: Option<EntryId> = None;
-    let mut found = Vec::new();
-    for item in reader {
-        let entry = item?;
-        if let kage_session::SessionEntry::Message(message) = &entry
-            && message.message.role == Role::User
-            && let Some(cut) = prev
-        {
-            found.push(PromptEntry {
-                at: entry.id(),
-                cut,
-                content: message.message.content.clone(),
-            });
+/// Every user prompt in the branch tree of `path`, depth-first: a
+/// branch's descendants before its next sibling, siblings in file
+/// order, so the list reads oldest first with the active head last.
+/// Depth counts the branch edges above a prompt, so every prompt on
+/// the original thread sits at `0` and a re-prompted branch indents
+/// one level under the thread it forked from. `active` marks exactly
+/// one row: the head prompt the conversation would continue from.
+fn prompt_tree(path: &std::path::Path) -> Result<Vec<PromptEntry>, kage_session::SessionError> {
+    let tree = SessionTree::read(path)?;
+    let mut head = None;
+    let mut cursor = tree.head();
+    loop {
+        if matches!(
+            tree.entry(cursor),
+            Some(kage_session::SessionEntry::Message(m)) if m.message.role == Role::User
+        ) {
+            head = Some(cursor);
+            break;
         }
-        prev = Some(entry.id());
+        let Some(parent) = tree.parent(cursor) else {
+            break;
+        };
+        cursor = parent;
+    }
+    // The natural child of a node: the entry that directly follows it
+    // in the file with no branch marker between. A turn runs along
+    // natural edges and ends at the next prompt.
+    let mut natural: std::collections::HashMap<EntryId, EntryId> = std::collections::HashMap::new();
+    for (node, _) in tree.iter() {
+        if !node.branched {
+            natural.insert(node.parent, node.id);
+        }
+    }
+    let is_prompt = |id: EntryId| matches!(tree.entry(id), Some(kage_session::SessionEntry::Message(m)) if m.message.role == Role::User);
+    let mut found = Vec::new();
+    for step in tree.walk() {
+        let kage_session::SessionEntry::Message(message) = step.entry else {
+            continue;
+        };
+        if message.message.role != Role::User {
+            continue;
+        }
+        let mut depth = 0u32;
+        let mut cursor = step.node.id;
+        while let Some(parent) = tree.parent(cursor) {
+            if tree.branched(cursor) {
+                depth += 1;
+            }
+            cursor = parent;
+        }
+        let mut turn_end = step.node.id;
+        while let Some(&child) = natural.get(&turn_end) {
+            if is_prompt(child) {
+                break;
+            }
+            turn_end = child;
+        }
+        found.push(PromptEntry {
+            at: step.node.id,
+            cut: step.node.parent,
+            turn_end,
+            content: message.message.content.clone(),
+            depth,
+            active: Some(step.node.id) == head,
+        });
     }
     Ok(found)
 }
@@ -483,9 +534,9 @@ impl super::Dispatcher {
         }
     }
 
-    /// Drop the last user prompt and everything after it: fork the
-    /// session just before that prompt and continue on the copy. The
-    /// removed prompt goes back to the client in
+    /// Drop the last user prompt and everything after it: branch the
+    /// session in place, continuing from the entry before that
+    /// prompt. The removed prompt goes back to the client in
     /// [`HostEvent::Undone`] so it can offer it for a retry.
     pub(super) fn undo(&mut self, id: SessionId) {
         if self.refuse_for_agent(id, "undo") || !self.ensure_idle(id, "undo") {
@@ -495,9 +546,9 @@ impl super::Dispatcher {
             self.error(id, "undo: the session is not recorded".to_owned());
             return;
         };
-        match user_prompts(&src).map(|mut prompts| prompts.pop()) {
+        match prompt_tree(&src).map(|prompts| prompts.into_iter().find(|prompt| prompt.active)) {
             Ok(Some(prompt)) => {
-                self.rewind_to(id, "undo", &src, &prompt.cut.to_string(), prompt.content);
+                self.rewind_to(id, "undo", prompt.cut, Some(prompt.content));
             }
             Ok(None) => {
                 self.error(id, "undo: nothing to undo".to_owned());
@@ -508,8 +559,11 @@ impl super::Dispatcher {
         }
     }
 
-    /// Drop the user prompt with entry id `at` and everything after
-    /// it, the [`CommandKind::Rewind`] half of [`Self::undo`].
+    /// Branch the session in place to the end of the turn of the user
+    /// prompt with entry id `at`, the [`CommandKind::Rewind`] half of
+    /// [`Self::undo`]. Any prompt on any branch of the session is a
+    /// target. The picked prompt and its reply stay; what follows the
+    /// turn is abandoned.
     pub(super) fn rewind(&mut self, id: SessionId, at: &str) {
         if self.refuse_for_agent(id, "rewind") || !self.ensure_idle(id, "rewind") {
             return;
@@ -518,7 +572,7 @@ impl super::Dispatcher {
             self.error(id, "rewind: the session is not recorded".to_owned());
             return;
         };
-        let prompts = match user_prompts(&src) {
+        let prompts = match prompt_tree(&src) {
             Ok(prompts) => prompts,
             Err(err) => {
                 self.error(id, format!("rewind: {err}"));
@@ -540,25 +594,139 @@ impl super::Dispatcher {
                 return;
             }
         };
-        self.rewind_to(id, "rewind", &src, &prompt.cut.to_string(), prompt.content.clone());
+        self.rewind_to(id, "rewind", prompt.turn_end, None);
     }
 
-    /// Shared tail of [`Self::undo`] and [`Self::rewind`]: fork `src`
-    /// at `cut`, continue on the copy, and hand `prompt` back to the
-    /// client for the editor.
-    fn rewind_to(&mut self, id: SessionId, what: &str, src: &Path, cut: &str, prompt: Vec<Content>) {
-        match fork_session(src, Some(cut)) {
-            Ok((dst, _)) => {
-                self.load_session(id, &dst);
-                self.bus
-                    .publish(id, HostEvent::Undone { prompt: Some(prompt) });
+    /// Shared tail of [`Self::undo`] and [`Self::rewind`]: append a
+    /// branch marker that continues the session from `at`, reload the
+    /// session in place from its own file, and for [`Self::undo`]
+    /// hand the dropped `prompt` back to the client for the editor.
+    /// The session keeps its id and its file; the abandoned entries
+    /// stay in the file as an abandoned branch.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one linear reload: marker append, replay, then the same state reseat applies"
+    )]
+    fn rewind_to(&mut self, id: SessionId, what: &str, at: EntryId, prompt: Option<Vec<Content>>) {
+        let Some(path) = self.sessions[&id].path.clone() else {
+            self.error(id, format!("{what}: the session is not recorded"));
+            return;
+        };
+        let (messages, state, usage, title, compaction, fallback) = {
+            let Some(session) = self.sessions.get_mut(&id) else {
+                return;
+            };
+            let Some(mut idle) = session.idle.take() else {
+                return;
+            };
+            let marker = SessionEntry::Branch(BranchEntry {
+                id: EntryId::new(),
+                ts: Utc::now(),
+                at,
+            });
+            let appended = match idle.recorder.as_mut() {
+                Some(recorder) => recorder.append(&marker).map_err(|err| err.to_string()),
+                None => Err("the session is not recorded".to_owned()),
+            };
+            if let Err(err) = appended {
+                session.idle = Some(idle);
+                self.error(id, format!("{what}: {err}"));
+                return;
             }
-            Err(err) => self.error(id, format!("{what}: {err}")),
+            let replay = match kage_session::replay(&path) {
+                Ok(replay) => replay,
+                Err(err) => {
+                    session.idle = Some(idle);
+                    self.error(id, format!("{what}: {err}"));
+                    return;
+                }
+            };
+            let mut fallback = None;
+            if self.registry.resolve(&replay.model).is_ok() {
+                session.state.model.clone_from(&replay.model);
+            } else {
+                fallback = Some(format!(
+                    "session model {} unavailable; using {} instead",
+                    replay.model, session.state.model
+                ));
+            }
+            let mut cx = super::clone_shallow(&idle.cx);
+            cx.history = replay.history.into_iter().map(Arc::new).collect();
+            cx.budget = kage_loop::TokenBudget {
+                used_input: replay.usage_total.input,
+                used_output: replay.usage_total.output,
+                used_cache_read: replay.usage_total.cache_read,
+                used_cache_write: replay.usage_total.cache_write,
+                current_context: replay.usage_total.last_context,
+            };
+            cx.thinking_level = replay
+                .thinking_level
+                .as_deref()
+                .and_then(kage_core::ThinkingLevel::parse);
+            session.swarm_mode = replay.swarm_mode.unwrap_or(false);
+            session.gate.set_plan(replay.plan_mode.unwrap_or(false));
+            session.usage = super::usage_of(&cx);
+            session.state.thinking = cx.thinking_level;
+            super::fit_to_model(&mut session.state, &self.registry);
+            session.thinking_changed = false;
+            session.model_changed = false;
+            session.title_pending = session.title && !super::has_reply(&cx);
+            session.pending_history.clear();
+            session.queued.clear();
+            kage_core::sync::lock(&session.inbox).clear();
+            session.gate.reset_session();
+            session.state.permission_mode = None;
+            let messages = cx.history.clone();
+            session.idle = Some(super::Idle {
+                cx,
+                recorder: idle.recorder,
+            });
+            session.sync_state();
+            let state = session.state.clone();
+            let usage = session.usage;
+            let title = replay.title;
+            let compaction = replay.compaction;
+            (messages, state, usage, title, compaction, fallback)
+        };
+        // The agents of this session forked from a history the rewind
+        // rewrote.
+        let agents: Vec<SessionId> = self
+            .sessions
+            .keys()
+            .copied()
+            .filter(|agent| self.descends_from(*agent, id))
+            .collect();
+        for agent in agents {
+            self.sessions.remove(&agent);
+            self.swarm_requeues.remove(&agent);
+            self.bus.forget(agent);
+            self.report_closed(agent);
         }
+        let servers = self.sessions[&id]
+            .mcp
+            .as_ref()
+            .map(kage_mcp::McpManager::catalog)
+            .unwrap_or_default();
+        self.bus.publish(
+            id,
+            HostEvent::SessionChanged {
+                path,
+                title,
+                messages,
+                compaction,
+            },
+        );
+        self.bus.publish(id, HostEvent::StateChanged { state });
+        self.bus.publish(id, HostEvent::UsageUpdated { usage });
+        self.bus.publish(id, HostEvent::McpServers { servers });
+        if let Some(note) = fallback {
+            self.info(id, note);
+        }
+        self.bus.publish(id, HostEvent::Undone { prompt });
     }
 
-    /// Answer [`CommandKind::ListPrompts`] with every user prompt a
-    /// rewind can target, oldest first.
+    /// Answer [`CommandKind::ListPrompts`] with every user prompt the
+    /// session's branch tree holds, oldest first.
     pub(super) fn list_prompts(&mut self, id: SessionId) {
         if self.refuse_for_agent(id, "rewind") {
             return;
@@ -567,13 +735,15 @@ impl super::Dispatcher {
             self.error(id, "rewind: the session is not recorded".to_owned());
             return;
         };
-        match user_prompts(&src) {
+        match prompt_tree(&src) {
             Ok(prompts) => {
                 let prompts = prompts
                     .into_iter()
                     .map(|prompt| PastPrompt {
                         at: prompt.at.to_string(),
                         prompt: prompt.content,
+                        depth: prompt.depth,
+                        active: prompt.active,
                     })
                     .collect();
                 self.bus.publish(id, HostEvent::PromptList { prompts });
@@ -727,7 +897,7 @@ impl super::Dispatcher {
 mod tests {
     use chrono::Utc;
     use kage_core::Message;
-    use kage_session::{FORMAT_VERSION, Header, MessageEntry, SessionEntry};
+    use kage_session::{FORMAT_VERSION, Header, MessageEntry, SessionEntry, SessionReader};
 
     use super::*;
 

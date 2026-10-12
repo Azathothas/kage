@@ -98,4 +98,14 @@ pub enum SessionError {
         /// The requested entry id.
         at: EntryId,
     },
+    /// A [`crate::BranchEntry`] marker names an entry that does not
+    /// exist at or before it, so the file's branch tree cannot be
+    /// walked.
+    #[error("session {path}: branch marker names entry {at}, which the file does not hold")]
+    BranchTarget {
+        /// Path of the offending file.
+        path: PathBuf,
+        /// The branch target no earlier entry has.
+        at: EntryId,
+    },
 }

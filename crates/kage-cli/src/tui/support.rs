@@ -407,6 +407,7 @@ pub(crate) fn entry_kind(entry: &kage_session::SessionEntry) -> &'static str {
         E::Compaction(_) => "compaction",
         E::Label(_) => "label",
         E::Title(_) => "title",
+        E::Branch(_) => "branch",
         E::Custom(_) => "custom",
     }
 }

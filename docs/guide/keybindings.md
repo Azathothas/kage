@@ -107,11 +107,14 @@ same escalation:
 3. Idle with an empty draft, `esc` clears an active search
    highlight (the footer then reads `esc to clear the search`). A
    second `esc` within 0.6 seconds opens the
-   [rewind picker](/guide/commands#commands): one row per earlier
-   prompt, oldest first, opened on the newest; picking one rewinds
-   the conversation there and puts that prompt back into the editor
-   (`/rewind` does the same). The first `esc` arms it, and the
-   footer reads `esc again to rewind`. `ctrl+c` arms quit instead.
+   [rewind picker](/guide/commands#commands): one row per prompt the
+   session's branch tree holds, oldest first, branches indented one
+   level per rewind, opened on the active head; picking one rewinds
+   the conversation to that prompt, which stays while its reply and
+   everything after it are abandoned (`/rewind` does the same; `/undo`
+   is the variant that takes the last prompt back into the editor).
+   The first `esc` arms it, and
+   the footer reads `esc again to rewind`. `ctrl+c` arms quit instead.
    The footer reads `ctrl+c again to quit`, and a second `ctrl+c`
    within 2 seconds quits.
 

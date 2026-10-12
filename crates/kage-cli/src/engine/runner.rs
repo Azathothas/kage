@@ -12,8 +12,8 @@ use kage_core::agent_report::AgentLimit;
 use kage_core::protocol::{HostEvent, McpServerInfo, NoticeLevel, RunOutcome, Usage};
 use kage_core::sync::lock;
 use kage_core::{
-    CancelFlag, Content, LoopError, LoopEvent, Message, ModelCost, SessionId, TokenCost, TokenUsage,
-    ToolOutput,
+    CancelFlag, Content, LoopError, LoopEvent, Message, ModelCost, SessionId, TokenCost,
+    TokenUsage, ToolOutput,
 };
 use kage_loop::{AgentContext, Hooks, LoopConfig};
 use kage_mcp::expand::ExpandError;

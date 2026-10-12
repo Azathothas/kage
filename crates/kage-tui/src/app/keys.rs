@@ -121,10 +121,7 @@ impl App {
     /// `init.lua` or `config.toml` on the chord, so `quit` and
     /// `:cancel` stay reachable through whatever the user mapped
     /// instead.
-    fn global_quit_hatch(
-        &mut self,
-        key: &ratatui::crossterm::event::KeyEvent,
-    ) -> Hatch {
+    fn global_quit_hatch(&mut self, key: &ratatui::crossterm::event::KeyEvent) -> Hatch {
         use ratatui::crossterm::event::{KeyCode, KeyModifiers};
         if !key.modifiers.contains(KeyModifiers::CONTROL) {
             return Hatch::Pass;

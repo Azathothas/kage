@@ -187,8 +187,9 @@ impl SessionWriter {
 /// extend. An empty file has no header to append behind; a first line
 /// that does not parse as a header can only be a torn or foreign
 /// line, and appending behind it would orphan everything this writer
-/// adds. A parseable header must also declare the supported format
-/// version.
+/// adds. A parseable header must declare a format version this build
+/// interprets: any version whose entries it all knows, so a version 1
+/// file stays appendable.
 fn check_version(file: &File, path: &Path) -> Result<(), SessionError> {
     let mut reader = std::io::BufReader::new(file);
     let mut line = String::new();
@@ -205,7 +206,7 @@ fn check_version(file: &File, path: &Path) -> Result<(), SessionError> {
     }
     match serde_json::from_str::<SessionEntry>(&line) {
         Ok(SessionEntry::Header(header)) => {
-            if header.version != FORMAT_VERSION {
+            if header.version == 0 || header.version > FORMAT_VERSION {
                 return Err(SessionError::UnsupportedVersion {
                     path: path.to_path_buf(),
                     found: header.version,
@@ -502,6 +503,28 @@ mod tests {
             }
             other => panic!("expected UnsupportedVersion, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn open_appends_to_a_version_one_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("old.jsonl");
+        let header = Header {
+            version: 1,
+            ..fresh_header()
+        };
+        SessionWriter::create(&path, header).unwrap();
+        let mut w = SessionWriter::open(&path).unwrap();
+        w.append(&SessionEntry::Label(Label {
+            id: EntryId::new(),
+            ts: Utc::now(),
+            text: "appended".into(),
+            anchor: EntryId::new(),
+        }))
+        .unwrap();
+        drop(w);
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(raw.split_terminator('\n').count(), 2);
     }
 
     #[cfg(unix)]

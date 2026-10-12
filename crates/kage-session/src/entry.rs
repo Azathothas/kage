@@ -2,7 +2,10 @@
 //!
 //! A session is a flat JSONL file. The first line is a [`SessionEntry::Header`];
 //! subsequent lines are entries appended in order. Each entry has its own id
-//! and timestamp so forks can branch from any point.
+//! and timestamp so forks and rewinds can target any point. An undo or
+//! rewind appends a [`SessionEntry::Branch`] marker instead of rewriting:
+//! the conversation continues from the entry the marker names, and the
+//! entries it abandons stay in the file. See [`crate::tree::SessionTree`].
 
 use std::fmt;
 use std::path::PathBuf;
@@ -17,8 +20,10 @@ use ulid::Ulid;
 /// Current on-disk session format version.
 ///
 /// Bumped whenever the entry schema changes in a non-additive way. Readers
-/// reject files written with any other version.
-pub const FORMAT_VERSION: u32 = 1;
+/// accept the versions whose entries they all interpret: version 2 added
+/// the [`SessionEntry::Branch`] marker, which version 1 readers must not
+/// see.
+pub const FORMAT_VERSION: u32 = 2;
 
 /// Stable identifier for a single entry within a session.
 ///
@@ -71,6 +76,11 @@ pub enum SessionEntry {
     /// A short generated title for the session, written once after
     /// the first assistant response. Latest one wins on read.
     Title(SessionTitle),
+    /// The conversation continues from entry `at`. Entries between
+    /// that entry and the marker stay in the file as an abandoned
+    /// branch; replay, fork and the session list follow the marker and
+    /// ignore them. Written by an in-place undo or rewind.
+    Branch(BranchEntry),
     /// A plugin-defined entry the core does not interpret.
     Custom(Custom),
 }
@@ -87,6 +97,7 @@ impl SessionEntry {
             Self::Compaction(c) => c.id,
             Self::Label(l) => l.id,
             Self::Title(t) => t.id,
+            Self::Branch(b) => b.id,
             Self::Custom(c) => c.id,
         }
     }
@@ -102,6 +113,7 @@ impl SessionEntry {
             Self::Compaction(c) => c.ts,
             Self::Label(l) => l.ts,
             Self::Title(t) => t.ts,
+            Self::Branch(b) => b.ts,
             Self::Custom(c) => c.ts,
         }
     }
@@ -234,6 +246,23 @@ pub struct Custom {
     pub data: serde_json::Value,
 }
 
+/// Marks where the conversation continues after an undo or rewind.
+///
+/// The marker itself is not part of the conversation: the entry
+/// [`BranchEntry::at`] names takes its previous entry's place as the
+/// parent of whatever is appended next, and the entries between that
+/// entry and the marker are abandoned but kept.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct BranchEntry {
+    /// Entry id of the marker itself.
+    pub id: EntryId,
+    /// Append time.
+    pub ts: DateTime<Utc>,
+    /// The entry the conversation continues from, or the header id to
+    /// restart from the top.
+    pub at: EntryId,
+}
+
 #[cfg(test)]
 mod tests {
     use kage_core::{Content, Role};
@@ -334,6 +363,20 @@ mod tests {
     }
 
     #[test]
+    fn branch_round_trips() {
+        let entry = SessionEntry::Branch(BranchEntry {
+            id: EntryId::new(),
+            ts: Utc::now(),
+            at: EntryId::new(),
+        });
+        let line = serde_json::to_string(&entry).unwrap();
+        let back: SessionEntry = serde_json::from_str(&line).unwrap();
+        assert_eq!(entry, back);
+        let json = serde_json::to_value(&entry).unwrap();
+        assert_eq!(json["type"], "branch");
+    }
+
+    #[test]
     fn entry_id_helpers() {
         let id = EntryId::new();
         let entry = SessionEntry::ThinkingLevelChange(ThinkingLevelChange {
@@ -345,7 +388,7 @@ mod tests {
     }
 
     #[test]
-    fn format_version_is_one() {
-        assert_eq!(FORMAT_VERSION, 1);
+    fn format_version_is_two() {
+        assert_eq!(FORMAT_VERSION, 2);
     }
 }

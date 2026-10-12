@@ -176,18 +176,19 @@ pub enum RunRequest {
         at: String,
     },
     /// Drop the last user prompt and everything after it: the worker
-    /// forks the session just before that prompt and continues on the
-    /// copy, so the transcript and history lose the undone exchange.
-    /// The removed prompt comes back in
+    /// branches the session in place, continuing from just before
+    /// that prompt, so the transcript and history lose the undone
+    /// exchange. The removed prompt comes back in
     /// [`kage_core::protocol::HostEvent::Undone`] for the editor.
     UndoSession,
     /// Ask for every user prompt the session still holds, answered by
     /// [`kage_core::protocol::HostEvent::PromptList`], which opens the
     /// rewind picker.
     ListPrompts,
-    /// Rewind to a picked prompt: the worker drops it and everything
-    /// after it (forking just before it) and the prompt comes back in
-    /// [`kage_core::protocol::HostEvent::Undone`] for the editor.
+    /// Rewind to a picked prompt: the worker branches the session in
+    /// place to just before it, on any branch, and the prompt comes
+    /// back in [`kage_core::protocol::HostEvent::Undone`] for the
+    /// editor.
     Rewind {
         /// Entry id of the picked prompt.
         at: String,

@@ -83,11 +83,12 @@ impl OverlayPicker {
         self
     }
 
-    /// Start the selection on the last row. The first render scrolls
-    /// the window there, so a long list opens showing its end.
+    /// Start the selection on row `index`, leaving the rows as the
+    /// caller ordered them. The first render scrolls the window to the
+    /// selection, so a long list opens showing that row.
     #[must_use]
-    pub fn with_selected_last(mut self) -> Self {
-        self.selected = self.items.len().saturating_sub(1);
+    pub fn with_selected(mut self, index: usize) -> Self {
+        self.selected = index.min(self.items.len().saturating_sub(1));
         self
     }
 

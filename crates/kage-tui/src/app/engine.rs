@@ -59,8 +59,16 @@ impl App {
         if let Event::Host(HostEvent::Undone { prompt }) = &envelope.event {
             if let Some(prompt) = prompt {
                 self.restore_prompt_into_editor(prompt.clone());
+                self.toast(
+                    NoticeLevel::Info,
+                    "rewound: the prompt is back in the editor".into(),
+                );
+            } else {
+                self.toast(
+                    NoticeLevel::Info,
+                    "rewound: continuing after the picked prompt".into(),
+                );
             }
-            self.toast(NoticeLevel::Info, "rewound: the prompt is back in the editor".into());
             return;
         }
         if let Event::Host(HostEvent::PromptList { prompts }) = &envelope.event {
