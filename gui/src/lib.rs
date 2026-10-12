@@ -12,6 +12,9 @@
 mod assets;
 pub mod clock;
 pub mod fonts;
+/// Frame-time instrumentation behind `KAGE_FRAME_TIMES`, for the
+/// NFR-01 budget.
+pub mod frame_times;
 pub mod gate;
 // The window icon decodes a PNG through `image`, which the wasm
 // bundle does not carry: the browser canvas takes no window icon.

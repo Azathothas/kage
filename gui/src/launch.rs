@@ -533,8 +533,9 @@ pub struct ShellApp {
     /// The theme the window opened with. The settings dialog reports
     /// a change with the choice it stored; the shell applies it.
     pub prefs_theme: crate::theme::ThemeChoice,
-    /// Frames since the last stream chunk, for the 30 Hz pace.
-    stream_clock: web_time::Instant,
+    /// The 30 Hz ticker the `--stream` run drives, for the NFR-01
+    /// measurement.
+    stream_tick: crate::frame_times::Ticker,
     /// When the daily release check last ran, unix seconds.
     last_update_check: i64,
     /// The finished release check's inbox, while one is in flight.
@@ -560,11 +561,18 @@ pub struct ShellApp {
     /// When this window was built, the clock the dialogs' fields and
     /// the constellation twinkle on.
     born: web_time::Instant,
+    /// The frame-time recorder, off unless `KAGE_FRAME_TIMES` is set.
+    frame_times: crate::frame_times::FrameTimes,
 }
 
 impl eframe::App for ShellApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        // The frame clock starts here and stops around the draw. The
+        // time between frames is idle time: egui schedules no repaint
+        // while the app waits, so charging that gap to a frame is how
+        // an idle window reports one-second frames.
+        self.frame_times.begin_frame(web_time::Instant::now());
         self.shell.on_events();
         self.shell.flush_outgoing();
         #[cfg(not(target_arch = "wasm32"))]
@@ -575,15 +583,24 @@ impl eframe::App for ShellApp {
         }
         self.route_keys(&ctx);
         if self.stream {
-            if self.stream_clock.elapsed() >= Duration::from_secs_f64(1.0 / 30.0) {
-                self.stream_clock = web_time::Instant::now();
+            // The ticker advances its clock by one period per tick
+            // rather than to the current time: resetting to `now`
+            // pushed every tick out by a frame and the 30 Hz rate
+            // drifted below its NFR-01 budget however fast the frames
+            // were (284 of 300 at 64 fps).
+            let now = web_time::Instant::now();
+            if self.stream_tick.tick(now) {
                 self.shell.stream_chunk();
             }
-            ctx.request_repaint_after(Duration::from_secs_f64(1.0 / 30.0));
+            ctx.request_repaint_after(self.stream_tick.due_in(now));
         }
         if let Some((started, delay)) = self.shell.smoke_deadline.take() {
             if started.elapsed() >= delay {
                 println!("{}", self.shell.smoke_line());
+                // The frame began above and drew nothing: it found the
+                // deadline and asked the window to close. Closing it
+                // here would measure the whole idle wait as a draw.
+                self.frame_times.report();
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 return;
             }
@@ -595,11 +612,27 @@ impl eframe::App for ShellApp {
         self.shell.toasts.expire(web_time::Instant::now());
         #[cfg(not(target_arch = "wasm32"))]
         if self.shell.needs_setup() {
+            let draw_started = web_time::Instant::now();
             self.draw_setup(ui);
+            let now = web_time::Instant::now();
+            self.frame_times
+                .end_frame(now, now.saturating_duration_since(draw_started));
             return;
         }
+        let draw_started = web_time::Instant::now();
         self.draw(ui);
+        let now = web_time::Instant::now();
+        self.frame_times
+            .end_frame(now, now.saturating_duration_since(draw_started));
         self.find_keys();
+    }
+
+    /// Prints the frame-time summary when the window closes, so a run
+    /// that quits from the title bar or a signal still reports. It
+    /// records no frame: every draw path already closed its own, and
+    /// the time between the last frame and here is teardown.
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.frame_times.report();
     }
 }
 
@@ -619,7 +652,7 @@ impl ShellApp {
             shell: Shell::new(cwd, replay, transport, ctx),
             stream: false,
             prefs_theme: crate::theme::ThemeChoice::System,
-            stream_clock: web_time::Instant::now(),
+            stream_tick: crate::frame_times::Ticker::hz30(web_time::Instant::now()),
             last_update_check: crate::clock::unix_seconds(),
             update_rx: None,
             install_rx: None,
@@ -628,6 +661,7 @@ impl ShellApp {
             row_actions: Vec::new(),
             ctx: ctx.clone(),
             born: web_time::Instant::now(),
+            frame_times: crate::frame_times::FrameTimes::from_env(),
         }
     }
 
