@@ -227,6 +227,7 @@ impl Host {
             }
             RunRequest::SwitchSession(SwitchTarget::PendingFork(_)) => "switching to a fork",
             RunRequest::UndoSession => "undoing",
+            RunRequest::Rewind { .. } => "rewinding",
             _ => return false,
         };
         self.error(format!(
@@ -343,6 +344,8 @@ impl Host {
                 }
             }
             RunRequest::UndoSession => self.send(CommandKind::Undo),
+            RunRequest::ListPrompts => self.send(CommandKind::ListPrompts),
+            RunRequest::Rewind { at } => self.send(CommandKind::Rewind { at }),
             RunRequest::SwitchSession(SwitchTarget::Session(target)) => {
                 match resolve_switch_target(&target) {
                     Ok(path) => {

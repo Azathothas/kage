@@ -83,6 +83,14 @@ impl OverlayPicker {
         self
     }
 
+    /// Start the selection on the last row. The first render scrolls
+    /// the window there, so a long list opens showing its end.
+    #[must_use]
+    pub fn with_selected_last(mut self) -> Self {
+        self.selected = self.items.len().saturating_sub(1);
+        self
+    }
+
     /// Render the picker over `area`. Thin wrapper that drives the
     /// [`OverlayWidget`] impl through a [`Frame`]; kept so callers in
     /// the render closure can pass the active `Frame` directly without

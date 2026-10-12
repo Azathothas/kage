@@ -354,6 +354,14 @@ pub(crate) static BUILTIN_COMMANDS: &[CommandSpec] = &[
         subcommands: &[],
     },
     CommandSpec {
+        name: "rewind",
+        aliases: &[],
+        description: "pick a past prompt to rewind to, dropping it and what followed",
+        category: CommandCategory::Both,
+        args: &[],
+        subcommands: &[],
+    },
+    CommandSpec {
         name: "agents",
         aliases: &[],
         description: "list every agent of the session, live or finished",
@@ -761,7 +769,7 @@ mod tests {
 
     #[test]
     fn builtin_registry_has_expected_command_count() {
-        assert_eq!(BUILTIN_COMMANDS.len(), 30);
+        assert_eq!(BUILTIN_COMMANDS.len(), 31);
     }
 
     #[test]

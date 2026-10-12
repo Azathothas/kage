@@ -838,6 +838,8 @@ impl Dispatcher {
             CommandKind::LoadSession { path } => self.load_session(id, &path),
             CommandKind::Fork { at, switch } => self.fork(id, at.as_deref(), switch),
             CommandKind::Undo => self.undo(id),
+            CommandKind::ListPrompts => self.list_prompts(id),
+            CommandKind::Rewind { at } => self.rewind(id, &at),
             CommandKind::ForkFile { path } => self.fork_file(id, &path),
             CommandKind::Clone => self.clone_session(id),
             CommandKind::DeleteSession { path } => self.delete_session(id, &path),

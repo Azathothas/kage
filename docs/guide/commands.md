@@ -59,6 +59,7 @@ The table lists every built-in command.
 | `/tree`                   | Browse the session fork forest (resume, fork, delete). Agent sessions sit under their parent with an `agent: ` label. |
 | `/clone`                  | Duplicate the session to a new id and continue in the clone |
 | `/undo` | Drop the last exchange: the session forks just before its last prompt and continues on the copy, and the removed prompt goes back into the editor to edit and resend. Refused while a run is in flight |
+| `/rewind` | Open the rewind picker: one row per earlier prompt, oldest first, opened on the newest. Picking one drops it and everything after it, forks the session there, and puts the prompt back into the editor. Same rules as `/undo` |
 | `/keybindings` / `/keys`  | List active key mappings per mode with their owners |
 | `/attach [path]` / `/img` | Attach a png, jpeg, gif or webp image to the next prompt: a file `path`, or the OS clipboard image when no path is given. A toast warns when the model does not accept images. To include a text file, mention it as `@path` in the prompt instead |
 | `/mouse [on\|off\|toggle]` | Control terminal mouse capture                |

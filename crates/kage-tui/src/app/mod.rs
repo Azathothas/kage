@@ -181,6 +181,17 @@ pub enum RunRequest {
     /// The removed prompt comes back in
     /// [`kage_core::protocol::HostEvent::Undone`] for the editor.
     UndoSession,
+    /// Ask for every user prompt the session still holds, answered by
+    /// [`kage_core::protocol::HostEvent::PromptList`], which opens the
+    /// rewind picker.
+    ListPrompts,
+    /// Rewind to a picked prompt: the worker drops it and everything
+    /// after it (forking just before it) and the prompt comes back in
+    /// [`kage_core::protocol::HostEvent::Undone`] for the editor.
+    Rewind {
+        /// Entry id of the picked prompt.
+        at: String,
+    },
     /// Duplicate the active session to a fresh id and reseat the
     /// runtime onto the copy. Unlike [`RunRequest::ForkSession`], the
     /// original file is frozen as a snapshot and every subsequent turn
@@ -326,6 +337,8 @@ enum PickerKind {
     Jump,
     /// `/mcp`: value is the server name.
     Mcp,
+    /// Rewind: value is the entry id of the picked prompt.
+    Rewind,
 }
 
 /// A blocking plugin dialog the worker handed to the App to run.

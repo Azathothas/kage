@@ -60,7 +60,11 @@ impl App {
             if let Some(prompt) = prompt {
                 self.restore_prompt_into_editor(prompt.clone());
             }
-            self.toast(NoticeLevel::Info, "undid the last exchange".into());
+            self.toast(NoticeLevel::Info, "rewound: the prompt is back in the editor".into());
+            return;
+        }
+        if let Event::Host(HostEvent::PromptList { prompts }) = &envelope.event {
+            self.show_rewind_picker(prompts.clone());
             return;
         }
         if let Event::Host(
@@ -277,6 +281,7 @@ impl App {
             // Handled before this dispatch, in `apply_envelope`.
             HostEvent::PromptWithdrawn { .. }
             | HostEvent::Undone { .. }
+            | HostEvent::PromptList { .. }
             | HostEvent::TitleChanged { .. }
             | HostEvent::AgentSpawned { .. }
             | HostEvent::AgentPaused { .. } => {}
@@ -407,6 +412,7 @@ impl App {
             // Handled before this dispatch, in `apply_envelope`.
             HostEvent::PromptWithdrawn { .. }
             | HostEvent::Undone { .. }
+            | HostEvent::PromptList { .. }
             | HostEvent::StateChanged { .. }
             | HostEvent::TitleChanged { .. }
             | HostEvent::SessionChanged { .. }

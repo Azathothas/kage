@@ -201,6 +201,10 @@ impl App {
                 let _ = self.send_request(RunRequest::UndoSession);
                 None
             }
+            "rewind" => {
+                self.begin_rewind();
+                None
+            }
             "settings" => {
                 self.open_settings();
                 None

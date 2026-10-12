@@ -403,6 +403,35 @@ impl App {
         self.picker_kind = Some(PickerKind::Mcp);
     }
 
+    /// Ask the engine for the prompts a rewind can target; the picker
+    /// opens when [`kage_core::protocol::HostEvent::PromptList`]
+    /// arrives.
+    pub(crate) fn begin_rewind(&mut self) {
+        let _ = self.send_request(RunRequest::ListPrompts);
+    }
+
+    /// Paint the rewind picker on the engine's prompt list, oldest
+    /// first, opened on the newest row. Picking one drops it and
+    /// everything after it and puts the prompt back into the editor.
+    pub(crate) fn show_rewind_picker(&mut self, prompts: Vec<kage_core::protocol::PastPrompt>) {
+        if prompts.is_empty() {
+            self.notify("nothing to rewind");
+            return;
+        }
+        let items = prompts
+            .into_iter()
+            .map(|prompt| {
+                crate::picker::PickItem::simple(prompt.at).with_label(rewind_label(&prompt.prompt))
+            })
+            .collect();
+        self.picker = Some(
+            OverlayPicker::new_ordered("rewind to prompt", items)
+                .with_selected_last()
+                .with_note("enter rewinds to just before the picked prompt"),
+        );
+        self.picker_kind = Some(PickerKind::Rewind);
+    }
+
     pub(crate) fn dispatch_picker_key(
         &mut self,
         key: ratatui::crossterm::event::KeyEvent,
@@ -461,6 +490,9 @@ impl App {
                         if let Ok(idx) = value.parse::<usize>() {
                             lock(&self.buffer).set_focus(Some(idx));
                         }
+                    }
+                    Some(PickerKind::Rewind) => {
+                        let _ = self.send_request(RunRequest::Rewind { at: value });
                     }
                     None => {}
                 }
@@ -831,6 +863,30 @@ fn mcp_offer(server: &kage_core::protocol::McpServerInfo) -> String {
         parts.push(count(server.templates.len(), "template"));
     }
     parts.join(" \u{b7} ")
+}
+
+/// How wide a rewind picker row's label may grow before it is cut.
+const REWIND_LABEL_WIDTH: usize = 72;
+
+/// One-line label for a rewound prompt: the first line of its first
+/// text block, else a note for an image-only prompt, cut to
+/// [`REWIND_LABEL_WIDTH`].
+fn rewind_label(prompt: &[kage_core::Content]) -> String {
+    let line = prompt
+        .iter()
+        .find_map(|block| match block {
+            kage_core::Content::Text { text } => {
+                Some(text.lines().next().unwrap_or_default().to_owned())
+            }
+            kage_core::Content::Image { mime, .. } => Some(format!("[image {mime}]")),
+            _ => None,
+        })
+        .unwrap_or_else(|| "(no text)".to_owned());
+    if line.chars().count() <= REWIND_LABEL_WIDTH {
+        return line;
+    }
+    let cut: String = line.chars().take(REWIND_LABEL_WIDTH).collect();
+    format!("{cut}\u{2026}")
 }
 
 #[cfg(test)]

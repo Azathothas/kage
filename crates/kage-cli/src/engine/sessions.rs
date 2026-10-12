@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use kage_core::protocol::{CompactionCounts, HostEvent, NoticeLevel};
+use kage_core::protocol::{CompactionCounts, HostEvent, NoticeLevel, PastPrompt};
 use kage_core::{Content, Role, SessionId};
 use kage_session::{EntryId, SessionReader, SessionWriter};
 
@@ -22,23 +22,34 @@ fn find_last_entry(path: &std::path::Path) -> Result<Option<EntryId>, kage_sessi
     Ok(last)
 }
 
-/// Locate `path`'s last user prompt for an undo: the entry id to cut
-/// before (the entry preceding the last user message, or the header
-/// when the prompt is the first), and that message's content. `None`
-/// when the session holds no user message after a header.
-fn last_user_prompt(
-    path: &std::path::Path,
-) -> Result<Option<(EntryId, Vec<Content>)>, kage_session::SessionError> {
+/// One user prompt in a session file that a rewind can target.
+struct PromptEntry {
+    /// The prompt's own message entry.
+    at: EntryId,
+    /// The entry before the prompt: the id to fork at so the copy
+    /// ends before the prompt.
+    cut: EntryId,
+    /// The prompt's content.
+    content: Vec<Content>,
+}
+
+/// Every user message after the header of `path`, in file order, each
+/// with the entry to fork at to drop it and everything after it.
+fn user_prompts(path: &std::path::Path) -> Result<Vec<PromptEntry>, kage_session::SessionError> {
     let reader = SessionReader::iter(path)?;
     let mut prev: Option<EntryId> = None;
-    let mut found: Option<(EntryId, Vec<Content>)> = None;
+    let mut found = Vec::new();
     for item in reader {
         let entry = item?;
         if let kage_session::SessionEntry::Message(message) = &entry
             && message.message.role == Role::User
             && let Some(cut) = prev
         {
-            found = Some((cut, message.message.content.clone()));
+            found.push(PromptEntry {
+                at: entry.id(),
+                cut,
+                content: message.message.content.clone(),
+            });
         }
         prev = Some(entry.id());
     }
@@ -484,30 +495,93 @@ impl super::Dispatcher {
             self.error(id, "undo: the session is not recorded".to_owned());
             return;
         };
-        let prompt = match last_user_prompt(&src) {
-            Ok(Some((cut, prompt))) => {
-                let cut = cut.to_string();
-                match fork_session(&src, Some(&cut)) {
-                    Ok((dst, _)) => {
-                        self.load_session(id, &dst);
-                        Some(prompt)
-                    }
-                    Err(err) => {
-                        self.error(id, format!("undo: {err}"));
-                        return;
-                    }
-                }
+        match user_prompts(&src).map(|mut prompts| prompts.pop()) {
+            Ok(Some(prompt)) => {
+                self.rewind_to(id, "undo", &src, &prompt.cut.to_string(), prompt.content);
             }
             Ok(None) => {
                 self.error(id, "undo: nothing to undo".to_owned());
-                return;
             }
             Err(err) => {
                 self.error(id, format!("undo: {err}"));
+            }
+        }
+    }
+
+    /// Drop the user prompt with entry id `at` and everything after
+    /// it, the [`CommandKind::Rewind`] half of [`Self::undo`].
+    pub(super) fn rewind(&mut self, id: SessionId, at: &str) {
+        if self.refuse_for_agent(id, "rewind") || !self.ensure_idle(id, "rewind") {
+            return;
+        }
+        let Some(src) = self.sessions[&id].path.clone() else {
+            self.error(id, "rewind: the session is not recorded".to_owned());
+            return;
+        };
+        let prompts = match user_prompts(&src) {
+            Ok(prompts) => prompts,
+            Err(err) => {
+                self.error(id, format!("rewind: {err}"));
                 return;
             }
         };
-        self.bus.publish(id, HostEvent::Undone { prompt });
+        let matches: Vec<&PromptEntry> = prompts
+            .iter()
+            .filter(|prompt| prompt.at.to_string().starts_with(at))
+            .collect();
+        let prompt = match matches.as_slice() {
+            [one] => *one,
+            [] => {
+                self.error(id, format!("rewind: no user prompt matches `{at}`"));
+                return;
+            }
+            _ => {
+                self.error(id, format!("rewind: `{at}` matches more than one prompt"));
+                return;
+            }
+        };
+        self.rewind_to(id, "rewind", &src, &prompt.cut.to_string(), prompt.content.clone());
+    }
+
+    /// Shared tail of [`Self::undo`] and [`Self::rewind`]: fork `src`
+    /// at `cut`, continue on the copy, and hand `prompt` back to the
+    /// client for the editor.
+    fn rewind_to(&mut self, id: SessionId, what: &str, src: &Path, cut: &str, prompt: Vec<Content>) {
+        match fork_session(src, Some(cut)) {
+            Ok((dst, _)) => {
+                self.load_session(id, &dst);
+                self.bus
+                    .publish(id, HostEvent::Undone { prompt: Some(prompt) });
+            }
+            Err(err) => self.error(id, format!("{what}: {err}")),
+        }
+    }
+
+    /// Answer [`CommandKind::ListPrompts`] with every user prompt a
+    /// rewind can target, oldest first.
+    pub(super) fn list_prompts(&mut self, id: SessionId) {
+        if self.refuse_for_agent(id, "rewind") {
+            return;
+        }
+        let Some(src) = self.sessions[&id].path.clone() else {
+            self.error(id, "rewind: the session is not recorded".to_owned());
+            return;
+        };
+        match user_prompts(&src) {
+            Ok(prompts) => {
+                let prompts = prompts
+                    .into_iter()
+                    .map(|prompt| PastPrompt {
+                        at: prompt.at.to_string(),
+                        prompt: prompt.content,
+                    })
+                    .collect();
+                self.bus.publish(id, HostEvent::PromptList { prompts });
+            }
+            Err(err) => {
+                self.error(id, format!("rewind: {err}"));
+            }
+        }
     }
 
     pub(super) fn fork_file(&self, id: SessionId, path: &Path) {

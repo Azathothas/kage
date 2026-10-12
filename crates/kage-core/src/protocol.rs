@@ -287,15 +287,34 @@ pub enum HostEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         content: Option<Vec<Content>>,
     },
-    /// A [`CommandKind::Undo`] was answered: the session now ends
-    /// before its last user prompt, and `prompt` is that prompt, for
-    /// the client to put back into its editor. Never recorded. Live.
+    /// A [`CommandKind::Undo`] or [`CommandKind::Rewind`] was answered:
+    /// the session now ends before the dropped user prompt (for Undo,
+    /// the last one), and `prompt` is that prompt, for the client to
+    /// put back into its editor. Never recorded. Live.
     Undone {
         /// The removed user prompt, or `None` when it carried no
         /// restorable content.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         prompt: Option<Vec<Content>>,
     },
+    /// A [`CommandKind::ListPrompts`] was answered: every user prompt
+    /// the session still holds, oldest first, each one a target for
+    /// [`CommandKind::Rewind`]. Never recorded. Live.
+    PromptList {
+        /// The prompts, in file order.
+        prompts: Vec<PastPrompt>,
+    },
+}
+
+/// One past user prompt a client may rewind to, as reported by
+/// [`HostEvent::PromptList`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PastPrompt {
+    /// Entry id of the prompt's message, the `at` a
+    /// [`CommandKind::Rewind`] names.
+    pub at: String,
+    /// The prompt, as it should go back into the editor.
+    pub prompt: Vec<Content>,
 }
 
 /// One member of a [`HostEvent::AgentSpawned`] swarm batch: what its
@@ -593,6 +612,18 @@ pub enum CommandKind {
     /// copy, answering with [`HostEvent::Undone`]. Refused while a run
     /// is in flight.
     Undo,
+    /// List the user prompts a rewind can target, oldest first,
+    /// answering with [`HostEvent::PromptList`]. Read-only.
+    ListPrompts,
+    /// Drop the user prompt named by an entry-id prefix from
+    /// [`HostEvent::PromptList`] and everything after it: fork the
+    /// session at the entry before that prompt and continue on the
+    /// copy, answering with [`HostEvent::Undone`]. Refused while a run
+    /// is in flight.
+    Rewind {
+        /// Entry id of the user prompt to drop.
+        at: String,
+    },
     /// Fork the session stored at `path` at its latest entry.
     ForkFile {
         /// Session file.

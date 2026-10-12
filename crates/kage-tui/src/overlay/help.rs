@@ -59,7 +59,10 @@ const MODELESS_BUILTIN: &[(&str, &str)] = &[
     ("/name", "run a command (tab completes)"),
     ("! (empty prompt)", "run a shell command"),
     ("? (empty prompt)", "this reference"),
-    ("esc", "interrupt the run, else clear the search highlight"),
+    (
+        "esc",
+        "interrupt the run, clear the search highlight; esc esc rewinds",
+    ),
     ("ctrl+c", "interrupt, else twice to quit"),
     ("ctrl+q", "quit kage (cancels a running turn)"),
 ];

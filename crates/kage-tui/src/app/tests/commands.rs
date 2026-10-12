@@ -736,3 +736,16 @@ fn undo_command_sends_an_undo_request() {
     );
     assert_eq!(rx.try_recv(), Ok(RunRequest::UndoSession));
 }
+
+#[test]
+fn rewind_command_requests_the_prompt_list() {
+    let (tx, rx) = mpsc::channel();
+    let mut app = app_with_defaults(shared_buffer(), tx);
+    let registry: Vec<&CommandSpec> = BUILTIN_COMMANDS.iter().collect();
+    let result = app.run_command_validated("rewind", &registry);
+    assert!(
+        matches!(result, CommandResult::Done(None)),
+        "expected Done(None), got {result:?}"
+    );
+    assert_eq!(rx.try_recv(), Ok(RunRequest::ListPrompts));
+}

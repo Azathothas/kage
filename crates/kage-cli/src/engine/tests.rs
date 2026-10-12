@@ -842,6 +842,134 @@ fn undo_keeps_entries_older_than_the_last_prompt() {
     assert!(matches!(&kept[3], kage_session::SessionEntry::Label(l) if l.text == "milestone"));
 }
 
+/// The entry ids of `path`'s user prompts, in file order.
+fn user_prompt_ids(path: &std::path::Path) -> Vec<EntryId> {
+    kage_session::SessionReader::iter(path)
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
+        .into_iter()
+        .filter_map(|entry| match entry {
+            kage_session::SessionEntry::Message(m)
+                if m.message.role == kage_core::Role::User =>
+            {
+                Some(m.id)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn rewind_drops_the_picked_prompt_and_everything_after() {
+    let dir = tempfile::tempdir().unwrap();
+    let h = harness(MockProvider::replaying(text_turn("reply")));
+    let (id, path) = recorded_exchanges(&h, dir.path(), 3);
+    let ids = user_prompt_ids(&path);
+    assert_eq!(ids.len(), 3);
+
+    // A prefix is enough to name the middle prompt, but it must be
+    // long enough to be unambiguous: entry ids share their leading
+    // timestamp characters when written in the same millisecond,
+    // like every entry this test writes.
+    let at = ids[1].to_string();
+    let cut = at.len() - 4;
+    h.engine
+        .send(Command::to(id, CommandKind::Rewind { at: at[..cut].to_owned() }));
+    // Undone publishes after the SessionChanged reseat, so waiting for
+    // it collects both.
+    let seen = wait_for(&h.events, |e| {
+        matches!(e.event, Event::Host(HostEvent::Undone { .. }))
+    });
+    let (forked, messages) = seen
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::Host(HostEvent::SessionChanged { path, messages, .. }) => {
+                Some((path.clone(), messages.clone()))
+            }
+            _ => None,
+        })
+        .expect("rewind reseats onto the fork");
+    assert!(forked.exists());
+    assert_eq!(messages.len(), 2, "only the first exchange survives");
+    assert_eq!(
+        kage_session::replay(&forked).unwrap().history.len(),
+        2,
+        "the fork keeps the first exchange only"
+    );
+    let undone = seen
+        .iter()
+        .find_map(|e| match &e.event {
+            Event::Host(HostEvent::Undone { prompt }) => prompt.clone(),
+            _ => None,
+        })
+        .expect("rewind reports the removed prompt");
+    assert_eq!(
+        undone.first(),
+        Some(&Content::Text {
+            text: "round 1".into()
+        })
+    );
+}
+
+#[test]
+fn rewind_with_an_unknown_entry_reports_an_error() {
+    let dir = tempfile::tempdir().unwrap();
+    let h = harness(MockProvider::replaying(text_turn("reply")));
+    let (id, path) = recorded_exchanges(&h, dir.path(), 1);
+
+    h.engine
+        .send(Command::to(id, CommandKind::Rewind { at: "zzzzzz".to_owned() }));
+    let seen = wait_for(&h.events, |e| {
+        matches!(
+            e.event,
+            Event::Host(HostEvent::Notice {
+                level: NoticeLevel::Error,
+                ..
+            })
+        )
+    });
+    assert!(
+        format!("{:?}", seen.last().unwrap().event).contains("no user prompt matches")
+    );
+    assert_eq!(
+        kage_session::replay(&path).unwrap().history.len(),
+        2,
+        "the session is untouched"
+    );
+}
+
+#[test]
+fn list_prompts_lists_every_user_prompt_oldest_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let h = harness(MockProvider::replaying(text_turn("reply")));
+    let (id, path) = recorded_exchanges(&h, dir.path(), 2);
+    let ids = user_prompt_ids(&path);
+
+    h.engine.send(Command::to(id, CommandKind::ListPrompts));
+    let seen = wait_for(&h.events, |e| {
+        matches!(e.event, Event::Host(HostEvent::PromptList { .. }))
+    });
+    let Event::Host(HostEvent::PromptList { prompts }) = &seen.last().unwrap().event else {
+        unreachable!()
+    };
+    assert_eq!(prompts.len(), 2);
+    assert_eq!(prompts[0].at, ids[0].to_string());
+    assert_eq!(prompts[1].at, ids[1].to_string());
+    assert_eq!(
+        prompts[0].prompt.first(),
+        Some(&Content::Text {
+            text: "round 0".into()
+        })
+    );
+    assert_eq!(
+        prompts[1].prompt.first(),
+        Some(&Content::Text {
+            text: "round 1".into()
+        })
+    );
+}
+
 #[test]
 fn load_session_switches_to_the_stored_conversation() {
     let dir = tempfile::tempdir().unwrap();

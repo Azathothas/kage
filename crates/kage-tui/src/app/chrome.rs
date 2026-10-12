@@ -80,6 +80,23 @@ impl App {
         slots.specs()
     }
 
+    /// The hint for an armed quit or rewind, when one is live: the
+    /// next `esc` opens the rewind picker, the next `ctrl+c` quits
+    /// (stopping any live agents with it).
+    fn escalation_hint(&mut self) -> Option<String> {
+        let now = Instant::now();
+        let note = self.escalation.filter(|(_, until)| *until > now)?;
+        if matches!(note, (crate::app::keys::Escalation::RewindArmed, _)) {
+            return Some("esc again to rewind".to_owned());
+        }
+        let live = self.live_agents_under_main();
+        Some(match live {
+            0 => "ctrl+c again to quit".to_owned(),
+            1 => "ctrl+c again to quit and stop 1 agent".to_owned(),
+            n => format!("ctrl+c again to quit and stop {n} agents"),
+        })
+    }
+
     /// The footer hint: the pending keys of a mapping sequence, else
     /// the keys of the open panel or overlay, else what the next keys
     /// do in the current state. Kept short so it fits at 80 columns
@@ -94,16 +111,10 @@ impl App {
         if let Some(hint) = self.layer_hint() {
             return hint;
         }
-        let now = Instant::now();
-        let note = self.escalation.filter(|(_, until)| *until > now);
-        let live = self.live_agents_under_main();
-        if note.is_some() {
-            return match live {
-                0 => "ctrl+c again to quit".to_owned(),
-                1 => "ctrl+c again to quit and stop 1 agent".to_owned(),
-                n => format!("ctrl+c again to quit and stop {n} agents"),
-            };
+        if let Some(hint) = self.escalation_hint() {
+            return hint;
         }
+        let live = self.live_agents_under_main();
         let working = self.is_run_in_flight();
         let draft = !self.input.text().is_empty();
         if self.input.shell_armed() {

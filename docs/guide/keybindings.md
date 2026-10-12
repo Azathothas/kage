@@ -72,7 +72,7 @@ the buffer navigation keys above work without any mode switching.
 | `enter` | Send the prompt, or steer it into the running turn |
 | `tab` | Queue the prompt until the running turn ends |
 | `shift+enter` / `alt+enter` | Insert a newline |
-| `esc` | Clear the draft, else interrupt the run, else clear the search highlight |
+| `esc` | Clear the draft, else interrupt the run, else clear the search highlight; `esc` `esc` opens the rewind picker (see [esc and ctrl+c](#esc-and-ctrl-c)) |
 | `ctrl+c` | Clear the draft, else interrupt the run, else arm quit |
 | `pageup` / `pagedown` | Scroll the conversation buffer 10 lines |
 | `ctrl+w` | Kill the previous word |
@@ -105,10 +105,15 @@ same escalation:
 2. With an empty draft while kage works, they interrupt the run. The
    conversation shows `Interrupted`.
 3. Idle with an empty draft, `esc` clears an active search
-   highlight (the footer then reads `esc to clear the search`) and
-   otherwise does nothing. `ctrl+c` arms quit. The footer reads
-   `ctrl+c again to quit`, and a second `ctrl+c` within 2 seconds
-   quits.
+   highlight (the footer then reads `esc to clear the search`). A
+   second `esc` within 0.6 seconds opens the
+   [rewind picker](/guide/commands#commands): one row per earlier
+   prompt, oldest first, opened on the newest; picking one rewinds
+   the conversation there and puts that prompt back into the editor
+   (`/rewind` does the same). The first `esc` arms it, and the
+   footer reads `esc again to rewind`. `ctrl+c` arms quit instead.
+   The footer reads `ctrl+c again to quit`, and a second `ctrl+c`
+   within 2 seconds quits.
 
 In an agent view (see [agents](#agents)), the last two steps change:
 `esc` goes back one level and never stops the agent, and `ctrl+c`

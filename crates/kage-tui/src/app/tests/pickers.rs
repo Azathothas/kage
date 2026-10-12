@@ -283,6 +283,100 @@ fn session_picker_defaults_to_cwd_and_ctrl_a_toggles_all() {
     assert!(!app.session_scope_all, "Ctrl+A toggles back");
 }
 
+/// A rewindable prompt with entry id `at` and one text block.
+fn past_prompt(at: &str, text: &str) -> kage_core::protocol::PastPrompt {
+    kage_core::protocol::PastPrompt {
+        at: at.to_owned(),
+        prompt: vec![kage_core::Content::Text { text: text.to_owned() }],
+    }
+}
+
+#[test]
+fn the_rewind_picker_lists_oldest_first_and_starts_on_the_newest() {
+    let (mut app, rx, events) = app_with_events();
+    feed(
+        &mut app,
+        &events,
+        vec![kage_core::protocol::HostEvent::PromptList {
+            prompts: vec![
+                past_prompt("11111111111111111111111111", "round 0"),
+                past_prompt("22222222222222222222222222", "round 1\nmore detail"),
+            ],
+        }
+        .into()],
+    );
+    assert_eq!(app.picker_kind, Some(PickerKind::Rewind));
+    // Oldest row first, and a multi-line prompt renders as its first
+    // line only.
+    let rows = rendered(&mut app, 60, 30);
+    let first = rows.iter().position(|r| r.contains("round 0"));
+    let second = rows.iter().position(|r| r.contains("round 1"));
+    assert!(
+        first.is_some_and(|f| second.is_some_and(|s| f < s)),
+        "oldest first: {rows:?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|r| r.contains("round 1") && !r.contains("more detail")),
+        "{rows:?}"
+    );
+    // The selection starts on the newest row, so enter rewinds there.
+    app.dispatch_picker_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(app.picker_kind, None);
+    match rx.recv_timeout(Duration::from_millis(100)).unwrap() {
+        RunRequest::Rewind { at } => {
+            assert_eq!(at, "22222222222222222222222222");
+        }
+        other => panic!("expected Rewind, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_long_rewind_list_opens_scrolled_to_the_newest() {
+    let (mut app, _rx, events) = app_with_events();
+    let prompts = (0..30)
+        .map(|i| {
+            past_prompt(
+                &format!("{i:026}"),
+                &format!("turn {i} of the long session"),
+            )
+        })
+        .collect();
+    feed(
+        &mut app,
+        &events,
+        vec![kage_core::protocol::HostEvent::PromptList { prompts }.into()],
+    );
+    assert_eq!(app.picker_kind, Some(PickerKind::Rewind));
+    let rows = rendered(&mut app, 60, 30);
+    assert!(
+        rows.iter().any(|r| r.contains("turn 29")),
+        "the newest row is on screen: {rows:?}"
+    );
+    assert!(
+        rows.iter().any(|r| r.contains("more above")),
+        "older rows sit above the window: {rows:?}"
+    );
+    assert!(
+        !rows.iter().any(|r| r.contains("turn 0 of")),
+        "the oldest row is scrolled off: {rows:?}"
+    );
+}
+
+#[test]
+fn an_empty_prompt_list_never_opens_the_picker() {
+    let (mut app, _rx, events) = app_with_events();
+    feed(
+        &mut app,
+        &events,
+        vec![kage_core::protocol::HostEvent::PromptList {
+            prompts: Vec::new(),
+        }
+        .into()],
+    );
+    assert_eq!(app.picker_kind, None);
+}
+
 #[test]
 fn a_directory_without_sessions_opens_its_own_empty_scope() {
     let buffer = shared_buffer();
