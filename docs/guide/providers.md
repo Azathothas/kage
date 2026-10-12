@@ -49,9 +49,12 @@ addressable as `<id>:<model>`:
 | `xiaomi-token-plan-sgp` | Xiaomi Token Plan (Singapore) | `XIAOMI_API_KEY`     | `https://token-plan-sgp.xiaomimimo.com/v1`    |
 | `commandcode`           | Command Code                  | `CMD_API_KEY`        | `https://api.commandcode.ai/provider/v1`      |
 | `commandcode-claude`    | Command Code (Claude)         | `CMD_API_KEY`        | `https://api.commandcode.ai/provider`         |
+| `opencode`              | OpenCode Zen                  | `OPENCODE_API_KEY`   | `https://opencode.ai/zen/v1`                  |
+| `opencode-go`           | OpenCode Go                   | `OPENCODE_API_KEY`   | `https://opencode.ai/zen/go/v1`               |
 
-The four `xiaomi*` ids share one key, and so do the two coding plans.
-`zai` is billed apart from the coding plans and needs its own key.
+The four `xiaomi*` ids share one key, and so do the two coding plans
+and the two `opencode` ids. `zai` is billed apart from the coding
+plans and needs its own key.
 
 The model picker lists the models the [catalog](#model-catalog) knows
 for each provider. Every provider in the table has catalog entries, so
@@ -132,6 +135,24 @@ x-cmd-zdr = "1"
 ZDR requests route only to ZDR-capable upstreams, fail with a 422
 when none have capacity, and can cost more. See [Command Code's ZDR
 docs](https://commandcode.ai/docs/resources/zdr).
+
+### OpenCode Zen and Go
+
+OpenCode fronts a pooled model catalog through two gateways that read
+one key: [Zen](https://opencode.ai/docs/zen), the standard endpoint,
+and [Go](https://opencode.ai/docs/go), a cheaper relay with a smaller
+list:
+
+| id            | endpoint                        |
+| ------------- | ------------------------------- |
+| `opencode`    | `https://opencode.ai/zen/v1`    |
+| `opencode-go` | `https://opencode.ai/zen/go/v1` |
+
+Both read the same key: `OPENCODE_API_KEY`, or the key saved with
+`kage auth login opencode`. A key saved with
+`kage auth login opencode-go` is used for Go instead, when there is
+one. Models are addressed as `opencode/glm-5.3-flash` or
+`opencode-go/grok-4.7`.
 
 ## credentials
 

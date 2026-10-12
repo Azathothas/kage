@@ -251,12 +251,14 @@ impl AuthStore {
     /// Look up a provider's full [`Credential`]. `zhipuai-coding-plan`
     /// falls back to the credential saved for `zai-coding-plan`, since
     /// one coding plan key works on both endpoints; the same applies
-    /// to `commandcode-claude` and `commandcode`.
+    /// to `commandcode-claude` and `commandcode`, and to
+    /// `opencode-go` and `opencode`.
     #[must_use]
     pub fn credential(&self, provider: &str) -> Option<&Credential> {
         self.providers.get(provider).or_else(|| match provider {
             "zhipuai-coding-plan" => self.providers.get("zai-coding-plan"),
             "commandcode-claude" => self.providers.get("commandcode"),
+            "opencode-go" => self.providers.get("opencode"),
             _ => None,
         })
     }
@@ -335,8 +337,8 @@ pub(crate) fn expiry_label(at: DateTime<Utc>, now: DateTime<Utc>) -> String {
 /// catalog (and our hardcoded `Provider` impls). `zai` and the two
 /// coding plans are billed separately, so `zai` takes its own key;
 /// the coding plans share `ZAI_CODING_API_KEY`, the four `xiaomi*`
-/// ids all share `XIAOMI_API_KEY`, and both `commandcode` ids share
-/// `CMD_API_KEY`.
+/// ids all share `XIAOMI_API_KEY`, both `commandcode` ids share
+/// `CMD_API_KEY`, and both `opencode*` ids share `OPENCODE_API_KEY`.
 pub const KNOWN_PROVIDERS: &[&str] = &[
     "anthropic",
     "openai",
@@ -359,6 +361,8 @@ pub const KNOWN_PROVIDERS: &[&str] = &[
     "xiaomi-token-plan-sgp",
     "commandcode",
     "commandcode-claude",
+    "opencode",
+    "opencode-go",
 ];
 
 /// Env-var name that, when set, supersedes any saved key for `provider`.
@@ -387,6 +391,8 @@ pub fn env_var_for(provider: &str) -> &'static str {
         // One Command Code key works on both the Chat Completions and
         // the Claude (Messages) provider.
         "commandcode" | "commandcode-claude" => "CMD_API_KEY",
+        // One OpenCode key works on both the Zen and Go gateways.
+        "opencode" | "opencode-go" => "OPENCODE_API_KEY",
         _ => "",
     }
 }
