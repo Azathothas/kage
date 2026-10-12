@@ -1,40 +1,39 @@
--- rewind.lua - conversation + file rewind, built on the capability tier.
+-- rewind.lua - file checkpoints around the built-in /undo and /rewind.
+--
+-- kage's built-in /undo and /rewind (or esc esc) move the conversation
+-- back, but they leave your working tree as it is. This plugin adds
+-- the file half: it snapshots tracked changes with git at every turn
+-- end, and its commands restore them.
 --
 -- Grant it in config.toml:
 --
 --   [plugins.capabilities]
 --   rewind = ["session_write", "exec"]
 --
--- session_write unlocks kage.session.entries / fork_to (the
--- conversation rewind); exec unlocks kage.exec so each turn's file
--- state can be snapshotted with git and restored on rewind. Either
--- capability may be withheld: without session_write the plugin
--- disables itself; without exec it still rewinds the conversation but
--- skips file restore.
+-- session_write unlocks kage.session.entries (ordering checkpoints
+-- against the conversation); exec unlocks kage.exec so file state can
+-- be snapshotted and restored. Either capability may be withheld:
+-- without session_write the plugin disables itself; without exec it
+-- tracks nothing.
 --
 -- Commands:
---   /undo          drop the last exchange: fork back to just before
---                  your most recent prompt and restore tracked file
---                  changes there. Repeat to walk further back, one
---                  exchange per call.
---   /redo          re-apply the tracked changes the last /undo or
---                  /rewind moved away from. Redo entries survive later
---                  prompts and are consumed one at a time.
---                  (alias: /rewind-redo)
---   /rewind        pick any earlier point and fork the conversation
---                  there, restoring tracked changes to that turn
---   /rewind-status how many checkpoints / redo entries are held
---                  (alias: /undo-status)
+--   /checkpoint-restore [at]  restore tracked file changes to the
+--                             checkpoint of an earlier turn (entry-id
+--                             prefix, or a picker when omitted). The
+--                             state you leave behind goes to redo.
+--   /redo                     re-apply the tracked changes the last
+--                             /checkpoint-restore moved away from.
+--                             Redo entries survive later turns.
+--   /checkpoint-status        how many checkpoints / redo entries are
+--                             held
 --
--- Scope/limits: file snapshots use `git stash create`, so they
--- cover tracked changes only (not untracked files) and require a git
--- work tree; success notices say "tracked modifications + conversation"
--- for that reason. Redo entries reference unreferenced git stash
--- commits, so very old ones may be pruned by git's garbage collection.
--- The conversation fork is one-way: /redo restores files,
--- not the un-forked conversation (that would need a host primitive
--- kage does not expose to Lua yet). The very first exchange cannot be
--- undone into an empty session via a fork; start a new session.
+-- Flow: run the built-in /undo or /rewind first, then
+-- /checkpoint-restore to bring the files along.
+--
+-- Scope/limits: file snapshots use `git stash create`, so they cover
+-- tracked changes only (not untracked files) and require a git work
+-- tree. Redo entries reference unreferenced git stash commits, so
+-- very old ones may be pruned by git's garbage collection.
 
 local caps = kage.request_capabilities({ 'session_write', 'exec' })
 
@@ -47,8 +46,8 @@ local files = caps.exec
 
 -- Per-turn checkpoints in chronological order: each is
 -- { id = <entry id at turn end>, sha = <git stash sha or false> }.
--- `redo` holds stash shas of states a /undo or /rewind moved away
--- from; it survives later turns so a prompt between /undo and /redo
+-- `redo` holds stash shas of states a /checkpoint-restore moved away
+-- from; it survives later turns so a prompt between restore and redo
 -- does not wipe it.
 local checkpoints = {}
 local redo = {}
@@ -107,25 +106,6 @@ local function checkpoint_for(at)
     return best
 end
 
--- The fork point that drops the last exchange: the entry right
--- before the most recent user message. Returns nil when there is no
--- earlier non-header entry to land on - the first exchange cannot be
--- undone into an empty session via a fork.
-local function undo_target()
-    local entries = kage.session.entries()
-    local last_user
-    for i = #entries, 1, -1 do
-        if entries[i].kind == 'message' and entries[i].role == 'user' then
-            last_user = i
-            break
-        end
-    end
-    if not last_user or last_user <= 1 then return nil end
-    local prev = entries[last_user - 1]
-    if prev.kind == 'header' then return nil end
-    return prev.id
-end
-
 kage.on('turn_end', function()
     if not files or not in_git_repo() then return end
     local id = last_entry_id()
@@ -134,76 +114,59 @@ kage.on('turn_end', function()
 end)
 
 kage.register_command({
-    name = 'undo',
-    description = 'Undo the last exchange: fork back before your most recent prompt and restore files',
-    handler = function()
-        local at = undo_target()
-        if not at then
-            kage.notify('undo: nothing to undo')
-            return 'nothing to undo'
+    name = 'checkpoint-restore',
+    description = 'Restore tracked files to an earlier turn checkpoint (pairs with /undo and /rewind)',
+    args = {
+        { name = 'at', kind = 'text', optional = true, hint = 'entry-id prefix of the turn end' },
+    },
+    handler = function(_, _, parsed)
+        if not files then return 'restore unavailable (exec not granted)' end
+        if #checkpoints == 0 then
+            kage.notify('checkpoint-restore: no checkpoints yet')
+            return 'nothing to restore'
         end
-        local restored = 'conversation only'
-        if files and in_git_repo() then
-            local pre = snapshot()
-            if pre then redo[#redo + 1] = pre end
-            local cp = checkpoint_for(at)
-            if cp and restore(cp.sha) then
-                restored = 'tracked modifications + conversation'
-            end
-        end
-        kage.session.fork_to(at)
-        kage.notify('undo: reverted last exchange (' .. restored .. ')')
-        return 'undone to ' .. at:sub(1, 8)
-    end,
-})
 
-kage.register_command({
-    name = 'rewind',
-    description = 'Fork the conversation at an earlier point and restore files there',
-    handler = function()
-        local entries = kage.session.entries()
-        local items = {}
-        for i = 1, #entries do
-            local e = entries[i]
-            if e.kind == 'message' and e.role == 'user' then
+        local at = parsed.at
+        if at == nil or at == '' then
+            local entries = kage.session.entries()
+            local ts_of = {}
+            for _, e in ipairs(entries) do ts_of[e.id] = e.ts end
+            local items = {}
+            for _, c in ipairs(checkpoints) do
+                local ts = ts_of[c.id]
                 items[#items + 1] = {
-                    label = string.format('user  %s  %s', e.ts:sub(12, 19), e.id:sub(1, 8)),
-                    value = e.id,
+                    label = string.format('turn end %s  %s',
+                        ts and ts:sub(12, 19) or '????????', c.id:sub(1, 8)),
+                    value = c.id,
                 }
             end
-        end
-        if #items == 0 then
-            kage.notify('rewind: no earlier user turn to rewind to')
-            return 'nothing to rewind to'
+            at = kage.ui.select('Restore files to', items)
+            if at == nil then return 'cancelled' end
         end
 
-        local at = kage.ui.select('Rewind to', items)
-        if at == nil then return 'cancelled' end
-        if not kage.ui.confirm('Rewind?',
-                'Fork the conversation here and restore tracked files. Later turns stay in the original session.') then
-            return 'cancelled'
+        local cp = checkpoint_for(at)
+        if not cp then
+            kage.notify('checkpoint-restore: no checkpoint at or before ' .. at:sub(1, 8))
+            return 'no such checkpoint'
+        end
+        if not cp.sha then
+            kage.notify('checkpoint-restore: that turn recorded no tracked changes')
+            return 'nothing tracked at that turn'
         end
 
-        local restored = 'conversation only'
-        if files and in_git_repo() then
-            local pre = snapshot()
-            if pre then redo[#redo + 1] = pre end
-            local cp = checkpoint_for(at)
-            if cp and restore(cp.sha) then
-                restored = 'tracked modifications + conversation'
-            end
+        local pre = snapshot()
+        if pre then redo[#redo + 1] = pre end
+        if restore(cp.sha) then
+            kage.notify('checkpoint-restore: restored tracked modifications')
+            return 'restored to ' .. cp.id:sub(1, 8)
         end
-
-        kage.session.fork_to(at)
-        kage.notify('rewind: forking at ' .. at:sub(1, 8) .. ' (' .. restored .. ')')
-        return 'rewound to ' .. at:sub(1, 8)
+        return 'restore failed'
     end,
 })
 
 kage.register_command({
     name = 'redo',
-    aliases = { 'rewind-redo' },
-    description = 'Re-apply the tracked changes the last /undo or /rewind moved away from (survives later prompts)',
+    description = 'Re-apply the tracked changes the last /checkpoint-restore moved away from (survives later prompts)',
     handler = function()
         if not files then return 'redo unavailable (exec not granted)' end
         local sha = table.remove(redo)
@@ -220,9 +183,8 @@ kage.register_command({
 })
 
 kage.register_command({
-    name = 'rewind-status',
-    aliases = { 'undo-status' },
-    description = 'Show how many undo/rewind checkpoints and redo entries are held',
+    name = 'checkpoint-status',
+    description = 'Show how many rewind checkpoints and redo entries are held',
     handler = function()
         return string.format('rewind: %d checkpoint(s), %d redo, files=%s',
             #checkpoints, #redo, tostring(files and true or false))

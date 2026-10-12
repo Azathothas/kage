@@ -46,7 +46,7 @@ Inspect and reseat the live conversation.
 
 | call | effect |
 | --- | --- |
-| `kage.session.entries()` | metadata for every entry in the current session, in order: `{ id, kind, role?, ts }`. `kind` is one of `header`, `message`, `thinking_level_change`, `model_change`, `compaction`, `label`, `title`, `custom`; `role` rides only on `message` entries and is one of `user`, `assistant`, `tool_result`, `system`. The rewind point picker. |
+| `kage.session.entries()` | metadata for every entry in the current session, in order: `{ id, kind, role?, ts }`. `kind` is one of `header`, `message`, `thinking_level_change`, `model_change`, `compaction`, `label`, `title`, `custom`; `role` rides only on `message` entries and is one of `user`, `assistant`, `tool_result`, `system`. The navigation index a checkpoint picker orders its rows by. |
 | `kage.session.switch(target)` | reseat onto an existing session (an id or a path from `kage.session.list()`). |
 | `kage.session.fork_to(at?)` | fork the current session at entry-id prefix `at` (latest if omitted) and land on the new branch. The rewind move: base `kage.session.fork` branches and stays, while `fork_to` branches and goes there. |
 | `kage.session.append_entry(kind, data?)` | append a custom entry: a namespaced `kind` such as `"my-plugin:bookmark"` plus any JSON-serializable `data` table (`{}` by default). The host writes it between turns. |
@@ -56,7 +56,7 @@ Inspect and reseat the live conversation.
 message text) because it is a navigation index, not a transcript
 reader. `switch` and `fork_to` only *request* a reseat. The host
 applies it between turns, after consulting the `session_before_switch`
-veto, so a plugin can confirm or block its own rewind.
+veto, so a plugin can confirm or block its own reseat.
 
 ### `exec`
 
@@ -233,7 +233,8 @@ would.
 ## see it in use
 
 `plugins/examples/rewind.lua` combines `session_write` and `exec`: it
-git-snapshots tracked files every `turn_end`, then `/undo` drops the
-last exchange (or `/rewind` forks at a chosen point) while restoring
-files to that turn, and `/redo` re-applies. See
+uses `entries()` to order its checkpoints against the conversation and
+`exec` to git-snapshot tracked files every `turn_end`, so
+`/checkpoint-restore` can bring the working tree along when the
+built-in `/undo` or `/rewind` moves the conversation back. See
 [examples](/plugins/examples#conversation-and-file-rewind).
