@@ -223,6 +223,25 @@ fn assert_the_real_shell_drew(harness: &Harness<'_, Rig>) {
         runs > 4,
         "the transcript drew {runs} text runs: the rig is not rendering the app"
     );
+    // The two ways the shell lies about itself. A chat column that
+    // reads the swapped-out store draws the welcome over a live
+    // session (the hint line shows), and a row whose trailing pills
+    // centre in the measure offer blows every height up so only the
+    // tail row lands in the viewport. Both passed a TextRun count
+    // once; neither survives these.
+    let welcome = harness
+        .query_all_by(|node| {
+            node.value().is_some_and(|v| v.contains("commands and sessions"))
+        })
+        .count();
+    assert_eq!(
+        welcome, 0,
+        "the welcome column drew over an open session: the chat column is reading the wrong store"
+    );
+    assert!(
+        harness.query_by_label("Updated todos").is_some(),
+        "the transcript drew no todo row: the rows measure past the viewport"
+    );
 }
 
 #[test]

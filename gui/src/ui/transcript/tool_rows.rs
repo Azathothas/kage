@@ -109,6 +109,25 @@ fn mono(size: f32) -> egui::FontId {
     egui::FontId::new(size, family(FAMILY_MONO_REGULAR))
 }
 
+/// A trailing right-to-left row inside the head it trails: right
+/// aligned pills, vertically centred on the head's own height.
+///
+/// The height comes from what the head has already laid out (its
+/// `set_min_height` at the row's top), and the sub-ui is allocated at
+/// that height: a bare `with_layout(right_to_left(Align::Center))`
+/// centres its contents in ALL the height the parent still offers, so
+/// in the transcript's measure pass, where the offer is the whole
+/// row budget, every such head measured the offer tall and the list
+/// scrolled past every row but the last.
+pub(crate) fn trailing(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
+    let height = ui.min_rect().height().max(16.0);
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), height),
+        egui::Layout::right_to_left(egui::Align::Center),
+        contents,
+    );
+}
+
 /// The tinted image one icon draws as.
 fn icon_image(icon: crate::icons::Icon, color: egui::Color32) -> egui::Image<'static> {
     egui::Image::new(egui::ImageSource::Bytes {
@@ -554,7 +573,7 @@ pub fn render_tool(
                 )
                 .truncate(),
             );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            crate::ui::transcript::tool_rows::trailing(ui, |ui| {
                 if clickable {
                     chevron(ui, expanded, palette.faint);
                 }
@@ -696,7 +715,7 @@ fn detail(
                         )
                         .truncate(),
                     );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    crate::ui::transcript::tool_rows::trailing(ui, |ui| {
                         if btn_sm(ui, palette, BtnTone::Plain, "Open", None).clicked() {
                             fired = true;
                         }
@@ -856,7 +875,7 @@ pub fn render_changes(
                     .size(FS_SM)
                     .color(palette.ink_strong),
                 );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                crate::ui::transcript::tool_rows::trailing(ui, |ui| {
                     if let Some(first) = entries.first() {
                         ui.add_space(SP_4);
                         if btn_sm(ui, palette, BtnTone::Plain, "Review", None).clicked() {
@@ -903,7 +922,7 @@ pub fn render_changes(
                         )
                         .truncate(),
                     );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    crate::ui::transcript::tool_rows::trailing(ui, |ui| {
                         if entry.del > 0 {
                             ui.add_space(SP_4);
                             chip(
@@ -986,7 +1005,7 @@ pub fn render_group(
             } else {
                 palette.ink
             }));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            crate::ui::transcript::tool_rows::trailing(ui, |ui| {
                 chevron(ui, expanded, palette.faint);
                 if failed > 0 {
                     ui.add_space(SP_4);
@@ -1075,7 +1094,7 @@ pub fn render_turn_end(
                     }
                 }
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            crate::ui::transcript::tool_rows::trailing(ui, |ui| {
                 if !pinned {
                     ui.add_space(SP_1);
                     if icon_button(ui, crate::icons::Icon::Undo2, "Rewind to here", palette)
@@ -1190,7 +1209,7 @@ pub fn render_todos(
                 )
                 .truncate(),
             );
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            crate::ui::transcript::tool_rows::trailing(ui, |ui| {
                 chevron(ui, expanded, palette.faint);
                 ui.add_space(SP_4);
                 let (fg, bg) = if complete {
@@ -1344,7 +1363,7 @@ pub fn render_plan_card(
                             .color(palette.faint),
                     );
                 });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                crate::ui::transcript::tool_rows::trailing(ui, |ui| {
                     icon(
                         ui,
                         if open {
@@ -1404,7 +1423,7 @@ pub fn render_plan_card(
                         .size(FS_SM)
                         .color(palette.ink_strong),
                 );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                crate::ui::transcript::tool_rows::trailing(ui, |ui| {
                     ui.add_space(SP_5);
                     if btn_sm(
                         ui,
@@ -1817,7 +1836,7 @@ fn agent_card(
                         .truncate(),
                     );
                 });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                crate::ui::transcript::tool_rows::trailing(ui, |ui| {
                     if facts.stoppable {
                         ui.add_space(SP_4);
                         if icon_button(ui, crate::icons::Icon::Square, "Stop agent", palette)
@@ -1948,7 +1967,7 @@ fn swarm_card(
                     );
                     ui.label(egui::RichText::new(&sub).size(FS_XS).color(palette.faint));
                 });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                crate::ui::transcript::tool_rows::trailing(ui, |ui| {
                     icon(
                         ui,
                         if open {
@@ -2088,9 +2107,7 @@ fn swarm_card(
                                     )
                                     .truncate(),
                                 );
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
+                                crate::ui::transcript::tool_rows::trailing(ui, |ui| {
                                         ui.add_sized(
                                             egui::vec2(44.0, 16.0),
                                             egui::Label::new(
@@ -2177,7 +2194,7 @@ fn swarm_card(
                 {
                     template_click = true;
                 }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                crate::ui::transcript::tool_rows::trailing(ui, |ui| {
                     ui.add_space(SP_5);
                     if btn_sm(
                         ui,

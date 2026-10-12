@@ -445,6 +445,13 @@ fn row_tint(find: &FindMarks, key: RowKey) -> Option<egui::Color32> {
 
 /// Lays one row out offscreen at the column's width and returns the
 /// height it took, margins included, so the list can place it.
+/// The height the measure pass offers a row. Generous, but finite: a
+/// row that asks the layout for its available height (the tool and
+/// plan detail boxes scroll inside a `max_height` cap) would otherwise
+/// measure the offer itself, the content height would explode, and the
+/// follow would park the viewport past every row but the last.
+const MEASURE_MAX_H: f32 = 20_000.0;
+
 fn measure_row(ui: &mut egui::Ui, rows: &[Row], ix: usize, ctx: &mut RowCtx<'_>) -> f32 {
     let Some(row) = rows.get(ix) else {
         return 0.0;
@@ -453,12 +460,20 @@ fn measure_row(ui: &mut egui::Ui, rows: &[Row], ix: usize, ctx: &mut RowCtx<'_>)
     let last = ix + 1 == rows.len();
     let rect = egui::Rect::from_min_size(
         egui::pos2(-1.0e6, -1.0e6),
-        egui::vec2(ui.available_width(), 1.0e6),
+        egui::vec2(ui.available_width(), MEASURE_MAX_H),
     );
-    let mut child = ui.new_child(
+    // A root-level ui, not a child of the panel hierarchy: a child
+    // whose rect sits far outside its ancestors measures wrong (the
+    // row comes back the size of the offer plus its content), while
+    // the same layout on its own ui measures true. Style and layout
+    // come from the caller so the numbers match the drawn rows.
+    let mut child = egui::Ui::new(
+        ui.ctx().clone(),
+        egui::Id::new(("row-measure", ix, ui.ctx().cumulative_pass_nr())),
         egui::UiBuilder::new()
             .max_rect(rect)
-            .id_salt(egui::Id::new(("row-measure", ix))),
+            .layout(*ui.layout())
+            .style(std::sync::Arc::clone(ui.style())),
     );
     let top = child.cursor().top();
     let mut actions = Vec::new();

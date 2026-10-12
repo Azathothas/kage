@@ -772,8 +772,15 @@ impl ShellApp {
             // composer and its dock keep their own height. With no
             // session the welcome column shows instead, and the
             // composer still mounts so a draft never resets.
+            //
+            // The store comes from the cell the panels share, not
+            // from the shell's field: `store_take` has moved the real
+            // store out for the draw, so a read through the field
+            // would see the empty placeholder and draw the welcome
+            // over a live transcript forever.
+            let store = &mut store.borrow_mut();
             ui.vertical(|ui| {
-                if self.shell.store.active_id().is_some() {
+                if store.active_id().is_some() {
                     // The transcript takes what is left of the column;
                     // the dock and the composer keep their own height
                     // under it, so the field sits on the column's
@@ -790,7 +797,6 @@ impl ShellApp {
                             .max_rect(top_rect)
                             .layout(egui::Layout::top_down(egui::Align::Min)),
                     );
-                    let store = &self.shell.store;
                     let mut events = Vec::new();
                     self.shell.transcript.show(&mut top, store, &mut events);
                     self.row_actions.extend(events);
@@ -798,9 +804,7 @@ impl ShellApp {
                     // The welcome column: the brand mark, the eclipse
                     // while a turn runs, and the connection line.
                     let palette = crate::theme::Palette::active_of(ui.ctx());
-                    let running = self
-                        .shell
-                        .store
+                    let running = store
                         .active_session()
                         .is_some_and(|session| session.in_turn || session.running);
                     if running && self.shell.orbit.is_none() {
@@ -819,15 +823,15 @@ impl ShellApp {
                                 .family(crate::theme::family(crate::theme::FAMILY_BODY_EXTRABOLD)),
                         );
                         ui.label(
-                            egui::RichText::new(self.welcome_line())
+                            egui::RichText::new(self.welcome_line(store))
                                 .size(crate::theme::FS_SM)
                                 .color(palette.muted),
                         );
                     });
                 }
-                self.show_dock(ui);
-                self.show_approval(ui);
-                self.show_composer(ui);
+                self.show_dock(ui, store);
+                self.show_approval(ui, store);
+                self.show_composer(ui, store);
             });
         };
         crate::ui::shell::show(ui, &mut panels, sidebar_draw, chat, workbench);
@@ -1037,14 +1041,14 @@ impl ShellApp {
     /// Draws the approval card over the dock row: the oldest open
     /// permission ask of the active session and its subagents, with
     /// the digit keys while it holds them.
-    fn show_approval(&mut self, ui: &mut egui::Ui) {
-        let open = self.shell.store.active_asks().len();
-        let events = self.shell.approval.show(ui, &self.shell.store);
-        self.carry_approval(events);
+    fn show_approval(&mut self, ui: &mut egui::Ui, store: &mut crate::store::Store) {
+        let open = store.active_asks().len();
+        let events = self.shell.approval.show(ui, store);
+        self.carry_approval(store, events);
         // A first ask takes the digit keys; the last one closing hands
         // them back to the shell.
         if open > 0 {
-            if let Some(ask) = self.shell.store.active_asks().first() {
+            if let Some(ask) = store.active_asks().first() {
                 let request = ask.1.request_id.clone();
                 self.shell.approval.focus(&request);
             }
@@ -1054,30 +1058,29 @@ impl ShellApp {
     }
 
     /// Carries out what the approval card asked for.
-    fn carry_approval(&mut self, events: Vec<crate::ui::approval::ApprovalEvent>) {
+    fn carry_approval(
+        &mut self,
+        store: &mut crate::store::Store,
+        events: Vec<crate::ui::approval::ApprovalEvent>,
+    ) {
         for event in events {
             match event {
                 crate::ui::approval::ApprovalEvent::Reply(session, request, decision) => {
-                    let _ = self
-                        .shell
-                        .store
-                        .reply_permission(&session, request, &decision);
+                    let _ = store.reply_permission(&session, request, &decision);
                 }
             }
         }
     }
 
-    fn show_dock(&mut self, ui: &mut egui::Ui) {
-        let actions = crate::ui::dock::show(ui, &self.shell.store);
+    fn show_dock(&mut self, ui: &mut egui::Ui, store: &mut crate::store::Store) {
+        let actions = crate::ui::dock::show(ui, store);
         for action in actions {
             match action {
                 crate::ui::dock::DockAction::Steer(index) => {
-                    let _ = self.shell.store.steer_queued(index);
+                    let _ = store.steer_queued(index);
                 }
                 crate::ui::dock::DockAction::Edit(index) => {
-                    if let Some(text) = self
-                        .shell
-                        .store
+                    if let Some(text) = store
                         .active_session()
                         .and_then(|session| session.queue.get(index))
                         .map(|queued| {
@@ -1091,14 +1094,14 @@ impl ShellApp {
                     {
                         self.shell.composer.draft.text = text;
                         self.shell.composer.draft.caret = self.shell.composer.draft.text.len();
-                        self.shell.store.withdraw_queued(index);
+                        store.withdraw_queued(index);
                     }
                 }
                 crate::ui::dock::DockAction::Remove(index) => {
-                    self.shell.store.withdraw_queued(index);
+                    store.withdraw_queued(index);
                 }
                 crate::ui::dock::DockAction::ScrollToPlan => {
-                    self.scroll_to_plan();
+                    self.scroll_to_plan(store);
                 }
                 crate::ui::dock::DockAction::OpenBackgroundAgents => {
                     // The workbench's agents list, which E06 mounts.
@@ -1113,8 +1116,8 @@ impl ShellApp {
 
     /// Brings the plan card under review into view, or the transcript's
     /// last plan item when no review waits.
-    fn scroll_to_plan(&mut self) {
-        let Some(session) = self.shell.store.active_session() else {
+    fn scroll_to_plan(&mut self, store: &crate::store::Store) {
+        let Some(session) = store.active_session() else {
             return;
         };
         let plan_row = session
@@ -1133,37 +1136,29 @@ impl ShellApp {
 
     /// Draws the composer: the field, its toolbar and the dock row's
     /// goal popover. A send takes the draft out to the store.
-    fn show_composer(&mut self, ui: &mut egui::Ui) {
-        let running = self
-            .shell
-            .store
+    fn show_composer(&mut self, ui: &mut egui::Ui, store: &mut crate::store::Store) {
+        let running = store
             .active_session()
             .is_some_and(|session| session.running);
-        let enter_sends = self.shell.store.prefs().enter_sends;
-        let commands = self.shell.store.composer_commands().to_vec();
-        let listing = self
-            .shell
-            .store
+        let enter_sends = store.prefs().enter_sends;
+        let commands = store.composer_commands().to_vec();
+        let listing = store
             .active_id()
-            .and_then(|id| self.shell.store.fs_listing(id))
+            .and_then(|id| store.fs_listing(id))
             .cloned();
         self.shell.composer.set_listing(listing);
-        let steer_available = self.shell.store.state().steer_available();
-        let event =
-            self.shell
-                .composer
-                .show(ui, &mut self.shell.store, &commands, running, enter_sends);
+        let steer_available = store.state().steer_available();
+        let event = self.shell.composer.show(ui, store, &commands, running, enter_sends);
         match event {
             crate::ui::composer::ComposerEvent::OpenGoal => {
                 self.shell
                     .dialogs
-                    .show_dialog(crate::ui::dialog::DialogKind::Goal, &mut self.shell.store);
+                    .show_dialog(crate::ui::dialog::DialogKind::Goal, store);
             }
             crate::ui::composer::ComposerEvent::ConfirmSwarm => {
-                self.shell.dialogs.show_dialog(
-                    crate::ui::dialog::DialogKind::ConfirmSwarm,
-                    &mut self.shell.store,
-                );
+                self.shell
+                    .dialogs
+                    .show_dialog(crate::ui::dialog::DialogKind::ConfirmSwarm, store);
             }
             _ => {}
         }
@@ -1172,15 +1167,15 @@ impl ShellApp {
         {
             let builtin = crate::ui::composer::builtin(&text);
             let handled =
-                builtin.is_some_and(|command| self.run_builtin(command.name, command.args));
+                builtin.is_some_and(|command| self.run_builtin(store, command.name, command.args));
             if !handled {
                 // Ctrl+Enter steers a running turn; the engine
                 // advertises the capability, so a steer that cannot go
                 // out falls back to a plain submit.
                 if steer && running && steer_available {
-                    let _ = self.shell.store.steer(&text);
+                    let _ = store.steer(&text);
                 } else {
-                    let _ = self.shell.store.submit(&text);
+                    let _ = store.submit(&text);
                 }
             }
         }
@@ -1188,38 +1183,37 @@ impl ShellApp {
 
     /// Runs a built-in composer command. Returns whether the client
     /// ran it, so an unhandled one goes to the agent as plain text.
-    fn run_builtin(&mut self, name: &str, args: &str) -> bool {
+    fn run_builtin(&mut self, store: &mut crate::store::Store, name: &str, args: &str) -> bool {
         match (name, args) {
             ("new", _) => {
-                self.shell.store.show_welcome();
+                store.show_welcome();
                 true
             }
-            ("plan", "on") => self.shell.store.enter_plan(),
-            ("plan", "off") => self.shell.store.exit_plan(),
+            ("plan", "on") => store.enter_plan(),
+            ("plan", "off") => store.exit_plan(),
             ("plan", _) => {
-                if self.shell.store.plan_on() {
-                    self.shell.store.exit_plan()
+                if store.plan_on() {
+                    store.exit_plan()
                 } else {
-                    self.shell.store.enter_plan()
+                    store.enter_plan()
                 }
             }
-            ("goal", "clear") => crate::ui::dock::save_goal(&mut self.shell.store, ""),
-            ("goal", text) => crate::ui::dock::save_goal(&mut self.shell.store, text),
-            ("swarm", "off") => self.shell.store.set_option("swarm", "off"),
+            ("goal", "clear") => crate::ui::dock::save_goal(store, ""),
+            ("goal", text) => crate::ui::dock::save_goal(store, text),
+            ("swarm", "off") => store.set_option("swarm", "off"),
             ("swarm", "on") => true,
             _ => false,
         }
     }
 
-    /// The line the welcome column shows under the wordmark.
-    fn welcome_line(&self) -> String {
-        if self.shell.store.active_id().is_some() {
-            return "the transcript arrives with E04".to_owned();
-        }
-        match self.shell.store.connect() {
+    /// The line the welcome column shows under the wordmark. The
+    /// connect problems name themselves; once the link is up the line
+    /// is the design's static hint, as the old welcome drew it.
+    fn welcome_line(&self, store: &crate::store::Store) -> String {
+        match store.connect() {
             crate::transport::State::Connecting => "connecting".to_owned(),
             crate::transport::State::Refused(why) => format!("refused: {why}"),
-            _ => "the transcript arrives with E04".to_owned(),
+            _ => "Ctrl K commands and sessions".to_owned(),
         }
     }
 

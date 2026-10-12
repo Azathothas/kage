@@ -488,7 +488,7 @@ pub fn render_summary(
                 .size(FS_SM)
                 .color(palette.ink),
         );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        crate::ui::transcript::tool_rows::trailing(ui, |ui| {
             chevron(ui, expanded, palette.faint);
         });
     });
@@ -540,7 +540,7 @@ pub fn render_thinking(
             let _ = ix;
             let _ = response;
         }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        crate::ui::transcript::tool_rows::trailing(ui, |ui| {
             chevron(ui, expanded, palette.faint);
         });
     });
