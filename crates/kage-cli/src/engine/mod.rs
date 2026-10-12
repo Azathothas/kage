@@ -64,7 +64,7 @@ use mcp::{McpDone, restart_failed};
 use plan_tool::ExitPlanTool;
 use plugin_tools::PluginTools;
 use question_tool::{Answers, QuestionTool, Questions};
-use runner::{Budget, Finished, Limits, McpLease, Run, Spend, Steering, Work};
+use runner::{Budget, Finished, Inbox, Limits, McpLease, Run, Spend, Steering, Work};
 use shell::ShellDone;
 use swarm_tool::{SWARM_TOOL, SwarmTool};
 
@@ -458,7 +458,7 @@ struct Session {
     steering: Steering,
     /// Reports and messages from agents, read at the next turn
     /// boundary after the user's steering.
-    inbox: Steering,
+    inbox: Inbox,
     queued: VecDeque<Vec<Content>>,
     tools: ToolRegistry,
     plugins: Option<Arc<PluginRuntime>>,
@@ -1173,9 +1173,9 @@ impl Dispatcher {
             self.start_run(id, Work::Prompt(prompt));
             return;
         }
-        match (delivery, text_only(&content)) {
-            (Delivery::Steer, Some(text)) => lock(&session.steering).push_back(text),
-            _ => session.queued.push_back(content),
+        match delivery {
+            Delivery::Steer => lock(&session.steering).push_back(content),
+            Delivery::Queue => session.queued.push_back(content),
         }
     }
 
@@ -1185,9 +1185,7 @@ impl Dispatcher {
     fn withdraw_prompt(&mut self, id: SessionId, delivery: Delivery) {
         let session = self.sessions.get_mut(&id).expect("session checked");
         let content = match delivery {
-            Delivery::Steer => lock(&session.steering)
-                .pop_back()
-                .map(|text| vec![Content::Text { text }]),
+            Delivery::Steer => lock(&session.steering).pop_back(),
             Delivery::Queue => session.queued.pop_back(),
         };
         self.bus
@@ -1421,9 +1419,9 @@ impl Dispatcher {
         // A set flag on an idle session would cancel any run its agents
         // start, through the tree.
         session.cancel.reset();
-        let leftover: Vec<String> = lock(&session.steering).drain(..).collect();
-        for text in leftover.into_iter().rev() {
-            session.queued.push_front(vec![Content::Text { text }]);
+        let leftover: Vec<Vec<Content>> = lock(&session.steering).drain(..).collect();
+        for content in leftover.into_iter().rev() {
+            session.queued.push_front(content);
         }
         session.sync_state();
         let state = session.state.clone();
@@ -2250,14 +2248,6 @@ pub(crate) fn fit_to_model(state: &mut SessionState, registry: &ProviderRegistry
 pub(crate) fn session_id_of(path: &std::path::Path) -> Option<SessionId> {
     let stem = path.file_stem()?.to_str()?;
     ulid::Ulid::from_string(stem).ok().map(SessionId)
-}
-
-/// The prompt's text when it has no other content.
-fn text_only(content: &[Content]) -> Option<String> {
-    match content {
-        [Content::Text { text }] => Some(text.clone()),
-        _ => None,
-    }
 }
 
 #[cfg(test)]

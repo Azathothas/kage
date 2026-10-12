@@ -7,7 +7,7 @@
 
 use std::sync::Arc;
 
-use kage_core::{Message, TokenUsage, ToolOutput};
+use kage_core::{Content, Message, TokenUsage, ToolOutput};
 use kage_provider::StreamRequest;
 
 /// Outcome of a pre-action hook that can veto, patch, or pass through.
@@ -241,10 +241,11 @@ pub trait Hooks {
 
     /// Polled before each model turn.
     ///
-    /// A `Some(text)` return value is appended to history as a user message
+    /// The returned content is appended to history as a user message
     /// before the next call to the provider. Use this to inject reminders,
-    /// enforce policies, or prompt for clarification mid-conversation.
-    fn get_steering(&mut self) -> Option<String> {
+    /// enforce policies, deliver mid-run user prompts (text or images), or
+    /// prompt for clarification mid-conversation.
+    fn get_steering(&mut self) -> Option<Vec<Content>> {
         None
     }
 
@@ -274,7 +275,7 @@ mod tests {
     struct Recording {
         tool_calls_before: Vec<String>,
         tool_calls_after: Vec<String>,
-        steering: Option<String>,
+        steering: Option<Vec<Content>>,
         followup: Option<String>,
     }
 
@@ -294,7 +295,7 @@ mod tests {
             output
         }
 
-        fn get_steering(&mut self) -> Option<String> {
+        fn get_steering(&mut self) -> Option<Vec<Content>> {
             self.steering.take()
         }
 
@@ -391,11 +392,18 @@ mod tests {
     #[test]
     fn steering_and_followup_can_be_queued() {
         let mut h = Recording {
-            steering: Some("hold on".into()),
+            steering: Some(vec![Content::Text {
+                text: "hold on".into(),
+            }]),
             followup: Some("anything else?".into()),
             ..Recording::default()
         };
-        assert_eq!(h.get_steering().as_deref(), Some("hold on"));
+        assert_eq!(
+            h.get_steering(),
+            Some(vec![Content::Text {
+                text: "hold on".into()
+            }])
+        );
         assert!(h.get_steering().is_none());
         assert_eq!(h.get_followup().as_deref(), Some("anything else?"));
     }

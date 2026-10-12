@@ -141,10 +141,10 @@ of the queue and puts its text and images into the editor, so a typo
 in a sent prompt is fixable before it lands. Pressing it again takes
 the next one back, and once nothing is pending `up` walks the prompt
 history as usual. The footer says so while something is pending. A
-prompt with an attached image always waits for the run to end. So does
-a prompt that mentions an MCP resource (`@server:uri`) or starts with
-an MCP prompt command (`/server:prompt`), because kage expands those
-only when a run starts (see [mcp](/guide/mcp#resources-and-mentions)).
+prompt that mentions an MCP resource (`@server:uri`) or starts with
+an MCP prompt command (`/server:prompt`) still waits for the run to
+end, because kage expands those only when a run starts (see
+[mcp](/guide/mcp#resources-and-mentions)).
 
 While kage works, the working row above the input shows what it is
 doing and for how long, such as

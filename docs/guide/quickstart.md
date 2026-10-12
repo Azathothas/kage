@@ -92,10 +92,11 @@ reference.
 ## sending while kage works
 
 You can keep typing during a run. `enter` steers: the prompt joins
-the running turn after the current tool call. `tab` queues: the prompt
-waits and starts a new run when the current one ends. Prompts waiting
-for delivery show above the input, marked `after the current tool
-call` or `when this run ends`, until kage takes them. See
+the running turn after the current tool call, images included. `tab`
+queues: the prompt waits and starts a new run when the current one
+ends. Prompts waiting for delivery show above the input, marked
+`after the current tool call` or `when this run ends`, until kage
+takes them. See
 [keybindings](/guide/keybindings#sending-while-kage-works).
 
 ## agents

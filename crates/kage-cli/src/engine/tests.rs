@@ -174,6 +174,10 @@ fn prompt(engine: &Engine, session: SessionId, text: &str, delivery: Delivery) {
     ));
 }
 
+fn prompt_content(engine: &Engine, session: SessionId, content: Vec<Content>, delivery: Delivery) {
+    engine.send(Command::to(session, CommandKind::Prompt { content, delivery }));
+}
+
 /// Collect envelopes until `count` runs have ended.
 fn until_runs_end(events: &Receiver<Envelope>, count: usize) -> Vec<Envelope> {
     let mut seen = Vec::new();
@@ -335,6 +339,62 @@ fn steered_prompt_is_delivered_at_the_next_turn() {
         "steer lands after the tool result: {roles:?}"
     );
     assert_eq!(outcomes(&events), [RunOutcome::Completed]);
+}
+
+/// A prompt carrying an image steers like a text prompt: it lands in
+/// history after the in-flight tool result, not after the whole run.
+#[test]
+fn steered_image_prompt_is_delivered_at_the_next_turn() {
+    let mock = MockProvider::sequence(vec![tool_turn("gate"), text_turn("done")]);
+    let h = harness(mock.clone());
+    let id = SessionId::new();
+    h.open(id, None);
+    prompt(&h.engine, id, "start", Delivery::Steer);
+    wait_for(&h.events, is_tool_start);
+    prompt_content(
+        &h.engine,
+        id,
+        vec![
+            Content::Text {
+                text: "look at this".into(),
+            },
+            Content::Image {
+                source: kage_core::ImageSource::Base64 {
+                    data: "aGk=".to_owned(),
+                },
+                mime: "image/png".to_owned(),
+            },
+        ],
+        Delivery::Steer,
+    );
+    std::thread::sleep(Duration::from_millis(50));
+    h.release.send(()).unwrap();
+    let events = until_runs_end(&h.events, 1);
+
+    let roles: Vec<(Role, bool)> = events
+        .iter()
+        .filter_map(|e| match &e.event {
+            Event::Loop(LoopEvent::MessageAppended { message }) => Some((
+                message.role,
+                message.content.iter().any(|c| matches!(c, Content::Image { .. })),
+            )),
+            _ => None,
+        })
+        .collect();
+    let tool_result = roles.iter().position(|(r, _)| *r == Role::ToolResult);
+    let steered = roles
+        .iter()
+        .position(|(r, has_image)| *r == Role::User && *has_image);
+    assert!(
+        steered > tool_result,
+        "steered image prompt lands after the tool result: {roles:?}"
+    );
+    assert_eq!(outcomes(&events), [RunOutcome::Completed]);
+    // The image reached the provider request too.
+    let request = mock.last_request().unwrap();
+    assert!(request.messages.iter().any(|m| {
+        m.role == Role::User && m.content.iter().any(|c| matches!(c, Content::Image { .. }))
+    }));
 }
 
 #[test]

@@ -91,9 +91,7 @@ impl App {
                 .find(|line| !line.is_empty())
                 .unwrap_or("[image]")
                 .to_owned(),
-            // The engine steers text only, so a prompt with images
-            // waits for the end of the run.
-            queued: queue || !images.is_empty(),
+            queued: queue,
         });
         let submit = RunRequest::Submit {
             text,
