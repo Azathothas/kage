@@ -607,7 +607,7 @@ impl ShellApp {
         // The settings dialog sits above the dialog layer: a dialog it
         // opens from the palette must not answer beneath it.
         if self.shell.settings.is_open() {
-            let events = self.shell.settings.show(ui, &self.shell.store);
+            let events = self.shell.settings.show(ui, &mut self.shell.store);
             self.carry_settings(events, ui.ctx());
         }
         toasts.show(ui);
@@ -709,6 +709,10 @@ impl ShellApp {
                 crate::ui::settings::SettingsEvent::Restore(id) => {
                     self.shell.store.restore(&id);
                 }
+                crate::ui::settings::SettingsEvent::ProviderForm(_)
+                | crate::ui::settings::SettingsEvent::McpForm(_)
+                | crate::ui::settings::SettingsEvent::AcpForm(_)
+                | crate::ui::settings::SettingsEvent::Directory(_) => {}
             }
         }
         if self.shell.settings.is_open() && self.shell.settings.section().reads_config() {
@@ -1052,7 +1056,12 @@ impl ShellApp {
                 .open(crate::ui::settings::Section::Providers),
             Action::CloseDialog => {
                 if self.shell.settings.is_open() {
-                    self.shell.settings.close();
+                    // A form over the page answers the key in its own
+                    // draw, so the dialog waits for the form to be
+                    // gone before it closes.
+                    if !self.shell.settings.form_open() {
+                        self.shell.settings.close();
+                    }
                 } else {
                     self.shell.dialogs.close();
                 }

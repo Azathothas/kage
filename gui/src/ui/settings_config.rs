@@ -23,6 +23,7 @@ pub struct Snapshot {
     mcp: Mcp,
     permissions: Permissions,
     plugins: Plugins,
+    acp: Acp,
 }
 
 impl Snapshot {
@@ -37,6 +38,29 @@ impl Snapshot {
     pub fn is_empty(&self) -> bool {
         self.mcp.servers.is_empty() && self.providers.custom.is_empty()
     }
+
+    /// Where provider `id` finds its key, when the snapshot says.
+    #[must_use]
+    pub fn key_state(&self, id: &str) -> Option<&KeyState> {
+        self.providers.keys.get(id)
+    }
+
+    /// The ids of the providers config.toml defines whole.
+    #[must_use]
+    pub fn providers_custom(&self) -> Vec<String> {
+        self.providers.custom.keys().cloned().collect()
+    }
+
+    /// The ids of the providers config.toml only overrides.
+    #[must_use]
+    pub fn providers_overrides(&self) -> Vec<String> {
+        self.providers
+            .overrides
+            .keys()
+            .filter(|id| *id != "custom")
+            .cloned()
+            .collect()
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -45,6 +69,31 @@ struct Providers {
     custom: BTreeMap<String, CustomProvider>,
     #[serde(flatten)]
     overrides: BTreeMap<String, ProviderOverride>,
+    #[serde(rename = "providerKeys")]
+    keys: BTreeMap<String, KeyState>,
+}
+
+/// One external ACP agent as the snapshot configures it.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(default)]
+pub struct AcpAgent {
+    /// The executable that starts the agent.
+    pub command: String,
+    /// Its arguments.
+    pub args: Vec<String>,
+    /// Extra environment variables.
+    pub env: BTreeMap<String, String>,
+}
+
+/// Where one provider finds its key, as the snapshot says.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default)]
+pub struct KeyState {
+    /// The environment variable the key is read from; empty when the
+    /// provider needs none.
+    pub env: String,
+    /// `env`, `auth`, `missing` or `unneeded`.
+    pub source: String,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -81,16 +130,71 @@ struct Mcp {
     allow_sampling: bool,
 }
 
-#[derive(Debug, Default, Deserialize)]
+/// One MCP server as the snapshot configures it.
+#[derive(Debug, Default, Clone, Deserialize)]
 #[serde(default)]
-struct McpServer {
-    command: Option<String>,
-    args: Vec<String>,
-    env: BTreeMap<String, String>,
-    url: Option<String>,
-    headers: BTreeMap<String, String>,
-    disabled: bool,
-    oauth: Option<serde_json::Value>,
+pub struct McpServer {
+    /// The command that starts a stdio server.
+    pub command: Option<String>,
+    /// The stdio server's arguments.
+    pub args: Vec<String>,
+    /// The stdio server's environment.
+    pub env: BTreeMap<String, String>,
+    /// The http server's URL.
+    pub url: Option<String>,
+    /// The http server's headers.
+    pub headers: BTreeMap<String, String>,
+    /// Whether the server is configured but not started.
+    pub disabled: bool,
+    /// The server's OAuth settings, when it logs in.
+    pub oauth: Option<serde_json::Value>,
+    /// The tools the server's config disables.
+    pub disabled_tools: Vec<String>,
+}
+
+impl Snapshot {
+    /// The MCP server `name` the snapshot configures, when it does.
+    #[must_use]
+    pub fn mcp_server(&self, name: &str) -> Option<&McpServer> {
+        self.mcp.servers.get(name)
+    }
+
+    /// Whether MCP servers may run completions on the default model.
+    #[must_use]
+    pub fn mcp_allow_sampling(&self) -> bool {
+        self.mcp.allow_sampling
+    }
+
+    /// The plugin directory the snapshot names.
+    #[must_use]
+    pub fn plugin_dir(&self) -> Option<&str> {
+        self.plugins.dir.as_deref()
+    }
+
+    /// The plugin names the allowlist keeps.
+    #[must_use]
+    pub fn plugin_enabled(&self) -> &[String] {
+        &self.plugins.enabled
+    }
+
+    /// Whether file tools are confined to the working directory.
+    #[must_use]
+    pub fn confine_paths(&self) -> bool {
+        self.permissions.confine_paths
+    }
+
+    /// The external ACP agent `name` the snapshot configures, when it
+    /// does.
+    #[must_use]
+    pub fn acp_agent(&self, name: &str) -> Option<&AcpAgent> {
+        self.acp.agents.get(name)
+    }
+
+    /// The ACP agents the snapshot configures, by name.
+    #[must_use]
+    pub fn acp_agents(&self) -> &BTreeMap<String, AcpAgent> {
+        &self.acp.agents
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -99,6 +203,12 @@ struct Permissions {
     confine_paths: bool,
     tools: BTreeMap<String, ToolRules>,
     mcp: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct Acp {
+    agents: BTreeMap<String, AcpAgent>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -445,8 +555,11 @@ pub fn providers_page(
     snapshot: &Snapshot,
     model: Option<&SessionConfigOption>,
     palette: &Palette,
+    events: &mut Vec<SettingsEvent>,
 ) {
     let rows = provider_rows(snapshot, model);
+    let custom = snapshot.providers_custom();
+    let overrides = snapshot.providers_overrides();
     if rows.is_empty() {
         note(
             ui,
@@ -481,6 +594,18 @@ pub fn providers_page(
                     Some(env) => format!("key from {env}"),
                     None => "key source unknown".to_owned(),
                 };
+                let target = if custom.contains(&row.id) {
+                    crate::ui::provider_form::Target::Custom(Some(row.id.clone()))
+                } else if overrides.contains(&row.id) {
+                    crate::ui::provider_form::Target::Registered(row.id.clone())
+                } else {
+                    crate::ui::provider_form::Target::Custom(None)
+                };
+                let edit =
+                    crate::ui::forms::button(ui, "Edit", crate::ui::forms::Tone::Plain, palette);
+                if edit.clicked() {
+                    events.push(SettingsEvent::ProviderForm(target));
+                }
                 list_row(
                     ui,
                     &initials(&row.id),
@@ -492,9 +617,53 @@ pub fn providers_page(
             }
         });
     }
+    ui.horizontal(|ui| {
+        ui.add_space(32.0);
+        ui.spacing_mut().item_spacing.x = 8.0;
+        let add = crate::ui::forms::add_button(
+            ui,
+            "Add custom provider",
+            crate::icons::Icon::Plus,
+            palette,
+        );
+        if add.clicked() {
+            events.push(SettingsEvent::ProviderForm(
+                crate::ui::provider_form::Target::Custom(None),
+            ));
+        }
+        let local = crate::ui::forms::button(
+            ui,
+            "Add local server",
+            crate::ui::forms::Tone::Plain,
+            palette,
+        );
+        if local.clicked() {
+            events.push(SettingsEvent::ProviderForm(
+                crate::ui::provider_form::Target::Local,
+            ));
+        }
+        let directory = crate::ui::forms::button(
+            ui,
+            "Import from models.dev",
+            crate::ui::forms::Tone::Plain,
+            palette,
+        );
+        if directory.clicked() {
+            events.push(SettingsEvent::Directory(false));
+        }
+        let named = crate::ui::forms::button(
+            ui,
+            "Import from api.json",
+            crate::ui::forms::Tone::Plain,
+            palette,
+        );
+        if named.clicked() {
+            events.push(SettingsEvent::Directory(true));
+        }
+    });
     note(
         ui,
-        "Custom providers and overrides come from config.toml; the others are the ones the session's model picker offers. Whether a key is present stays with the engine. Adding and editing providers waits for _kage/config/set.",
+        "Custom providers and overrides come from config.toml; the others are the ones the session's model picker offers. Whether a key is present stays with the engine. A save writes the entry and asks the engine to read the configuration again.",
         palette,
     );
 }
@@ -506,21 +675,28 @@ pub fn mcp_page(
     snapshot: &Snapshot,
     live: &BTreeMap<String, McpServerStatus>,
     palette: &Palette,
+    events: &mut Vec<SettingsEvent>,
 ) {
-    if snapshot.mcp.servers.is_empty() {
-        note(
-            ui,
-            "No MCP servers configured. Add them under [mcp.servers] in config.toml.",
-            palette,
-        );
-        return;
+    if !snapshot.mcp.servers.is_empty() {
+        let rows = mcp_rows(snapshot, live);
+        boxed(ui, palette, |ui| {
+            for row in &rows {
+                let name = format!("{}  {}  {}", row.name, row.transport, row.status.word());
+                let extras = row.extras.join(" \u{b7} ");
+                let edit =
+                    crate::ui::forms::button(ui, "Edit", crate::ui::forms::Tone::Plain, palette);
+                if edit.clicked() {
+                    events.push(SettingsEvent::McpForm(Some(row.name.clone())));
+                }
+                list_row(ui, "", &name, &row.target, Some(&extras), palette);
+            }
+        });
     }
-    let rows = mcp_rows(snapshot, live);
-    boxed(ui, palette, |ui| {
-        for row in &rows {
-            let name = format!("{}  {}  {}", row.name, row.transport, row.status.word());
-            let extras = row.extras.join(" \u{b7} ");
-            list_row(ui, "", &name, &row.target, Some(&extras), palette);
+    ui.horizontal(|ui| {
+        ui.add_space(32.0);
+        let add = crate::ui::forms::add_button(ui, "Add server", crate::icons::Icon::Plus, palette);
+        if add.clicked() {
+            events.push(SettingsEvent::McpForm(None));
         }
     });
     note(
@@ -530,6 +706,52 @@ pub fn mcp_page(
         } else {
             "Servers start with the session. Header and environment values stay with the engine; only their names show here."
         },
+        palette,
+    );
+}
+
+/// The ACP Agents page: the external agents the snapshot configures.
+pub fn acp_page(
+    ui: &mut egui::Ui,
+    snapshot: &Snapshot,
+    palette: &Palette,
+    events: &mut Vec<SettingsEvent>,
+) {
+    if !snapshot.acp.agents.is_empty() {
+        boxed(ui, palette, |ui| {
+            for (name, agent) in &snapshot.acp.agents {
+                let command = std::iter::once(agent.command.clone())
+                    .chain(agent.args.iter().cloned())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let edit =
+                    crate::ui::forms::button(ui, "Edit", crate::ui::forms::Tone::Plain, palette);
+                if edit.clicked() {
+                    events.push(SettingsEvent::AcpForm(Some(name.clone())));
+                }
+                let extras = if agent.env.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        "env: {}",
+                        agent.env.keys().cloned().collect::<Vec<_>>().join(", ")
+                    )
+                };
+                list_row(ui, "", name, &command, Some(&extras), palette);
+            }
+        });
+    }
+    ui.horizontal(|ui| {
+        ui.add_space(32.0);
+        let add =
+            crate::ui::forms::add_button(ui, "Add ACP agent", crate::icons::Icon::Plus, palette);
+        if add.clicked() {
+            events.push(SettingsEvent::AcpForm(None));
+        }
+    });
+    note(
+        ui,
+        "An external agent kage drives over ACP, picked as acp:<name> in the model picker. The engine starts it and runs its handshake.",
         palette,
     );
 }

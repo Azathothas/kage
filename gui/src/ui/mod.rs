@@ -5,18 +5,23 @@
 //! with egui widgets, so the logic tests without a window and the
 //! shell only wires keys and store data in.
 
+pub mod acp_form;
 pub mod agents;
 pub mod approval;
 pub mod composer;
 pub mod constellation;
 pub mod copy;
 pub mod dialog;
+pub mod directory_picker;
 pub mod dock;
 pub mod eclipse;
 pub mod find;
+pub mod forms;
 pub mod keys;
+pub mod mcp_form;
 pub mod palette;
 pub mod pickers;
+pub mod provider_form;
 pub mod settings;
 pub mod settings_config;
 pub mod shell;

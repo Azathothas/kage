@@ -25,6 +25,8 @@ pub enum Section {
     Providers,
     /// The MCP servers and their status.
     Mcp,
+    /// The external ACP agents.
+    Acp,
     /// The permission mode and the tool rules.
     Permissions,
     /// The plugin directory and grants.
@@ -43,10 +45,11 @@ pub enum Section {
 
 impl Section {
     /// Every section, in nav order.
-    pub const ALL: [Section; 10] = [
+    pub const ALL: [Section; 11] = [
         Section::General,
         Section::Providers,
         Section::Mcp,
+        Section::Acp,
         Section::Permissions,
         Section::Plugins,
         Section::Connection,
@@ -63,6 +66,7 @@ impl Section {
             Section::General => "General",
             Section::Providers => "Model Providers",
             Section::Mcp => "MCP Servers",
+            Section::Acp => "ACP Agents",
             Section::Permissions => "Permissions",
             Section::Plugins => "Plugins",
             Section::Connection => "Connection",
@@ -80,6 +84,7 @@ impl Section {
             Section::General => crate::icons::Icon::Settings2,
             Section::Providers => crate::icons::Icon::Zap,
             Section::Mcp => crate::icons::Icon::Server,
+            Section::Acp => crate::icons::Icon::Bot,
             Section::Permissions => crate::icons::Icon::ShieldCheck,
             Section::Plugins => crate::icons::Icon::LayoutDashboard,
             Section::Connection => crate::icons::Icon::Network,
@@ -96,7 +101,11 @@ impl Section {
     pub fn reads_config(self) -> bool {
         matches!(
             self,
-            Section::Providers | Section::Mcp | Section::Permissions | Section::Plugins
+            Section::Providers
+                | Section::Mcp
+                | Section::Acp
+                | Section::Permissions
+                | Section::Plugins
         )
     }
 }
@@ -209,6 +218,15 @@ pub enum SettingsEvent {
     Mode(String),
     /// Bring archived session `id` back to the sidebar.
     Restore(String),
+    /// Open the form that edits this provider entry.
+    ProviderForm(crate::ui::provider_form::Target),
+    /// Open the form that edits this MCP server, or adds one.
+    McpForm(Option<String>),
+    /// Open the form that edits this ACP agent, or adds one.
+    AcpForm(Option<String>),
+    /// Open the provider directory picker; `named` reads one the user
+    /// names instead of models.dev.
+    Directory(bool),
 }
 
 /// Which page of the settings dialog shows, and whether it is open.
@@ -216,6 +234,21 @@ pub enum SettingsEvent {
 pub struct Settings {
     open: bool,
     section: Section,
+    /// The forms open over their page, one at most.
+    form: Option<Form>,
+}
+
+/// A form open over a settings page.
+#[derive(Debug)]
+enum Form {
+    /// The provider form, over what it edits.
+    Provider(Box<crate::ui::provider_form::ProviderForm>),
+    /// The MCP server form.
+    Mcp(Box<crate::ui::mcp_form::McpForm>),
+    /// The ACP agent form.
+    Acp(Box<crate::ui::acp_form::AcpForm>),
+    /// The provider directory picker.
+    Directory(Box<crate::ui::directory_picker::DirectoryPicker>),
 }
 
 impl Default for Settings {
@@ -231,6 +264,7 @@ impl Settings {
         Self {
             open: false,
             section: Section::General,
+            form: None,
         }
     }
 
@@ -246,9 +280,10 @@ impl Settings {
         self.go(section);
     }
 
-    /// Closes the dialog.
+    /// Closes the dialog, and any form open over its page.
     pub fn close(&mut self) {
         self.open = false;
+        self.form = None;
     }
 
     /// The page that shows.
@@ -262,7 +297,70 @@ impl Settings {
     /// the next visit.
     pub fn go(&mut self, section: Section) {
         self.section = section;
+        self.form = None;
     }
+
+    /// Opens `form` over the page that shows.
+    fn open_form(&mut self, form: Form) {
+        self.form = Some(form);
+    }
+
+    /// Closes the form over the page, if one shows.
+    fn close_form(&mut self) {
+        self.form = None;
+    }
+
+    /// Follows the store: settles what the open form's writes did.
+    fn follow(&mut self, store: &Store) {
+        match &mut self.form {
+            Some(Form::Provider(form)) => {
+                form.follow(store);
+            }
+            Some(Form::Mcp(form)) => {
+                form.follow(store);
+            }
+            Some(Form::Acp(form)) => {
+                form.follow(store);
+            }
+            Some(Form::Directory(picker)) => picker.follow(store),
+            None => {}
+        }
+    }
+
+    /// Draws the page that shows, or the form open over it. Returns
+    /// what the form answered with.
+    fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        store: &mut Store,
+        palette: &Palette,
+        events: &mut Vec<SettingsEvent>,
+    ) -> FormOutcome {
+        self.follow(store);
+        match &mut self.form {
+            Some(Form::Provider(form)) => FormOutcome::Done(form.show(ui, store)),
+            Some(Form::Mcp(form)) => FormOutcome::Done(form.show(ui, store)),
+            Some(Form::Acp(form)) => FormOutcome::Done(form.show(ui, store)),
+            Some(Form::Directory(picker)) => match picker.show(ui, store) {
+                Some(picked) if picked.entry.is_null() => FormOutcome::Done(true),
+                Some(picked) => FormOutcome::Picked(picked),
+                None => FormOutcome::Done(false),
+            },
+            None => {
+                page(ui, store, self.section, palette, events);
+                FormOutcome::Done(false)
+            }
+        }
+    }
+}
+
+/// What a form drew back.
+#[derive(Debug)]
+enum FormOutcome {
+    /// The form asked to close or not.
+    Done(bool),
+    /// The directory picker chose a provider.
+    Picked(crate::ui::directory_picker::Picked),
 }
 
 /// The settings dialog over the shell: a nav column, one page, and a
@@ -303,15 +401,33 @@ impl SettingsView {
         self.settings.section()
     }
 
+    /// Whether a form shows over the page. Escape leaves the form
+    /// before it leaves the dialog, and the dialog's own keys wait for
+    /// it.
+    #[must_use]
+    pub fn form_open(&self) -> bool {
+        self.settings.form.is_some()
+    }
+
     /// Draws the dialog over `ui`, reporting what it asked for.
-    pub fn show(&mut self, ui: &mut egui::Ui, store: &Store) -> Vec<SettingsEvent> {
+    pub fn show(&mut self, ui: &mut egui::Ui, store: &mut Store) -> Vec<SettingsEvent> {
         if !self.settings.is_open() {
             return Vec::new();
+        }
+        // Escape leaves the form over the page first: the form is the
+        // dialog's top layer, and the page reads the engine's
+        // configuration again behind it.
+        if self.settings.form.is_some() && ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            self.settings.close_form();
+            if self.settings.section().reads_config() {
+                store.ask_config();
+            }
         }
         let palette = Palette::active_of(ui.ctx());
         let mut events = Vec::new();
         let mut close = false;
         let mut picked: Option<Section> = None;
+        let mut outcome = FormOutcome::Done(false);
         egui::Area::new(egui::Id::new("kage-settings"))
             .anchor(egui::Align2::LEFT_TOP, egui::Vec2::ZERO)
             .order(egui::Order::Foreground)
@@ -320,6 +436,18 @@ impl SettingsView {
             .show(ui.ctx(), |ui| {
                 let screen = ui.ctx().viewport_rect();
                 ui.set_min_size(screen.size());
+                let card = egui::Rect::from_center_size(
+                    screen.center(),
+                    egui::vec2(
+                        960.0_f32.min(screen.width() * 0.96),
+                        720.0_f32.min(screen.height() * 0.92),
+                    ),
+                );
+                // The scrim covers the screen, so it must not swallow
+                // the clicks the card's own widgets ask for: only a
+                // click outside the card closes the dialog. Drawn
+                // under the card, it answers only where the card is
+                // not.
                 let scrim = ui.allocate_response(screen.size(), egui::Sense::click());
                 ui.painter().rect_filled(
                     scrim.rect,
@@ -329,13 +457,6 @@ impl SettingsView {
                 if scrim.clicked() {
                     close = true;
                 }
-                let card = egui::Rect::from_center_size(
-                    screen.center(),
-                    egui::vec2(
-                        960.0_f32.min(screen.width() * 0.96),
-                        720.0_f32.min(screen.height() * 0.92),
-                    ),
-                );
                 ui.scope_builder(egui::UiBuilder::new().max_rect(card), |ui| {
                     egui::Frame::NONE
                         .fill(palette.bg)
@@ -344,7 +465,6 @@ impl SettingsView {
                         .shadow(palette.shadow_2)
                         .show(ui, |ui| {
                             ui.set_min_size(card.size());
-                            let section = self.settings.section();
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 0.0;
                                 nav(ui, &self.settings, palette, &mut picked);
@@ -368,7 +488,7 @@ impl SettingsView {
                                             close = true;
                                         }
                                     });
-                                    page(ui, store, section, palette, &mut events);
+                                    outcome = self.settings.show(ui, store, palette, &mut events);
                                 });
                             });
                         });
@@ -376,6 +496,64 @@ impl SettingsView {
             });
         if let Some(section) = picked {
             self.settings.go(section);
+        }
+        for event in &events {
+            match event {
+                SettingsEvent::ProviderForm(target) => {
+                    let config = store.config().cloned().unwrap_or(serde_json::Value::Null);
+                    let form = crate::ui::provider_form::ProviderForm::new(target.clone(), &config);
+                    self.settings.open_form(Form::Provider(Box::new(form)));
+                }
+                SettingsEvent::McpForm(name) => {
+                    let config = store.config().cloned().unwrap_or(serde_json::Value::Null);
+                    let snapshot = crate::ui::settings_config::Snapshot::parse(&config);
+                    let server = name.as_deref().and_then(|name| snapshot.mcp_server(name));
+                    let form = crate::ui::mcp_form::McpForm::new(name.as_deref().zip(server));
+                    self.settings.open_form(Form::Mcp(Box::new(form)));
+                }
+                SettingsEvent::AcpForm(name) => {
+                    let config = store.config().cloned().unwrap_or(serde_json::Value::Null);
+                    let snapshot = crate::ui::settings_config::Snapshot::parse(&config);
+                    let agent = name
+                        .as_deref()
+                        .and_then(|name| snapshot.acp_agent(name))
+                        .cloned();
+                    let form =
+                        crate::ui::acp_form::AcpForm::new(name.as_deref().zip(agent.as_ref()));
+                    self.settings.open_form(Form::Acp(Box::new(form)));
+                }
+                SettingsEvent::Directory(named) => {
+                    let picker = crate::ui::directory_picker::DirectoryPicker::new(store, *named);
+                    self.settings.open_form(Form::Directory(Box::new(picker)));
+                }
+                _ => {}
+            }
+        }
+        events.retain(|event| {
+            !matches!(
+                event,
+                SettingsEvent::ProviderForm(_)
+                    | SettingsEvent::McpForm(_)
+                    | SettingsEvent::AcpForm(_)
+                    | SettingsEvent::Directory(_)
+            )
+        });
+        match outcome {
+            FormOutcome::Picked(picked) => {
+                let config = store.config().cloned().unwrap_or(serde_json::Value::Null);
+                let form = crate::ui::provider_form::ProviderForm::new(
+                    crate::ui::provider_form::Target::Picked(picked.id, picked.entry),
+                    &config,
+                );
+                self.settings.open_form(Form::Provider(Box::new(form)));
+            }
+            FormOutcome::Done(true) => {
+                self.settings.close_form();
+                if self.settings.section().reads_config() {
+                    store.ask_config();
+                }
+            }
+            FormOutcome::Done(false) => {}
         }
         if close {
             self.settings.close();
@@ -439,7 +617,7 @@ fn nav(ui: &mut egui::Ui, settings: &Settings, palette: &Palette, picked: &mut O
 /// One page of the dialog, scrolling inside the page column.
 fn page(
     ui: &mut egui::Ui,
-    store: &Store,
+    store: &mut Store,
     section: Section,
     palette: &Palette,
     events: &mut Vec<SettingsEvent>,
@@ -461,9 +639,11 @@ fn page(
             ui.add_space(6.0);
             match section {
                 Section::General => general(ui, store, palette, events),
-                Section::Providers | Section::Mcp | Section::Permissions | Section::Plugins => {
-                    config_page(ui, store, section, palette, events)
-                }
+                Section::Providers
+                | Section::Mcp
+                | Section::Acp
+                | Section::Permissions
+                | Section::Plugins => config_page(ui, store, section, palette, events),
                 Section::Connection => connection(ui, store, palette),
                 Section::Keyboard => keyboard(ui, store, palette),
                 Section::Lab => lab(ui, store, palette, events),
@@ -598,10 +778,13 @@ fn theme_card(
         ui.add_space(66.0);
         ui.horizontal(|ui| {
             ui.add_space(10.0);
-            ui.label(
-                egui::RichText::new(choice.label())
-                    .size(FS_XS)
-                    .color(palette.ink),
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(choice.label())
+                        .size(FS_XS)
+                        .color(palette.ink),
+                )
+                .selectable(false),
             );
         });
     });
@@ -629,13 +812,16 @@ fn config_page(
     };
     match section {
         Section::Providers => {
-            config::providers_page(ui, &snapshot, option("model"), palette);
+            config::providers_page(ui, &snapshot, option("model"), palette, events);
         }
         Section::Mcp => {
             let live = session
                 .map(|session| session.mcp.clone())
                 .unwrap_or_default();
-            config::mcp_page(ui, &snapshot, &live, palette);
+            config::mcp_page(ui, &snapshot, &live, palette, events);
+        }
+        Section::Acp => {
+            config::acp_page(ui, &snapshot, palette, events);
         }
         Section::Permissions => {
             let modes: Option<SessionConfigOption> = option("mode").map(|option| {
@@ -1091,7 +1277,7 @@ mod tests {
             assert!(!section.label().is_empty(), "{section:?} has a label");
             let _ = section.icon();
         }
-        assert_eq!(Section::ALL.len(), 10);
+        assert_eq!(Section::ALL.len(), 11);
     }
 
     #[test]
@@ -1099,11 +1285,16 @@ mod tests {
         for section in Section::ALL {
             let reads = matches!(
                 section,
-                Section::Providers | Section::Mcp | Section::Permissions | Section::Plugins
+                Section::Providers
+                    | Section::Mcp
+                    | Section::Acp
+                    | Section::Permissions
+                    | Section::Plugins
             );
             assert_eq!(section.reads_config(), reads, "{section:?}");
         }
         assert!(Section::Providers.reads_config());
+        assert!(Section::Acp.reads_config());
         assert!(!Section::General.reads_config());
     }
 
