@@ -13,6 +13,9 @@ mod assets;
 pub mod clock;
 pub mod fonts;
 pub mod gate;
+// The window icon decodes a PNG through `image`, which the wasm
+// bundle does not carry: the browser canvas takes no window icon.
+#[cfg(not(target_arch = "wasm32"))]
 #[allow(dead_code)]
 pub mod icon;
 #[allow(dead_code)]
@@ -32,6 +35,10 @@ pub mod timing;
 pub mod transport;
 pub mod ui;
 pub mod update;
+/// The browser entry: boots the shell once the page's connection form
+/// is submitted. Native targets ignore it.
+#[cfg(target_arch = "wasm32")]
+pub mod web;
 // The vim layer's key router arrives with E03; until then the state
 // machine is carried but unreferenced, and CI denies dead code.
 #[allow(dead_code)]

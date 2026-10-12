@@ -1714,7 +1714,7 @@ pub fn render_agents(
     session: &Session,
     ix: usize,
     call: &ToolCallItem,
-    origin: std::time::Instant,
+    origin: web_time::Instant,
     ui_state: &mut UiState,
 ) -> Option<(egui::Response, Vec<RowAction>)> {
     let members: Vec<AgentFacts> = children_of(session, &call.tool_call_id)
@@ -1887,7 +1887,7 @@ fn swarm_card(
     members: &[AgentFacts],
     counts: SwarmCounts,
     open: bool,
-    field: Option<std::time::Instant>,
+    field: Option<web_time::Instant>,
     template_open: bool,
     template: Option<&str>,
     took: Option<Duration>,

@@ -20,6 +20,16 @@ publish = false
 # native binary and tests.
 crate-type = ["cdylib", "rlib"]
 
+# The native binary has a `main`; the browser build is the cdylib the
+# wasm-bindgen CLI turns into `kage_desktop.wasm` (T08.2.1), and a
+# wasm bin target has no entry. Declaring the bin under a native-only
+# feature keeps `cargo build --target wasm32-unknown-unknown` from
+# trying to link one.
+[[bin]]
+name = "kage-desktop"
+path = "src/main.rs"
+required-features = ["native-bin"]
+
 [dependencies]
 # The egui stack. glow renders; wgpu stays available as a fallback
 # feature (decision D1). default_fonts keeps egui's Latin faces; the
@@ -50,6 +60,11 @@ chrono = "0.4"
 # The config.toml preview the settings forms show.
 toml = "1"
 
+[features]
+# The native executable; the browser build never links a binary.
+default = ["native-bin"]
+native-bin = []
+
 [build-dependencies]
 # The Windows executable icon embed, gated by `build.rs` to the
 # windows target.
@@ -79,6 +94,10 @@ compak = "0.2"
 rfd = "0.17"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+# `rand` reaches for `getrandom`, which needs the `wasm_js` feature to
+# draw from the browser's crypto. Declared here so the feature
+# unifies across the whole wasm graph.
+getrandom = { version = "0.4.3", features = ["wasm_js"] }
 # Exact versions so the wasm-bindgen CLI (0.2.129 installed) stays in
 # sync with the crate, same rule as the gui workspace lock.
 wasm-bindgen = "=0.2.129"

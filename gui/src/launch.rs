@@ -10,15 +10,19 @@
 use std::time::Duration;
 
 use kage_client::Frame;
+#[cfg(not(target_arch = "wasm32"))]
 use kage_client::unquote_and_trim;
 
 use crate::store::Command;
-use crate::transport::replay::ReplayTransport;
+#[cfg(not(target_arch = "wasm32"))]
 use crate::transport::stdio::{Config as StdioConfig, StdioTransport};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::transport::ws::WsTransport;
 use crate::transport::{Event, Link, Transport};
 
-/// Which transport the shell connects through.
+/// Which transport the shell connects through. Native only: the
+/// browser's endpoint comes from `boot.js`, not a flag.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 enum Wire {
     /// Spawn `kage rpc`, with an optional explicit binary.
@@ -36,6 +40,7 @@ enum Wire {
 }
 
 /// Command line switches for automated runs and transport choice.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Default)]
 struct Launch {
     wire: Wire,
@@ -52,6 +57,7 @@ struct Launch {
     replay: bool,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Launch {
     /// Records one problem, keeping the earlier ones, so the exit
     /// message can list every flag that did not fit.
@@ -134,8 +140,8 @@ impl Launch {
 
     /// The transport the launch selected. Stdio runs `--rpc-bin`, else
     /// the binary the setup screen saved, else `kage` from the PATH.
-    /// The shell wires it up when it returns with E02.
-    #[allow(dead_code)]
+    /// The browser has no local engine, so this never runs there.
+    #[cfg(not(target_arch = "wasm32"))]
     fn transport(&self, saved: Option<&str>) -> Box<dyn Transport> {
         match &self.wire {
             Wire::Stdio => {
@@ -151,7 +157,7 @@ impl Launch {
             Wire::WebSocket { url, token } => {
                 Box::new(WsTransport::new(url.clone(), token.clone()))
             }
-            Wire::Replay => Box::new(ReplayTransport::new()),
+            Wire::Replay => Box::new(crate::transport::replay::ReplayTransport::new()),
         }
     }
 }
@@ -161,6 +167,66 @@ impl Launch {
 /// One pump thread reads the transport's events and hands them to the
 /// UI thread through a `std` channel, asking egui for a repaint on
 /// each. The UI thread drains the store on every frame, executes the
+/// Where the transport's events land before the frame drains them.
+///
+/// Native transports speak from a background thread, so a pump thread
+/// moves their events into a thread-safe inbox and asks egui for a
+/// repaint. The browser transport calls back on the UI thread itself,
+/// so there is nothing to move and no thread to start: the frame
+/// drains the channel directly.
+enum Inbox {
+    /// The native pump's inbox.
+    #[cfg(not(target_arch = "wasm32"))]
+    Threaded(std::sync::mpsc::Receiver<Event>),
+    /// The browser transport's own channel.
+    #[cfg(target_arch = "wasm32")]
+    Direct(async_channel::Receiver<Event>),
+}
+
+impl Inbox {
+    /// Starts a native pump thread over `incoming` and asks `ctx` for
+    /// a repaint on every event.
+    ///
+    /// The browser has no thread to start, so its variant below is
+    /// the only one that compiles there.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn pumped(
+        incoming: async_channel::Receiver<Event>,
+        ctx: &egui::Context,
+    ) -> (Self, std::thread::JoinHandle<()>) {
+        let (tx, rx) = std::sync::mpsc::channel::<Event>();
+        let ctx = ctx.clone();
+        let pump = std::thread::Builder::new()
+            .name("kage-pump".to_owned())
+            .spawn(move || {
+                while let Ok(event) = incoming.recv_blocking() {
+                    if tx.send(event).is_err() {
+                        return;
+                    }
+                    ctx.request_repaint();
+                }
+            })
+            .expect("the pump thread starts");
+        (Self::Threaded(rx), pump)
+    }
+
+    /// The browser's inbox: the transport's own channel.
+    #[cfg(target_arch = "wasm32")]
+    fn direct(incoming: async_channel::Receiver<Event>) -> Self {
+        Self::Direct(incoming)
+    }
+
+    /// Takes one event, or `None` when the channel is empty for now.
+    fn try_next(&self) -> Option<Event> {
+        match self {
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Threaded(rx) => rx.try_recv().ok(),
+            #[cfg(target_arch = "wasm32")]
+            Self::Direct(rx) => rx.try_recv().ok(),
+        }
+    }
+}
+
 /// commands the store queued, and pushes the outgoing frames back
 /// through the transport. The store never crosses the thread
 /// boundary, matching the old single-threaded entity model.
@@ -169,15 +235,20 @@ pub struct Shell {
     store: crate::store::Store,
     /// The transport behind the store.
     transport: Box<dyn Transport>,
-    /// The pump thread's event inbox.
-    inbox: std::sync::mpsc::Receiver<Event>,
+    /// Where the transport's events land. A native transport hands
+    /// them over on the pump thread and this is the thread-safe
+    /// inbox; a browser transport calls back on the UI thread and
+    /// this is the channel itself.
+    inbox: Inbox,
     /// Set when `--smoke` asked for a timed quit.
-    smoke_deadline: Option<(std::time::Instant, Duration)>,
+    smoke_deadline: Option<(web_time::Instant, Duration)>,
     /// Whether the engine has been asked for its themes and config.
     themes_asked: bool,
     /// Synthetic chunks appended, for the 30 Hz stream measurement.
     streamed: usize,
-    /// The keepalive handle of the pump thread, dropped with the shell.
+    /// The keepalive handle of the pump thread, dropped with the
+    /// shell. The browser has no pump thread: its transport calls back
+    /// on the UI thread, so this stays `None` there.
     _pump: Option<std::thread::JoinHandle<()>>,
     /// The three-panel layout state.
     panels: crate::ui::shell::Panels,
@@ -190,7 +261,7 @@ pub struct Shell {
     /// The boot splash.
     splash: crate::ui::splash::Splash,
     /// When the eclipse started orbiting, for the working indicator.
-    orbit: Option<std::time::Instant>,
+    orbit: Option<web_time::Instant>,
     /// The transcript in the chat column.
     transcript: crate::ui::transcript::view::TranscriptView,
     /// The find bar over the chat column.
@@ -209,7 +280,9 @@ pub struct Shell {
     /// The settings dialog over the shell.
     settings: crate::ui::settings::SettingsView,
     /// The setup screen, shown in place of the shell while no engine
-    /// could start.
+    /// could start. The browser has no local engine to point at, so
+    /// the screen never shows there and the field stays unread.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     setup: crate::ui::setup::SetupView,
     /// Whether the shell replays a recording: the replay always
     /// connects, so it never shows setup.
@@ -230,27 +303,15 @@ impl Shell {
     ) -> Self {
         let (events, incoming) = async_channel::unbounded();
         transport.start(events.clone());
-        let (tx, rx) = std::sync::mpsc::channel::<Event>();
-        let ctx = ctx.clone();
-        let pump = std::thread::Builder::new()
-            .name("kage-pump".to_owned())
-            .spawn(move || {
-                while let Ok(event) = incoming.recv_blocking() {
-                    if tx.send(event).is_err() {
-                        return;
-                    }
-                    ctx.request_repaint();
-                }
-            })
-            .expect("the pump thread starts");
+        let (inbox, pump) = Self::start_inbox(incoming, ctx);
         Self {
             store: crate::store::Store::new(cwd, replay),
             transport,
-            inbox: rx,
+            inbox,
             smoke_deadline: None,
             streamed: 0,
             themes_asked: false,
-            _pump: Some(pump),
+            _pump: pump,
             panels: crate::ui::shell::Panels::default(),
             gate_banner: crate::ui::status::Banner::default(),
             toasts: crate::ui::toasts::Toasts::default(),
@@ -279,6 +340,7 @@ impl Shell {
     }
 
     /// Starts `program` as the engine and lets it connect again.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn use_engine(&mut self, program: String, ctx: &egui::Context) {
         let config = StdioConfig {
             program,
@@ -289,6 +351,7 @@ impl Shell {
 
     /// Looks for `kage` again: the saved path if the setup screen once
     /// named one, else the PATH.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn retry_engine(&mut self, saved: Option<&str>, ctx: &egui::Context) {
         let config = match saved {
             Some(program) => StdioConfig {
@@ -304,27 +367,35 @@ impl Shell {
     }
 
     /// Swaps in `transport` and restarts the pump thread behind it.
+    #[cfg(not(target_arch = "wasm32"))]
     fn replace_transport(&mut self, mut transport: Box<dyn Transport>, ctx: &egui::Context) {
         self._pump = None;
         let (events, incoming) = async_channel::unbounded();
         transport.start(events.clone());
-        let (tx, rx) = std::sync::mpsc::channel::<Event>();
-        let ctx = ctx.clone();
-        let pump = std::thread::Builder::new()
-            .name("kage-pump".to_owned())
-            .spawn(move || {
-                while let Ok(event) = incoming.recv_blocking() {
-                    if tx.send(event).is_err() {
-                        return;
-                    }
-                    ctx.request_repaint();
-                }
-            })
-            .expect("the pump thread starts");
+        let (inbox, pump) = Self::start_inbox(incoming, ctx);
         self.transport = transport;
-        self.inbox = rx;
-        self._pump = Some(pump);
+        self.inbox = inbox;
+        self._pump = pump;
         self.store.set_connect(crate::transport::State::Connecting);
+    }
+
+    /// The inbox a fresh transport reports into, and the pump handle
+    /// to keep on native. The browser has no pump thread, so its
+    /// handle is `None`.
+    fn start_inbox(
+        incoming: async_channel::Receiver<Event>,
+        ctx: &egui::Context,
+    ) -> (Inbox, Option<std::thread::JoinHandle<()>>) {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let (inbox, pump) = Inbox::pumped(incoming, ctx);
+            (inbox, Some(pump))
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let _ = ctx;
+            (Inbox::direct(incoming), None)
+        }
     }
 
     /// The connection's link, for the status bar.
@@ -342,7 +413,7 @@ impl Shell {
     /// commands it produced.
     fn on_events(&mut self) {
         let mut reconnecting = false;
-        while let Ok(event) = self.inbox.try_recv() {
+        while let Some(event) = self.inbox.try_next() {
             match event {
                 Event::Frame(frame) => {
                     self.store.absorb(frame);
@@ -453,18 +524,24 @@ impl Shell {
 }
 
 /// The window's body: the shell plus the frame clock.
-struct ShellApp {
+pub struct ShellApp {
     /// The shell under the window.
-    shell: Shell,
-    /// The 30 Hz stream runs while this is set.
-    stream: bool,
+    pub shell: Shell,
+    /// The 30 Hz stream runs while this is set. Native only: it is
+    /// `--stream`, a measurement path the browser never takes.
+    pub stream: bool,
+    /// The theme the window opened with. The settings dialog reports
+    /// a change with the choice it stored; the shell applies it.
+    pub prefs_theme: crate::theme::ThemeChoice,
     /// Frames since the last stream chunk, for the 30 Hz pace.
-    stream_clock: std::time::Instant,
+    stream_clock: web_time::Instant,
     /// When the daily release check last ran, unix seconds.
     last_update_check: i64,
     /// The finished release check's inbox, while one is in flight.
     update_rx: Option<std::sync::mpsc::Receiver<Option<crate::update::CheckOutcome>>>,
-    /// The finished install's inbox, while one is in flight.
+    /// The finished install's inbox, while one is in flight. The
+    /// browser never installs anything.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     install_rx: Option<
         std::sync::mpsc::Receiver<(
             crate::ui::settings::Install,
@@ -482,7 +559,7 @@ struct ShellApp {
     ctx: egui::Context,
     /// When this window was built, the clock the dialogs' fields and
     /// the constellation twinkle on.
-    born: std::time::Instant,
+    born: web_time::Instant,
 }
 
 impl eframe::App for ShellApp {
@@ -490,13 +567,16 @@ impl eframe::App for ShellApp {
         let ctx = ui.ctx().clone();
         self.shell.on_events();
         self.shell.flush_outgoing();
-        self.pump_update_check();
-        self.apply_update();
-        self.apply_install();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.pump_update_check();
+            self.apply_update();
+            self.apply_install();
+        }
         self.route_keys(&ctx);
         if self.stream {
             if self.stream_clock.elapsed() >= Duration::from_secs_f64(1.0 / 30.0) {
-                self.stream_clock = std::time::Instant::now();
+                self.stream_clock = web_time::Instant::now();
                 self.shell.stream_chunk();
             }
             ctx.request_repaint_after(Duration::from_secs_f64(1.0 / 30.0));
@@ -513,6 +593,7 @@ impl eframe::App for ShellApp {
             ctx.request_repaint_after(Duration::from_millis(50));
         }
         self.shell.toasts.expire(web_time::Instant::now());
+        #[cfg(not(target_arch = "wasm32"))]
         if self.shell.needs_setup() {
             self.draw_setup(ui);
             return;
@@ -523,10 +604,39 @@ impl eframe::App for ShellApp {
 }
 
 impl ShellApp {
+    /// Builds the window body over a transport: the native flags and
+    /// the browser handoff both land here.
+    #[must_use]
+    pub fn new(
+        cwd: String,
+        replay: bool,
+        transport: Box<dyn Transport>,
+        ctx: &egui::Context,
+    ) -> Self {
+        crate::theme::install_fonts(ctx);
+        crate::icons::install(ctx);
+        Self {
+            shell: Shell::new(cwd, replay, transport, ctx),
+            stream: false,
+            prefs_theme: crate::theme::ThemeChoice::System,
+            stream_clock: web_time::Instant::now(),
+            last_update_check: crate::clock::unix_seconds(),
+            update_rx: None,
+            install_rx: None,
+            installing: None,
+            install_note: None,
+            row_actions: Vec::new(),
+            ctx: ctx.clone(),
+            born: web_time::Instant::now(),
+        }
+    }
+
     /// Draws the setup screen in place of the shell, and carries what
     /// it asked for: a probed binary becomes the engine, a retry looks
     /// on the PATH again, and a chosen path is remembered so the next
-    /// launch starts without the screen.
+    /// launch starts without the screen. The browser has no local
+    /// engine to point at, so it never gets here.
+    #[cfg(not(target_arch = "wasm32"))]
     fn draw_setup(&mut self, ui: &mut egui::Ui) {
         egui::Area::new(egui::Id::new("kage-setup"))
             .anchor(egui::Align2::LEFT_TOP, egui::Vec2::ZERO)
@@ -660,7 +770,7 @@ impl ShellApp {
                         .active_session()
                         .is_some_and(|session| session.in_turn || session.running);
                     if running && self.shell.orbit.is_none() {
-                        self.shell.orbit = Some(std::time::Instant::now());
+                        self.shell.orbit = Some(web_time::Instant::now());
                     } else if !running {
                         self.shell.orbit = None;
                     }
@@ -811,6 +921,7 @@ impl ShellApp {
         for event in events {
             match event {
                 crate::ui::settings::SettingsEvent::Theme(choice) => {
+                    self.prefs_theme = choice.clone();
                     self.shell
                         .store
                         .update_prefs(|prefs| prefs.theme = choice.clone());
@@ -839,10 +950,17 @@ impl ShellApp {
                     self.check_releases(true);
                 }
                 crate::ui::settings::SettingsEvent::CheckNow => self.check_releases(true),
+                #[cfg(target_arch = "wasm32")]
+                crate::ui::settings::SettingsEvent::Install(_)
+                | crate::ui::settings::SettingsEvent::OpenReleases => {}
+                #[cfg(not(target_arch = "wasm32"))]
                 crate::ui::settings::SettingsEvent::Install(which) => {
                     self.start_install(which);
                 }
-                crate::ui::settings::SettingsEvent::OpenReleases => crate::update::open_releases(),
+                #[cfg(not(target_arch = "wasm32"))]
+                crate::ui::settings::SettingsEvent::OpenReleases => {
+                    crate::update::open_releases();
+                }
                 crate::ui::settings::SettingsEvent::ProviderForm(_)
                 | crate::ui::settings::SettingsEvent::McpForm(_)
                 | crate::ui::settings::SettingsEvent::AcpForm(_)
@@ -1173,7 +1291,7 @@ impl ShellApp {
         match action {
             Action::Quit => {
                 self.shell.smoke_deadline =
-                    Some((std::time::Instant::now(), Duration::from_millis(0)));
+                    Some((web_time::Instant::now(), Duration::from_millis(0)));
             }
             Action::NewSession => self.shell.store.show_welcome(),
             Action::ToggleSidebar => self.shell.panels.toggle_sidebar(),
@@ -1243,7 +1361,8 @@ impl ShellApp {
 
     /// Runs the daily release check on its own thread and applies the
     /// answer on the UI thread: the check blocks on the network, so it
-    /// never sits in the frame.
+    /// never sits in the frame. The browser build never checks.
+    #[cfg(not(target_arch = "wasm32"))]
     fn pump_update_check(&mut self) {
         let now = crate::clock::unix_seconds();
         if now < self.last_update_check + 24 * 60 * 60 {
@@ -1288,7 +1407,9 @@ impl ShellApp {
 
     /// Downloads the newest release of `which` on its own thread: the
     /// download blocks on the network, so it never sits in the frame.
-    /// One at a time; a second click while one runs is ignored.
+    /// One at a time; a second click while one runs is ignored. The
+    /// browser never installs anything, so it never gets here.
+    #[cfg(not(target_arch = "wasm32"))]
     fn start_install(&mut self, which: crate::ui::settings::Install) {
         if self.installing.is_some() {
             return;
@@ -1313,6 +1434,7 @@ impl ShellApp {
     /// Applies a finished install: the engine is restarted on the new
     /// binary, the desktop waits for the next launch, and a refusal
     /// rides a toast.
+    #[cfg(not(target_arch = "wasm32"))]
     fn apply_install(&mut self) {
         let Some(rx) = self.install_rx.take() else {
             return;
@@ -1351,7 +1473,9 @@ impl ShellApp {
         self.shell.store.note(tone, text);
     }
 
-    /// Applies a finished release check to the preferences, once.
+    /// Applies a finished release check to the preferences, once. The
+    /// browser never checks, so this is native-only too.
+    #[cfg(not(target_arch = "wasm32"))]
     fn apply_update(&mut self) {
         let Some(rx) = self.update_rx.take() else {
             return;
@@ -1407,7 +1531,9 @@ fn key_name(key: &egui::Key) -> &'static str {
     }
 }
 
-/// Parses the flags and runs until quit.
+/// Parses the flags and runs until quit. Native only: the browser
+/// entry is [`crate::web::start`].
+#[cfg(not(target_arch = "wasm32"))]
 pub fn run() {
     let launch = Launch::parse(std::env::args().skip(1));
     if let Some(error) = &launch.error {
@@ -1438,27 +1564,15 @@ pub fn run() {
         "kage client",
         options,
         Box::new(move |cc| {
-            crate::theme::install_fonts(&cc.egui_ctx);
-            crate::icons::install(&cc.egui_ctx);
+            let mut app = ShellApp::new(cwd, replay, transport, &cc.egui_ctx);
+            app.stream = stream;
+            app.prefs_theme = prefs.theme.clone();
             crate::theme::apply_choice(&prefs.theme, &cc.egui_ctx);
-            let mut shell = Shell::new(cwd, replay, transport, &cc.egui_ctx);
             if let Some(millis) = smoke_millis {
-                shell.smoke_deadline =
-                    Some((std::time::Instant::now(), Duration::from_millis(millis)));
+                app.shell.smoke_deadline =
+                    Some((web_time::Instant::now(), Duration::from_millis(millis)));
             }
-            Ok(Box::new(ShellApp {
-                shell,
-                stream,
-                stream_clock: std::time::Instant::now(),
-                last_update_check: crate::clock::unix_seconds(),
-                update_rx: None,
-                install_rx: None,
-                installing: None,
-                install_note: None,
-                row_actions: Vec::new(),
-                ctx: cc.egui_ctx.clone(),
-                born: std::time::Instant::now(),
-            }))
+            Ok(Box::new(app))
         }),
     )
     .expect("failed to open the window");

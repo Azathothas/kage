@@ -1,6 +1,6 @@
 //! The native binary of the kage client. The application lives in the
-//! library; the egui shell arrives with S01.2 and the window wiring
-//! with S01.5.
+//! library; the browser build has no binary, its entry is the wasm
+//! glue in `web.rs`.
 
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 

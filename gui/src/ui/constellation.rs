@@ -9,7 +9,8 @@
 //! [`egui::Context::request_repaint_after`], which is what keeps the
 //! idle cost at zero: no live member, no scheduled repaint.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use crate::theme::Palette;
 use crate::ui::agents::Phase;

@@ -22,7 +22,9 @@ pub const PROBE_CODEPOINT: u32 = 0x5F71;
 /// The family name the discovered font registers under.
 pub const FALLBACK_FAMILY: &str = "kage-cjk-fallback";
 
-/// Whether a font's charmap covers [`PROBE_CODEPOINT`].
+/// Whether a font's charmap covers [`PROBE_CODEPOINT`]. Native only:
+/// the browser carries its own fonts and never scans a charmap.
+#[cfg(not(target_arch = "wasm32"))]
 #[must_use]
 pub fn covers_cjk(charmap: Option<fontique::Charmap<'_>>) -> bool {
     charmap.is_some_and(|charmap| charmap.map(PROBE_CODEPOINT).is_some())
@@ -98,11 +100,15 @@ pub fn install_cjk_fallback(_fonts: &mut egui::FontDefinitions) -> Option<String
     None
 }
 
+// The blob's Arc only exists where a system font was scanned.
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::Arc;
 
 #[cfg(test)]
 mod tests {
-    use super::{FALLBACK_FAMILY, PROBE_CODEPOINT, covers_cjk};
+    #[cfg(not(target_arch = "wasm32"))]
+    use super::covers_cjk;
+    use super::{FALLBACK_FAMILY, PROBE_CODEPOINT};
 
     #[test]
     fn the_probe_codepoint_is_the_cjk_measurement_character() {

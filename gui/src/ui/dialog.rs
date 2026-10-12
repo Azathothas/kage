@@ -8,7 +8,7 @@
 //! reads the dialog's open state and answers only the shell's own
 //! bindings while no modal is up.
 
-use std::time::Instant;
+use web_time::Instant;
 
 use kage_client::{Session, TranscriptItem, unquote_and_trim};
 
