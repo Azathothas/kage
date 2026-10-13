@@ -833,8 +833,9 @@ impl Composer {
 
     /// Takes the draft out for a send, leaving the field empty.
     pub fn take_prompt(&mut self) -> Option<String> {
-        self.prompt().map(str::to_owned)?;
-        Some(self.draft.take())
+        let prompt = self.prompt().map(str::to_owned)?;
+        self.draft.take();
+        Some(prompt)
     }
 
     /// Draws the composer and reports what the frame's keys asked for.

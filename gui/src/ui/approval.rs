@@ -36,8 +36,8 @@ use serde_json::Value;
 
 use crate::store::Store;
 use crate::theme::{
-    FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_2XS, FS_BASE, FS_SM, FS_XS, Palette, R_FULL,
-    R_MD, R_XL, family,
+    FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_2XS, FS_BASE, FS_SM, FS_XS, LINE, Palette,
+    R_FULL, R_MD, R_XL, SP_4, family,
 };
 
 /// The three tones an option button carries: the filled success for
@@ -271,6 +271,35 @@ impl Approval {
                 color: palette.ok_soft,
             }
         };
+        if let Some(question) = &ask.question {
+            egui::Frame::NONE
+                .fill(fill)
+                .stroke(egui::Stroke::new(1.0, border))
+                .corner_radius(egui::CornerRadius::same(R_XL as u8))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    self.question_body(
+                        ui,
+                        store,
+                        &session_id,
+                        &ask,
+                        question,
+                        palette,
+                        &mut answer,
+                        &mut events,
+                    );
+                });
+            if let Some(decision) = answer {
+                events.push(ApprovalEvent::Reply(
+                    session_id,
+                    ask.request_id.clone(),
+                    decision,
+                ));
+                self.forget(&ask.request_id);
+            }
+            return events;
+        }
         egui::Frame::NONE
             .fill(fill)
             .stroke(egui::Stroke::new(1.0, border))
@@ -320,20 +349,7 @@ impl Approval {
                         });
                     }
                 });
-                if let Some(question) = &ask.question {
-                    self.question_body(
-                        ui,
-                        store,
-                        &session_id,
-                        &ask,
-                        question,
-                        palette,
-                        &mut answer,
-                        &mut events,
-                    );
-                } else {
-                    self.ask_body(ui, &ask, palette, &mut answer);
-                }
+                self.ask_body(ui, &ask, palette, &mut answer);
             });
         if let Some(decision) = answer {
             events.push(ApprovalEvent::Reply(
@@ -436,9 +452,9 @@ impl Approval {
         }
     }
 
-    /// An `ask_user_question` ask: the header and question, a row per
-    /// choice with its description, the own-words field, and skip,
-    /// plus `Done` when several choices may be picked.
+    /// An `ask_user_question` ask, as the reference's card sets it: the
+    /// glyph and header chip over the question, a row per choice with
+    /// its description, then the own-words field beside Done and Skip.
     #[allow(clippy::too_many_arguments)]
     fn question_body(
         &mut self,
@@ -451,163 +467,278 @@ impl Approval {
         answer: &mut Option<PermissionDecision>,
         events: &mut Vec<ApprovalEvent>,
     ) {
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
-            egui::Frame::NONE
-                .fill(palette.accent_soft)
-                .corner_radius(egui::CornerRadius::same(R_FULL as u8))
-                .inner_margin(egui::Margin::symmetric(8, 1))
-                .show(ui, |ui| {
-                    ui.label(
-                        egui::RichText::new(&question.header)
-                            .size(FS_2XS)
-                            .color(palette.accent),
-                    );
-                });
-        });
-        ui.add_space(4.0);
-        ui.label(
-            egui::RichText::new(&question.question)
-                .size(FS_BASE)
-                .family(family(FAMILY_BODY_SEMIBOLD))
-                .color(palette.ink_strong),
-        );
-        ui.add_space(10.0);
-        let picked = self.picks(&ask.request_id);
-        for (index, choice) in question.options.iter().enumerate() {
-            let on = picked.contains(&index);
-            let height = if choice.description.is_empty() {
-                30.0
-            } else {
-                44.0
-            };
-            let (rect, response) = ui.allocate_exact_size(
-                egui::vec2(ui.available_width(), height),
-                egui::Sense::click(),
-            );
-            let painter = ui.painter();
-            if on {
-                painter.rect_filled(rect, egui::CornerRadius::same(R_MD as u8), palette.selected);
-            }
-            if response.hovered() {
-                painter.rect_filled(rect, egui::CornerRadius::same(R_MD as u8), palette.hover);
-            }
-            let mut left = rect.left() + 8.0;
-            key_cap(
-                ui,
-                egui::pos2(left + 8.0, rect.center().y),
-                index + 1,
-                palette.muted,
-            );
-            left += 34.0;
-            if question.multi_select {
-                let icon_rect = egui::Rect::from_center_size(
-                    egui::pos2(left + 7.0, rect.center().y),
-                    egui::vec2(14.0, 14.0),
+        egui::Frame::NONE
+            .inner_margin(egui::Margin {
+                left: 14,
+                right: 14,
+                top: 12,
+                bottom: 8,
+            })
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing.y = 4.0;
+                let chip = ui.painter().layout_no_wrap(
+                    question.header.clone(),
+                    egui::FontId::new(FS_2XS, family(crate::theme::FAMILY_BODY_REGULAR)),
+                    palette.accent,
                 );
-                ui.scope_builder(egui::UiBuilder::new().max_rect(icon_rect), |ui| {
-                    crate::icons::icon(
+                let chip_h = FS_2XS * LINE + 2.0;
+                let (row, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), chip_h.max(14.0)),
+                    egui::Sense::hover(),
+                );
+                let mid = row.center().y;
+                crate::icons::themed_image(crate::icons::Icon::MessageSquare, 14.0, palette.accent)
+                    .paint_at(
                         ui,
-                        if on {
-                            crate::icons::Icon::CircleCheck
-                        } else {
-                            crate::icons::Icon::Circle
-                        },
-                        14.0,
-                        if on { palette.accent } else { palette.faint },
+                        egui::Rect::from_min_size(
+                            egui::pos2(row.left(), mid - 7.0),
+                            egui::vec2(14.0, 14.0),
+                        ),
                     );
-                });
-                left += 26.0;
-            }
-            let text_rect = egui::Rect::from_min_max(
-                egui::pos2(left, rect.top() + 4.0),
-                egui::pos2(rect.right() - 8.0, rect.bottom() - 4.0),
-            );
-            ui.scope_builder(egui::UiBuilder::new().max_rect(text_rect), |ui| {
+                let pill = egui::Rect::from_min_size(
+                    egui::pos2(row.left() + 14.0 + 8.0, mid - chip_h / 2.0),
+                    egui::vec2(chip.size().x + 16.0, chip_h),
+                );
+                ui.painter().rect_filled(
+                    pill,
+                    egui::CornerRadius::same(R_FULL as u8),
+                    palette.accent_soft,
+                );
+                ui.painter()
+                    .galley(pill.center() - chip.size() / 2.0, chip, palette.accent);
                 ui.add(
                     egui::Label::new(
-                        egui::RichText::new(&choice.label)
-                            .size(FS_SM)
+                        egui::RichText::new(&question.question)
+                            .size(FS_BASE)
+                            .line_height(Some(FS_BASE * LINE))
+                            .family(family(FAMILY_BODY_SEMIBOLD))
                             .color(palette.ink_strong),
                     )
-                    .selectable(false),
+                    .wrap(),
                 );
-                if !choice.description.is_empty() {
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(&choice.description)
-                                .size(FS_XS)
-                                .color(palette.muted),
-                        )
-                        .selectable(false),
+            });
+        let picked = self.picks(&ask.request_id);
+        egui::Frame::NONE
+            .inner_margin(egui::Margin::symmetric(10, 0))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing.y = 2.0;
+                for (index, choice) in question.options.iter().enumerate() {
+                    let on = picked.contains(&index);
+                    let clicked = choice_row(
+                        ui,
+                        index,
+                        &choice.label,
+                        &choice.description,
+                        question.multi_select.then_some(on),
+                        palette,
                     );
+                    if clicked {
+                        if question.multi_select {
+                            self.toggle(ask.request_id.clone(), index);
+                        } else {
+                            *answer = Some(PermissionDecision::Option(format!("choice-{index}")));
+                        }
+                    }
                 }
             });
-            if response.clicked() {
-                if question.multi_select {
-                    self.toggle(ask.request_id.clone(), index);
-                } else {
-                    *answer = Some(PermissionDecision::Option(format!("choice-{index}")));
-                }
-            }
-        }
-        ui.add_space(12.0);
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
-            if question.multi_select {
-                let labels: Vec<String> = picked
-                    .iter()
-                    .filter_map(|index| question.options.get(*index))
-                    .map(|choice| choice.label.clone())
-                    .collect();
-                let first = picked.first().copied().unwrap_or(0);
-                let enabled = !labels.is_empty();
-                let response = option_button(
-                    ui,
-                    &format!("Done ({})", labels.len()),
-                    0,
-                    palette.ok_ink,
-                    palette.ok,
-                    palette.ok,
+        egui::Frame::NONE
+            .inner_margin(egui::Margin::symmetric(14, 12))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                let (row, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), crate::ui::forms::FIELD_H.max(26.0)),
+                    egui::Sense::hover(),
                 );
-                if response.clicked() && enabled {
-                    *answer = Some(PermissionDecision::Answer {
-                        option_id: format!("choice-{first}"),
-                        answer: labels,
-                    });
+                let mid = row.center().y;
+                let mut right = row.right();
+                if let Some(skip) = reject_option_id(ask) {
+                    let button = crate::ui::settings_config::btn_sm_at(
+                        ui,
+                        egui::pos2(right, mid),
+                        egui::Align2::RIGHT_CENTER,
+                        ui.id().with(("question-skip", &ask.request_id)),
+                        "Skip",
+                        None,
+                        crate::ui::settings_config::BtnTone::Plain,
+                        palette,
+                    );
+                    if button.clicked() {
+                        *answer = Some(PermissionDecision::Option(skip.to_owned()));
+                    }
+                    right = button.rect.left() - SP_4;
                 }
-            }
-            if let Some(skip) = reject_option_id(ask) {
-                let response =
-                    option_button(ui, "Skip", 0, palette.ink, palette.fill, palette.line);
-                if response.clicked() {
-                    *answer = Some(PermissionDecision::Option(skip.to_owned()));
+                if question.multi_select {
+                    let labels: Vec<String> = picked
+                        .iter()
+                        .filter_map(|index| question.options.get(*index))
+                        .map(|choice| choice.label.clone())
+                        .collect();
+                    let first = picked.first().copied().unwrap_or(0);
+                    let done = format!("Done ({})", labels.len());
+                    let button = crate::ui::settings_config::btn_sm_at(
+                        ui,
+                        egui::pos2(right, mid),
+                        egui::Align2::RIGHT_CENTER,
+                        ui.id().with(("question-done", &ask.request_id)),
+                        &done,
+                        None,
+                        crate::ui::settings_config::BtnTone::Primary,
+                        palette,
+                    );
+                    if button.clicked() && !labels.is_empty() {
+                        *answer = Some(PermissionDecision::Answer {
+                            option_id: format!("choice-{first}"),
+                            answer: labels,
+                        });
+                    }
+                    right = button.rect.left() - SP_4;
                 }
-            }
-        });
-        ui.add_space(12.0);
-        let mut text = self.feedback(&ask.request_id).to_owned();
-        let field = egui::TextEdit::singleline(&mut text)
-            .hint_text("Answer in your own words...")
-            .desired_width(f32::INFINITY)
-            .font(egui::FontId::new(FS_SM, family(FAMILY_BODY_SEMIBOLD)))
-            .margin(egui::Margin::symmetric(10, 8));
-        let response = ui.add(field);
-        if response.changed() {
-            self.set_feedback(&ask.request_id, text.clone());
-        }
-        if !text.is_empty() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-            events.push(ApprovalEvent::Reply(
-                session_id.to_owned(),
-                ask.request_id.clone(),
-                PermissionDecision::Answer {
-                    option_id: "choice-0".to_owned(),
-                    answer: vec![text],
-                },
-            ));
-        }
+                let field_rect = egui::Rect::from_min_max(
+                    row.min,
+                    egui::pos2(right.max(row.left() + 180.0), row.max.y),
+                );
+                let mut text = self.feedback(&ask.request_id).to_owned();
+                let response = ui
+                    .scope_builder(egui::UiBuilder::new().max_rect(field_rect), |ui| {
+                        crate::ui::forms::input_field(
+                            ui,
+                            &mut text,
+                            "Answer in your own words...",
+                            false,
+                            false,
+                            palette,
+                        )
+                    })
+                    .inner;
+                if response.changed() {
+                    self.set_feedback(&ask.request_id, text.clone());
+                }
+                let text = text.trim().to_owned();
+                if !text.is_empty()
+                    && response.lost_focus()
+                    && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                {
+                    events.push(ApprovalEvent::Reply(
+                        session_id.to_owned(),
+                        ask.request_id.clone(),
+                        PermissionDecision::Answer {
+                            option_id: "choice-0".to_owned(),
+                            answer: vec![text],
+                        },
+                    ));
+                }
+            });
     }
+}
+
+/// One choice of a question: the digit cap on the first line, the
+/// check circle when several may be picked, the label and its
+/// description. Answers whether it was clicked.
+fn choice_row(
+    ui: &mut egui::Ui,
+    index: usize,
+    label: &str,
+    description: &str,
+    picked: Option<bool>,
+    palette: &Palette,
+) -> bool {
+    let label_h = FS_SM * LINE;
+    let desc_h = if description.is_empty() {
+        0.0
+    } else {
+        FS_XS * LINE
+    };
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), 6.0 + label_h + desc_h + 6.0),
+        egui::Sense::click(),
+    );
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    let radius = egui::CornerRadius::same(R_MD as u8);
+    if picked == Some(true) {
+        ui.painter().rect_filled(rect, radius, palette.selected);
+    }
+    if response.hovered() {
+        ui.painter().rect_filled(rect, radius, palette.hover);
+    }
+    let line_mid = rect.top() + 6.0 + label_h / 2.0;
+    let digit = ui.painter().layout_no_wrap(
+        (index + 1).to_string(),
+        egui::FontId::new(10.0, family(FAMILY_MONO_REGULAR)),
+        palette.muted,
+    );
+    let cap = egui::Rect::from_min_size(
+        egui::pos2(rect.left() + 8.0, line_mid - 8.0),
+        egui::vec2(digit.size().x + 10.0, 16.0),
+    );
+    let faded = palette.muted.gamma_multiply(0.6);
+    ui.painter().rect_stroke(
+        cap,
+        5,
+        egui::Stroke::new(1.0, faded),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter()
+        .galley(cap.center() - digit.size() / 2.0, digit, faded);
+    let mut x = cap.right() + 10.0;
+    if let Some(on) = picked {
+        let glyph = if on {
+            crate::icons::Icon::CircleCheck
+        } else {
+            crate::icons::Icon::Circle
+        };
+        let tint = if on { palette.accent } else { palette.faint };
+        crate::icons::themed_image(glyph, 14.0, tint).paint_at(
+            ui,
+            egui::Rect::from_min_size(egui::pos2(x, line_mid - 7.0), egui::vec2(14.0, 14.0)),
+        );
+        x += 14.0 + 10.0;
+    }
+    let width = rect.right() - 8.0 - x;
+    let name = crate::ui::transcript::head::one_line(
+        ui,
+        label.to_owned(),
+        egui::TextFormat::simple(
+            egui::FontId::new(FS_SM, family(crate::theme::FAMILY_BODY_REGULAR)),
+            palette.ink_strong,
+        ),
+        width,
+    );
+    ui.painter().galley(
+        egui::pos2(x, line_mid - name.size().y / 2.0),
+        name,
+        palette.ink_strong,
+    );
+    if !description.is_empty() {
+        let note = crate::ui::transcript::head::one_line(
+            ui,
+            description.to_owned(),
+            egui::TextFormat::simple(
+                egui::FontId::new(FS_XS, family(crate::theme::FAMILY_BODY_REGULAR)),
+                palette.muted,
+            ),
+            width,
+        );
+        let note_mid = rect.top() + 6.0 + label_h + desc_h / 2.0;
+        let note_rect = egui::Rect::from_center_size(
+            egui::pos2(x + note.size().x / 2.0, note_mid),
+            note.size(),
+        );
+        ui.interact(
+            note_rect,
+            ui.id().with(("choice-note", index)),
+            egui::Sense::hover(),
+        )
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, description));
+        ui.painter().galley(
+            egui::pos2(x, note_mid - note.size().y / 2.0),
+            note,
+            palette.muted,
+        );
+    }
+    response.clicked()
 }
 
 /// One small option button as the design draws it: 26px tall, an 8px

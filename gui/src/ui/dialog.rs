@@ -420,7 +420,7 @@ impl Dialogs {
         );
         ui.add_space(10.0);
         let focus = std::mem::take(&mut self.focus);
-        let response = field(
+        let response = crate::ui::forms::input_field(
             ui,
             &mut text,
             "e.g. all retry tests pass three runs in a row",
@@ -731,7 +731,7 @@ impl Dialogs {
         ui.add_space(10.0);
         let focus = std::mem::take(&mut self.focus);
         let (row, _) = ui.allocate_exact_size(
-            egui::vec2(ui.available_width(), FIELD_H),
+            egui::vec2(ui.available_width(), crate::ui::forms::FIELD_H),
             egui::Sense::hover(),
         );
         let nav = |ui: &mut egui::Ui, right: f32, icon, tip: &str, to: &Option<String>| {
@@ -797,7 +797,14 @@ impl Dialogs {
         let field_rect = egui::Rect::from_min_max(row.min, egui::pos2(left - 6.0, row.max.y));
         let response = ui
             .scope_builder(egui::UiBuilder::new().max_rect(field_rect), |ui| {
-                field(ui, &mut text, "/path/to/project", true, focus, palette)
+                crate::ui::forms::input_field(
+                    ui,
+                    &mut text,
+                    "/path/to/project",
+                    true,
+                    focus,
+                    palette,
+                )
             })
             .inner;
         if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
@@ -998,61 +1005,7 @@ fn footer_icons(
 /// the footer's top, as the reference stacks them.
 const FOOT_GAP: f32 = 20.0;
 
-/// The height of a dialog's field: the reference's input.
-const FIELD_H: f32 = 27.0;
 
-/// A dialog's text field: the hairline box that takes the accent ring
-/// while it holds the focus. `focus` asks for the focus this frame.
-fn field(
-    ui: &mut egui::Ui,
-    text: &mut String,
-    hint: &str,
-    mono: bool,
-    focus: bool,
-    palette: &Palette,
-) -> egui::Response {
-    let face = if mono {
-        FAMILY_MONO_REGULAR
-    } else {
-        FAMILY_BODY_REGULAR
-    };
-    let response = ui.add(
-        egui::TextEdit::singleline(text)
-            .hint_text(hint)
-            .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(10, 0)))
-            .min_size(egui::vec2(ui.available_width(), FIELD_H))
-            .desired_width(f32::INFINITY)
-            .vertical_align(egui::Align::Center)
-            .text_color(palette.ink)
-            .font(egui::FontId::new(FS_SM, family(face))),
-    );
-    if focus {
-        response.request_focus();
-    }
-    let radius = egui::CornerRadius::same(R_MD as u8);
-    if response.has_focus() {
-        // The reference's focus ring: the accent at half strength just
-        // outside the focused border, taking no room of its own.
-        ui.painter().rect_stroke(
-            response.rect,
-            radius,
-            egui::Stroke::new(3.0, palette.accent.gamma_multiply(0.5)),
-            egui::StrokeKind::Outside,
-        );
-    }
-    let line = if response.has_focus() {
-        palette.composer_focus_line
-    } else {
-        palette.line
-    };
-    ui.painter().rect_stroke(
-        response.rect,
-        radius,
-        egui::Stroke::new(1.0, line),
-        egui::StrokeKind::Inside,
-    );
-    response
-}
 
 /// The folder names a listing carries, sorted, hidden ones left out.
 #[must_use]

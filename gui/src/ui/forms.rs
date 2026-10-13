@@ -639,6 +639,62 @@ pub fn pairs(ui: &mut egui::Ui, id: &str, pairs: &mut Pairs, palette: &Palette) 
     add
 }
 
+/// The height of the reference's text input.
+pub(crate) const FIELD_H: f32 = 27.0;
+
+/// The reference's text input: no box of its own until it holds the
+/// focus, then the focus border with the accent ring around it. `mono`
+/// sets it in the mono family; `focus` asks for the focus this frame.
+pub(crate) fn input_field(
+    ui: &mut egui::Ui,
+    text: &mut String,
+    hint: &str,
+    mono: bool,
+    focus: bool,
+    palette: &Palette,
+) -> egui::Response {
+    let face = if mono {
+        crate::theme::FAMILY_MONO_REGULAR
+    } else {
+        crate::theme::FAMILY_BODY_REGULAR
+    };
+    let response = ui.add(
+        egui::TextEdit::singleline(text)
+            .hint_text(
+                egui::RichText::new(hint)
+                    .font(egui::FontId::new(FS_SM, crate::theme::family(face)))
+                    .color(palette.faint),
+            )
+            .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(10, 0)))
+            .min_size(egui::vec2(ui.available_width(), FIELD_H))
+            .desired_width(f32::INFINITY)
+            .vertical_align(egui::Align::Center)
+            .text_color(palette.ink)
+            .font(egui::FontId::new(FS_SM, crate::theme::family(face))),
+    );
+    if focus {
+        response.request_focus();
+    }
+    if response.has_focus() {
+        // The accent at half strength just outside the focus border,
+        // taking no room of its own.
+        let radius = egui::CornerRadius::same(R_MD as u8);
+        ui.painter().rect_stroke(
+            response.rect,
+            radius,
+            egui::Stroke::new(3.0, palette.accent.gamma_multiply(0.5)),
+            egui::StrokeKind::Outside,
+        );
+        ui.painter().rect_stroke(
+            response.rect,
+            radius,
+            egui::Stroke::new(1.0, palette.composer_focus_line),
+            egui::StrokeKind::Inside,
+        );
+    }
+    response
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Pairs, Saving, Tone};
