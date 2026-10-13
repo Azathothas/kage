@@ -350,6 +350,40 @@ pub fn tokens(n: u64) -> String {
     }
 }
 
+/// Paints `name`'s avatar into `rect`: its first letter, past any
+/// `kage-` prefix, on the soft fill in the name's hue.
+pub fn paint_avatar(ui: &egui::Ui, rect: egui::Rect, name: &str, palette: &Palette) {
+    let hues = &palette.avatars;
+    let hue = match crate::ui::transcript::tool_rows::design_hash(name) % 8 {
+        0 => hues.amber,
+        1 => hues.rose,
+        2 => hues.orange,
+        3 => hues.emerald,
+        4 => hues.cyan,
+        5 => hues.sky,
+        6 => hues.violet,
+        _ => hues.pink,
+    };
+    let letter = name
+        .trim_start_matches("kage-")
+        .chars()
+        .next()
+        .map(|c| c.to_uppercase().to_string())
+        .unwrap_or_default();
+    ui.painter().rect_filled(
+        rect,
+        egui::CornerRadius::same(crate::theme::R_MD as u8),
+        palette.fill,
+    );
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        letter,
+        egui::FontId::new(12.0, crate::theme::family(crate::theme::FAMILY_MONO_BOLD)),
+        hue.fg,
+    );
+}
+
 /// The two-letter avatar tile `name` leads with: its ascii letters,
 /// uppercased, so `explore` reads `EX`.
 #[must_use]

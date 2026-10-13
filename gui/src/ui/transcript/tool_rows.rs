@@ -29,8 +29,8 @@ use super::model::{
 use crate::clock;
 use crate::store::{PlanChoice, plan_review};
 use crate::theme::{
-    FAMILY_BODY_MEDIUM, FAMILY_BODY_REGULAR, FAMILY_MONO_BOLD, FAMILY_MONO_REGULAR, FS_2XS, FS_SM,
-    FS_XS, Palette, R_FULL, R_LG, R_MD, SP_1, SP_2, SP_3, SP_4, SP_5, family,
+    FAMILY_BODY_MEDIUM, FAMILY_BODY_REGULAR, FAMILY_MONO_REGULAR, FS_2XS, FS_SM, FS_XS, Palette,
+    R_FULL, R_LG, R_MD, SP_1, SP_2, SP_3, SP_4, SP_5, family,
 };
 use crate::timing::{RunEnd, SessionTimes};
 use crate::ui::agents::Phase;
@@ -727,7 +727,7 @@ fn render_pre(ui: &mut egui::Ui, text: &str, palette: &Palette) {
 
 /// A unified diff with per-line added and removed coloring, computed
 /// from the markers the delivered text carries.
-fn render_diff(ui: &mut egui::Ui, lines: &[DiffLine], palette: &Palette) {
+pub(crate) fn render_diff(ui: &mut egui::Ui, lines: &[DiffLine], palette: &Palette) {
     egui::Frame::NONE.fill(palette.deep).show(ui, |ui| {
         ui.set_min_width(ui.available_width());
         for line in lines {
@@ -1574,46 +1574,12 @@ fn tokens(n: u64) -> String {
 
 /// The design's string hash, so an avatar hue agrees with the web
 /// client.
-fn design_hash(text: &str) -> u32 {
+pub(crate) fn design_hash(text: &str) -> u32 {
     let mut x: i32 = 0;
     for unit in text.encode_utf16() {
         x = x.wrapping_mul(31).wrapping_add(i32::from(unit));
     }
     x.unsigned_abs()
-}
-
-/// The avatar: the name's first letter on the fill, in the name's hue.
-fn avatar(ui: &mut egui::Ui, name: &str, palette: &Palette) {
-    let hues = &palette.avatars;
-    let hue = match design_hash(name) % 8 {
-        0 => hues.amber,
-        1 => hues.rose,
-        2 => hues.orange,
-        3 => hues.emerald,
-        4 => hues.cyan,
-        5 => hues.sky,
-        6 => hues.violet,
-        _ => hues.pink,
-    };
-    let letter = name
-        .trim_start_matches("kage-")
-        .chars()
-        .next()
-        .map(|c| c.to_uppercase().to_string())
-        .unwrap_or_default();
-    egui::Frame::NONE
-        .fill(palette.fill)
-        .corner_radius(egui::CornerRadius::same(R_MD as u8))
-        .show(ui, |ui| {
-            ui.set_min_size(egui::vec2(26.0, 26.0));
-            ui.centered_and_justified(|ui| {
-                ui.label(
-                    egui::RichText::new(letter)
-                        .font(egui::FontId::new(12.0, family(FAMILY_MONO_BOLD)))
-                        .color(hue.fg),
-                );
-            });
-        });
 }
 
 /// The state label with its icon, in the state's color.
@@ -1702,6 +1668,8 @@ pub fn render_agents(
 /// The card an `agent` call renders as: avatar, name and kind, the
 /// task or the latest tool line, the state with elapsed time and
 /// tokens, a stop button while it runs, and the result once it ended.
+/// Painted at fixed heights, so it lays out the same in the measure
+/// pass and on screen.
 fn agent_card(
     ui: &mut egui::Ui,
     ix: usize,
@@ -1709,116 +1677,181 @@ fn agent_card(
     palette: &Palette,
     actions: &mut Vec<RowAction>,
 ) -> egui::Response {
+    let body = |size: f32| egui::FontId::new(size, family(FAMILY_BODY_REGULAR));
+    let line = 1.618;
+    let name_h = FS_SM * line;
+    let sub_h = FS_XS * line;
+    let head_h = (SP_4 + name_h + sub_h + SP_4).max(44.0);
+    let result = facts.result.as_ref().filter(|_| !facts.phase.live());
+    let result_h = if result.is_some() {
+        SP_4 + sub_h + SP_4
+    } else {
+        0.0
+    };
+    let width = ui.available_width();
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(width, head_h + result_h), egui::Sense::hover());
+    let radius = egui::CornerRadius::same(R_LG as u8);
+    ui.painter().rect_filled(rect, radius, palette.surface);
+    let head = egui::Rect::from_min_size(rect.min, egui::vec2(width, head_h));
+    let response = ui
+        .interact(head, ui.id().with(("agent-card", ix)), egui::Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &facts.name));
+    if response.hovered() {
+        let top = egui::CornerRadius {
+            nw: R_LG as u8,
+            ne: R_LG as u8,
+            sw: if result.is_some() { 0 } else { R_LG as u8 },
+            se: if result.is_some() { 0 } else { R_LG as u8 },
+        };
+        ui.painter().rect_filled(head, top, palette.hover);
+    }
+    let mid = head.center().y;
+    let tile = egui::Rect::from_min_size(
+        egui::pos2(head.left() + 12.0, mid - 13.0),
+        egui::vec2(26.0, 26.0),
+    );
+    crate::ui::agents::paint_avatar(ui, tile, &facts.name, palette);
+    let mut right = head.right() - 12.0;
+    let mut stop = false;
+    if facts.stoppable {
+        let at =
+            egui::Rect::from_min_size(egui::pos2(right - 24.0, mid - 12.0), egui::vec2(24.0, 24.0));
+        stop =
+            head::icon_button(ui, at, crate::icons::Icon::Square, "Stop agent", palette).clicked();
+        right = at.left() - 10.0;
+    } else {
+        let at =
+            egui::Rect::from_min_size(egui::pos2(right - 14.0, mid - 7.0), egui::vec2(14.0, 14.0));
+        crate::icons::themed_image(crate::icons::Icon::ChevronRight, 14.0, palette.faint)
+            .paint_at(ui, at);
+        right = at.left() - 10.0;
+    }
+    let color = facts.phase.color(palette);
+    let state = ui
+        .painter()
+        .layout_no_wrap(facts.phase.label().to_owned(), body(FS_XS), color);
+    let meta = ui
+        .painter()
+        .layout_no_wrap(meta_line(facts), mono(11.0), palette.faint);
+    let column_w = (12.0 + 5.0 + state.size().x).max(meta.size().x);
+    let text_top = mid - (name_h + sub_h) / 2.0;
+    let state_w = state.size().x;
+    ui.painter().galley(
+        egui::pos2(right - state_w, text_top + (name_h - state.size().y) / 2.0),
+        state,
+        color,
+    );
+    crate::icons::themed_image(facts.phase.icon(), 12.0, color).paint_at(
+        ui,
+        egui::Rect::from_min_size(
+            egui::pos2(right - state_w - 5.0 - 12.0, text_top + name_h / 2.0 - 6.0),
+            egui::vec2(12.0, 12.0),
+        ),
+    );
+    let meta_w = meta.size().x;
+    ui.painter().galley(
+        egui::pos2(
+            right - meta_w,
+            text_top + name_h + (sub_h - meta.size().y) / 2.0,
+        ),
+        meta,
+        palette.faint,
+    );
+    right -= column_w + 10.0;
+    let x = tile.right() + 10.0;
+    let (pill_bg, pill_fg, pill_text) = if facts.background {
+        (palette.accent_soft, palette.accent, "background")
+    } else {
+        (palette.fill, palette.muted, facts.name.as_str())
+    };
+    let pill = ui
+        .painter()
+        .layout_no_wrap(pill_text.to_owned(), body(11.0), pill_fg);
+    let pill_w = pill.size().x + 14.0;
+    let name = head::one_line(
+        ui,
+        facts.name.clone(),
+        egui::TextFormat::simple(
+            egui::FontId::new(FS_SM, family(crate::theme::FAMILY_BODY_SEMIBOLD)),
+            palette.ink_strong,
+        ),
+        (right - x - SP_4 - pill_w).max(0.0),
+    );
+    let name_w = name.size().x;
+    ui.painter().galley(
+        egui::pos2(x, text_top + (name_h - name.size().y) / 2.0),
+        name,
+        palette.ink_strong,
+    );
+    let pill_rect = egui::Rect::from_min_size(
+        egui::pos2(x + name_w + SP_4, text_top + name_h / 2.0 - 9.0),
+        egui::vec2(pill_w, 18.0),
+    );
+    ui.painter()
+        .rect_filled(pill_rect, egui::CornerRadius::same(9), pill_bg);
+    ui.painter()
+        .galley(pill_rect.center() - pill.size() / 2.0, pill, pill_fg);
     let sub = match (&facts.last, facts.phase.live()) {
         (Some(last), true) => last.clone(),
         _ => facts.task.clone(),
     };
-    let mut open = false;
-    let mut stop = false;
-    let response = egui::Frame::NONE
-        .fill(palette.surface)
-        .stroke(egui::Stroke::new(1.0, palette.line))
-        .corner_radius(egui::CornerRadius::same(R_LG as u8))
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            let head = clickable_row(ui, palette.hover, 0.0.into(), |ui| {
-                ui.spacing_mut().item_spacing.x = SP_4;
-                ui.add_space(SP_5);
-                ui.set_min_height(44.0);
-                avatar(ui, &facts.name, palette);
-                ui.add_space(SP_4);
-                ui.vertical(|ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = SP_4;
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(&facts.name)
-                                    .size(FS_SM)
-                                    .color(palette.ink_strong),
-                            )
-                            .selectable(false)
-                            .truncate(),
-                        );
-                        let (bg, fg, text) = if facts.background {
-                            (palette.accent_soft, palette.accent, "background")
-                        } else {
-                            (palette.fill, palette.muted, facts.name.as_str())
-                        };
-                        pill(ui, text, fg, bg, bg);
-                    });
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(&sub).size(FS_XS).color(palette.faint),
-                        )
-                        .truncate(),
-                    );
-                });
-                crate::ui::transcript::tool_rows::trailing(ui, |ui| {
-                    if facts.stoppable {
-                        ui.add_space(SP_4);
-                        let (at, _) = ui.allocate_exact_size(
-                            egui::vec2(head::ICON_BTN, head::ICON_BTN),
-                            egui::Sense::hover(),
-                        );
-                        if head::icon_button(
-                            ui,
-                            at,
-                            crate::icons::Icon::Square,
-                            "Stop agent",
-                            palette,
-                        )
-                        .clicked()
-                        {
-                            stop = true;
-                        }
-                    } else {
-                        ui.add_space(SP_4);
-                        icon(ui, crate::icons::Icon::ChevronRight, palette.faint);
-                    }
-                    ui.add_space(SP_4);
-                    ui.vertical(|ui| {
-                        ui.spacing_mut().item_spacing.y = SP_1;
-                        state_chip(ui, facts, palette);
-                        ui.label(
-                            egui::RichText::new(meta_line(facts))
-                                .font(mono(11.0))
-                                .color(palette.faint),
-                        );
-                    });
-                });
-            });
-            if head.clicked() {
-                open = true;
-            }
-            if let Some(result) = facts.result.as_ref().filter(|_| !facts.phase.live()) {
-                hairline(ui, palette);
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = SP_4;
-                    ui.add_space(SP_5);
-                    ui.set_min_height(20.0);
-                    let glyph = if facts.phase == Phase::Done {
-                        crate::icons::Icon::CircleCheck
-                    } else {
-                        crate::icons::Icon::CircleX
-                    };
-                    icon_xs(ui, glyph, facts.phase.color(palette));
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(result).size(FS_XS).color(palette.muted),
-                        )
-                        .truncate(),
-                    );
-                });
-            }
-        })
-        .response;
-    if open {
-        actions.push(RowAction::OpenAgent(facts.id.clone()));
+    let sub = head::one_line(
+        ui,
+        sub,
+        egui::TextFormat::simple(body(FS_XS), palette.faint),
+        (right - x).max(0.0),
+    );
+    ui.painter().galley(
+        egui::pos2(x, text_top + name_h + (sub_h - sub.size().y) / 2.0),
+        sub,
+        palette.faint,
+    );
+    if let Some(result) = result {
+        let band = egui::Rect::from_min_max(egui::pos2(rect.left(), head.bottom()), rect.max);
+        ui.painter().hline(
+            band.x_range(),
+            band.top() + 0.5,
+            egui::Stroke::new(1.0, palette.subtle),
+        );
+        let mid = band.center().y;
+        let glyph = if facts.phase == Phase::Done {
+            crate::icons::Icon::CircleCheck
+        } else {
+            crate::icons::Icon::CircleX
+        };
+        crate::icons::themed_image(glyph, 12.0, palette.muted).paint_at(
+            ui,
+            egui::Rect::from_min_size(
+                egui::pos2(band.left() + 12.0, mid - 6.0),
+                egui::vec2(12.0, 12.0),
+            ),
+        );
+        let x = band.left() + 12.0 + 12.0 + SP_4;
+        let text = head::one_line(
+            ui,
+            result.clone(),
+            egui::TextFormat::simple(body(FS_XS), palette.muted),
+            band.right() - 12.0 - x,
+        );
+        ui.painter().galley(
+            egui::pos2(x, mid - text.size().y / 2.0),
+            text,
+            palette.muted,
+        );
     }
+    ui.painter().rect_stroke(
+        rect,
+        radius,
+        egui::Stroke::new(1.0, palette.line),
+        egui::StrokeKind::Inside,
+    );
     if stop {
         actions.push(RowAction::CancelAgent(facts.id.clone()));
+    } else if response.clicked() {
+        actions.push(RowAction::OpenAgent(facts.id.clone()));
     }
-    let _ = ix;
     response
 }
 
