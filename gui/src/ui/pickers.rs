@@ -328,12 +328,14 @@ pub fn session_goal(session: Option<&kage_client::Session>) -> Option<String> {
 /// The mode rows the picker lists for `query`: every advertised
 /// permission mode but plan mode, narrowed by name and description.
 #[must_use]
-pub fn mode_rows(session: &kage_client::Session, query: &str) -> Vec<SessionConfigSelectOption> {
+pub fn mode_rows(
+    options: &[SessionConfigSelectOption],
+    query: &str,
+) -> Vec<SessionConfigSelectOption> {
     let needle = picker_query(query);
-    crate::modes::select_option(session, "mode")
-        .map(|option| option.options.clone())
-        .unwrap_or_default()
-        .into_iter()
+    options
+        .iter()
+        .cloned()
         .filter(|mode| mode.value != PLAN_MODE)
         .filter(|mode| {
             needle.is_empty()
@@ -346,6 +348,14 @@ pub fn mode_rows(session: &kage_client::Session, query: &str) -> Vec<SessionConf
                 .contains(&needle)
         })
         .collect()
+}
+
+/// The mode options of `session`, for the tests that build rows from one.
+#[cfg(test)]
+fn session_mode_options(session: &kage_client::Session) -> Vec<SessionConfigSelectOption> {
+    crate::modes::select_option(session, "mode")
+        .map(|option| option.options.clone())
+        .unwrap_or_default()
 }
 
 /// The thinking rows the picker lists for `query`: the thinking
@@ -460,7 +470,8 @@ mod tests {
     use super::{
         COMPACT_AT, COMPACT_CELL, KINDS, ModelRow, Section, compacts_soon, fallback_groups,
         fill_percent, flat_rows, gauge_cells, level_label, mode_rows, model_levels, model_sections,
-        picker_query, policy, provider_tile, step_highlight, thinking_rows, tokens, window_size,
+        picker_query, policy, provider_tile, session_mode_options, step_highlight, thinking_rows,
+        tokens, window_size,
     };
     use crate::modes::{next_mode_value, permission_values};
     use kage_client::Session;
@@ -608,11 +619,12 @@ mod tests {
                     value("ask", "Ask"),
                 ],
             });
-        let rows = mode_rows(&session, "");
+        let rows = mode_rows(&session_mode_options(&session), "");
         assert_eq!(rows.len(), 2, "plan mode has its own chip");
         assert_eq!(rows[0].value, "default");
-        assert_eq!(mode_rows(&session, "as").len(), 1);
-        assert_eq!(mode_rows(&session, "plan").len(), 0);
+        let options = session_mode_options(&session);
+        assert_eq!(mode_rows(&options, "as").len(), 1);
+        assert_eq!(mode_rows(&options, "plan").len(), 0);
         assert_eq!(permission_values(&session).len(), 2);
         assert_eq!(next_mode_value(&session, "default").as_deref(), Some("ask"));
         assert_eq!(next_mode_value(&session, "ask").as_deref(), Some("default"));

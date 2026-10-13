@@ -1324,7 +1324,7 @@ impl ShellApp {
                 }
                 crate::ui::workbench::WorkbenchEvent::AskFiles => {
                     if let Some(id) = self.shell.store.active_id().map(str::to_owned) {
-                        self.shell.store.fs_list(&id);
+                        self.shell.store.fs_list("");
                         self.shell.workbench.mark_listing_asked(&id);
                     }
                 }

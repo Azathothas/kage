@@ -751,9 +751,6 @@ fn mode_button(
     if !open {
         return Some(());
     }
-    let Some(session_id) = store.active_id().map(str::to_owned) else {
-        return Some(());
-    };
     let (at, pivot) = picker_anchor(ui.ctx(), response.rect, MODE_PICKER_H);
     let card = egui::Window::new("mode-picker")
         .title_bar(false)
@@ -779,11 +776,7 @@ fn mode_button(
                 if query.gained_focus() {
                     toolbar.mode_query().clear();
                 }
-                let rows = store
-                    .active_session()
-                    .filter(|session| session.id == session_id)
-                    .map(|session| pickers::mode_rows(session, &toolbar.mode_query().clone()))
-                    .unwrap_or_default();
+                let rows = pickers::mode_rows(&option.options, &toolbar.mode_query().clone());
                 let total = rows.len();
                 let highlight = toolbar.mode_highlight();
                 for (index, row) in rows.iter().enumerate() {
