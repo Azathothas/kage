@@ -401,6 +401,27 @@ impl Palette {
         let selected = self.selected;
         let mut run = None;
         let mut backdrop_clicked = false;
+        let (up, down, enter, escape) = ui.input(|input| {
+            (
+                input.key_pressed(egui::Key::ArrowUp),
+                input.key_pressed(egui::Key::ArrowDown),
+                input.key_pressed(egui::Key::Enter),
+                input.key_pressed(egui::Key::Escape),
+            )
+        });
+        if escape {
+            self.close();
+            return None;
+        }
+        if up {
+            self.move_selection(-1, rows.len());
+        }
+        if down {
+            self.move_selection(1, rows.len());
+        }
+        if enter && !rows.is_empty() {
+            run = Some(self.selected);
+        }
         let mut query_before = self.query.clone();
         egui::Area::new(egui::Id::new("kage-palette"))
             .anchor(egui::Align2::LEFT_TOP, egui::Vec2::ZERO)

@@ -15,7 +15,6 @@ fn harness() -> Harness<'static, (Store, Palette, Option<PaletteEntry>, bool)> {
                 if testutil::theme_installed(installed, ui.ctx()) {
                     return;
                 }
-                palette.open();
                 let rows = kage_desktop::ui::palette::RegistryOwned::of(store).view().rows(palette.query());
                 *chosen = palette.show(ui, &rows).or(chosen.take());
             },
@@ -26,6 +25,7 @@ fn harness() -> Harness<'static, (Store, Palette, Option<PaletteEntry>, bool)> {
 #[test]
 fn the_palette_lists_the_global_commands_without_a_session() {
     let mut harness = harness();
+    harness.state_mut().1.open();
     harness.run();
     harness.run();
     for label in ["Settings", "Toggle sidebar", "Toggle workbench", "Change theme"] {
@@ -36,3 +36,26 @@ fn the_palette_lists_the_global_commands_without_a_session() {
     }
 }
 
+
+#[test]
+fn enter_runs_the_filtered_row_and_closes_the_palette() {
+    use kage_desktop::ui::palette::Action;
+    let mut harness = harness();
+    harness.run();
+    harness.run();
+    harness.state_mut().1.open();
+    harness.state_mut().1.set_query("settings".to_owned());
+    harness.run();
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    harness.run();
+    assert!(
+        matches!(
+            harness.state().2,
+            Some(PaletteEntry::Action { action: Action::Settings, .. })
+        ),
+        "Enter returns the Settings row: {:?}",
+        harness.state().2
+    );
+    assert!(!harness.state().1.is_open(), "running a row closes the palette");
+}
