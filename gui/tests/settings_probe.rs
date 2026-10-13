@@ -213,52 +213,36 @@ fn the_providers_page_reads_the_snapshot_and_the_session() {
     harness.run();
     harness.run();
     assert_eq!(
-        testutil::count(&harness, "Providers \u{b7} 3"),
+        testutil::count(&harness, "Ready \u{b7} 3"),
         1,
-        "the page counts its rows"
+        "the page counts the providers it lists"
     );
-    assert_eq!(
-        testutil::count(&harness, "lab  openai  config.toml  key from LAB_KEY"),
-        1,
-        "the custom provider's row draws"
-    );
-    assert_eq!(
-        testutil::count(&harness, "http://lab:8080 \u{b7} 1 model"),
-        1,
-        "the custom provider's endpoint and model count draw"
-    );
-    assert_eq!(
-        testutil::count(&harness, "deepseek  key from DS"),
-        1,
-        "the override's row draws"
-    );
-    assert_eq!(
-        testutil::count(&harness, "no models listed \u{b7} headers: X-Org"),
-        1,
-        "a provider with no models says so"
-    );
+    for provider in ["lab", "anthropic", "deepseek"] {
+        assert_eq!(
+            testutil::count(&harness, provider),
+            1,
+            "the {provider} row draws"
+        );
+    }
 }
 
 #[test]
-fn the_mcp_page_shows_the_transport_and_the_live_status() {
+fn the_mcp_page_lists_the_configured_servers() {
     let mut harness = harness_for(configured());
     harness.state_mut().1.open(Section::Mcp);
     harness.run();
     harness.run();
+    for server in ["lab", "web"] {
+        assert_eq!(
+            testutil::count(&harness, server),
+            1,
+            "the {server} server's row draws"
+        );
+    }
     assert_eq!(
-        testutil::count(&harness, "lab-mcp --port 9"),
+        testutil::count(&harness, "Add server"),
         1,
-        "the stdio server's command line draws"
-    );
-    assert_eq!(
-        testutil::count(&harness, "https://mcp.example.com"),
-        1,
-        "the http server's url draws"
-    );
-    assert_eq!(
-        testutil::count(&harness, "lab  stdio  status unknown"),
-        1,
-        "an unreported server reads status unknown"
+        "the page offers to add one"
     );
 }
 
@@ -279,12 +263,14 @@ fn the_permissions_page_shows_the_modes_and_the_rules() {
         "the plan mode is not a card"
     );
     assert_eq!(
-        testutil::count(
-            &harness,
-            "default ask \u{b7} allow cargo * \u{b7} deny rm *"
-        ),
+        testutil::count(&harness, "shell"),
         1,
         "the configured tool rule draws"
+    );
+    assert_eq!(
+        testutil::count(&harness, "Confine file tools to the working directory"),
+        1,
+        "the path confinement switch draws"
     );
 }
 
@@ -294,20 +280,15 @@ fn the_plugins_page_lists_the_configured_plugins() {
     harness.state_mut().1.open(Section::Plugins);
     harness.run();
     harness.run();
+    for row in ["Plugin directory", "Loaded plugins", "lab", "web"] {
+        assert_eq!(testutil::count(&harness, row), 1, "the {row} row draws");
+    }
+    harness.get_by_label("lab").click();
+    harness.run();
     assert_eq!(
-        testutil::count(&harness, "/plug"),
+        testutil::count(&harness, "net"),
         1,
-        "the plugin directory draws"
-    );
-    assert_eq!(
-        testutil::count(&harness, "Only these load: lab"),
-        1,
-        "the allowlist draws"
-    );
-    assert_eq!(
-        testutil::count(&harness, "lab  net"),
-        1,
-        "the plugin's grants draw"
+        "an opened plugin lists the capabilities it may be granted"
     );
 }
 
@@ -408,7 +389,12 @@ fn an_empty_archive_says_so() {
     );
 }
 
-fn option(name: &str, kind: &str, value: serde_json::Value, extra: serde_json::Value) -> serde_json::Value {
+fn option(
+    name: &str,
+    kind: &str,
+    value: serde_json::Value,
+    extra: serde_json::Value,
+) -> serde_json::Value {
     let mut entry = serde_json::json!({
         "name": name,
         "toml": format!("agent.{name}"),
@@ -454,5 +440,9 @@ fn the_agent_page_draws_the_engine_options() {
         harness.query_all_by_label("Max depth").count() > 0,
         "the page draws the engine's agent options"
     );
-    harness.render().expect("renders").save("/tmp/settings-agents.png").expect("save");
+    harness
+        .render()
+        .expect("renders")
+        .save("/tmp/settings-agents.png")
+        .expect("save");
 }

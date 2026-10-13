@@ -2,17 +2,22 @@
 //! snapshot: model providers, MCP servers, permissions and plugins.
 //!
 //! The pages say only what the snapshot and the live session carry. A
-//! fact the snapshot leaves out reads unknown rather than guessed, and
-//! nothing here writes config: the engine has no write method yet, so
-//! the controls that would need one are left out.
+//! fact the snapshot leaves out reads unknown rather than guessed. Edits
+//! go to the engine through `_kage/config/set`, and the snapshot it
+//! answers with redraws the page.
 
 use std::collections::BTreeMap;
 
 use kage_client::wire::{McpServerStatus, SessionConfigOption};
 use serde::Deserialize;
 
-use crate::theme::{FAMILY_MONO_REGULAR, FS_SM, FS_XS, Palette, R_FULL, R_LG, family};
-use crate::ui::settings::SettingsEvent;
+use crate::store::Store;
+use crate::theme::{
+    FAMILY_BODY_BOLD, FAMILY_BODY_MEDIUM, FAMILY_BODY_REGULAR, FAMILY_BODY_SEMIBOLD,
+    FAMILY_MONO_REGULAR, FS_SM, FS_XS, Palette, R_LG, R_MD, family,
+};
+use crate::ui::provider_form::Target;
+use crate::ui::settings::{SettingsEvent, boxed, note};
 
 /// The parts of the snapshot the pages read. Every field defaults, so a
 /// section the engine leaves out reads as empty.
@@ -23,58 +28,21 @@ pub struct Snapshot {
     mcp: Mcp,
     permissions: Permissions,
     plugins: Plugins,
+    #[serde(rename = "installedPlugins")]
+    installed_plugins: Vec<InstalledPlugin>,
+    #[serde(rename = "providerKeys")]
+    provider_keys: BTreeMap<String, KeyState>,
     acp: Acp,
-}
-
-impl Snapshot {
-    /// Reads a snapshot answer; one that does not parse is empty.
-    #[must_use]
-    pub fn parse(value: &serde_json::Value) -> Self {
-        serde_json::from_value(value.clone()).unwrap_or_default()
-    }
-
-    /// Whether the snapshot carries no servers at all.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.mcp.servers.is_empty() && self.providers.custom.is_empty()
-    }
-
-    /// Where provider `id` finds its key, when the snapshot says.
-    #[must_use]
-    pub fn key_state(&self, id: &str) -> Option<&KeyState> {
-        self.providers.keys.get(id)
-    }
-
-    /// The ids of the providers config.toml defines whole.
-    #[must_use]
-    pub fn providers_custom(&self) -> Vec<String> {
-        self.providers.custom.keys().cloned().collect()
-    }
-
-    /// The ids of the providers config.toml only overrides.
-    #[must_use]
-    pub fn providers_overrides(&self) -> Vec<String> {
-        self.providers
-            .overrides
-            .keys()
-            .filter(|id| *id != "custom")
-            .cloned()
-            .collect()
-    }
 }
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
-struct Providers {
-    custom: BTreeMap<String, CustomProvider>,
-    #[serde(flatten)]
-    overrides: BTreeMap<String, ProviderOverride>,
-    #[serde(rename = "providerKeys")]
-    keys: BTreeMap<String, KeyState>,
+struct Acp {
+    agents: BTreeMap<String, AcpAgent>,
 }
 
-/// One external ACP agent as the snapshot configures it.
-#[derive(Debug, Default, Clone, Deserialize)]
+/// One `[acp.agents.<name>]` entry as the snapshot shows it.
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct AcpAgent {
     /// The executable that starts the agent.
@@ -94,6 +62,60 @@ pub struct KeyState {
     pub env: String,
     /// `env`, `auth`, `missing` or `unneeded`.
     pub source: String,
+    /// A display name the engine knows for the id, when it has one.
+    pub name: Option<String>,
+}
+
+impl Snapshot {
+    /// Reads a snapshot answer; one that does not parse is empty.
+    #[must_use]
+    pub fn parse(value: &serde_json::Value) -> Self {
+        serde_json::from_value(value.clone()).unwrap_or_default()
+    }
+
+    /// Where provider `id` finds its key, when the snapshot says.
+    #[must_use]
+    pub fn key_state(&self, id: &str) -> Option<&KeyState> {
+        self.provider_keys.get(id)
+    }
+
+    /// The providers kage registers itself, by id: the ones a key makes
+    /// usable without defining them.
+    pub fn registered(&self) -> impl Iterator<Item = &str> {
+        self.provider_keys
+            .keys()
+            .map(String::as_str)
+            .filter(|id| !self.providers.custom.contains_key(*id))
+    }
+
+    /// The name a row or chip shows for provider `id`: what the
+    /// engine's snapshot calls it, else the id itself.
+    #[must_use]
+    pub fn provider_name(&self, id: &str) -> String {
+        self.key_state(id)
+            .and_then(|key| key.name.clone())
+            .unwrap_or_else(|| id.to_owned())
+    }
+
+    /// The ACP agent configured as `name`.
+    #[must_use]
+    pub fn acp_agent(&self, name: &str) -> Option<&AcpAgent> {
+        self.acp.agents.get(name)
+    }
+
+    /// The MCP server configured as `name`.
+    #[must_use]
+    pub fn mcp_server(&self, name: &str) -> Option<&McpServer> {
+        self.mcp.servers.get(name)
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct Providers {
+    custom: BTreeMap<String, CustomProvider>,
+    #[serde(flatten)]
+    overrides: BTreeMap<String, ProviderOverride>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -130,8 +152,8 @@ struct Mcp {
     allow_sampling: bool,
 }
 
-/// One MCP server as the snapshot configures it.
-#[derive(Debug, Default, Clone, Deserialize)]
+/// One `[mcp.servers.<name>]` entry as the snapshot shows it.
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct McpServer {
     /// The command that starts a stdio server.
@@ -152,51 +174,6 @@ pub struct McpServer {
     pub disabled_tools: Vec<String>,
 }
 
-impl Snapshot {
-    /// The MCP server `name` the snapshot configures, when it does.
-    #[must_use]
-    pub fn mcp_server(&self, name: &str) -> Option<&McpServer> {
-        self.mcp.servers.get(name)
-    }
-
-    /// Whether MCP servers may run completions on the default model.
-    #[must_use]
-    pub fn mcp_allow_sampling(&self) -> bool {
-        self.mcp.allow_sampling
-    }
-
-    /// The plugin directory the snapshot names.
-    #[must_use]
-    pub fn plugin_dir(&self) -> Option<&str> {
-        self.plugins.dir.as_deref()
-    }
-
-    /// The plugin names the allowlist keeps.
-    #[must_use]
-    pub fn plugin_enabled(&self) -> &[String] {
-        &self.plugins.enabled
-    }
-
-    /// Whether file tools are confined to the working directory.
-    #[must_use]
-    pub fn confine_paths(&self) -> bool {
-        self.permissions.confine_paths
-    }
-
-    /// The external ACP agent `name` the snapshot configures, when it
-    /// does.
-    #[must_use]
-    pub fn acp_agent(&self, name: &str) -> Option<&AcpAgent> {
-        self.acp.agents.get(name)
-    }
-
-    /// The ACP agents the snapshot configures, by name.
-    #[must_use]
-    pub fn acp_agents(&self) -> &BTreeMap<String, AcpAgent> {
-        &self.acp.agents
-    }
-}
-
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 struct Permissions {
@@ -205,13 +182,7 @@ struct Permissions {
     mcp: BTreeMap<String, String>,
 }
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-struct Acp {
-    agents: BTreeMap<String, AcpAgent>,
-}
-
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 struct ToolRules {
     default: String,
@@ -226,6 +197,13 @@ struct Plugins {
     enabled: Vec<String>,
     capabilities: BTreeMap<String, Vec<String>>,
     config: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+struct InstalledPlugin {
+    name: String,
+    enabled: bool,
 }
 
 /// One provider row: a configured one, or one the session's model
@@ -278,7 +256,8 @@ pub fn provider_rows(snapshot: &Snapshot, model: Option<&SessionConfigOption>) -
         .map(|option| option.options.as_slice())
         .unwrap_or_default();
     for choice in offered {
-        let Some((provider, _)) = choice.value.split_once(':') else {
+        // `provider/model`, or the older `provider:model`.
+        let Some(provider) = choice.value.find(['/', ':']).map(|at| &choice.value[..at]) else {
             continue;
         };
         let name = choice.name.clone();
@@ -287,7 +266,7 @@ pub fn provider_rows(snapshot: &Snapshot, model: Option<&SessionConfigOption>) -
             Some(row) => row.models.push(name),
             None => rows.push(ProviderRow {
                 id: provider.to_owned(),
-                label: provider.to_owned(),
+                label: snapshot.provider_name(provider),
                 protocol: None,
                 base_url: None,
                 key_env: None,
@@ -306,7 +285,7 @@ pub fn provider_rows(snapshot: &Snapshot, model: Option<&SessionConfigOption>) -
             None => {
                 rows.push(ProviderRow {
                     id: id.clone(),
-                    label: id.clone(),
+                    label: snapshot.provider_name(id),
                     protocol: None,
                     base_url: None,
                     key_env: None,
@@ -325,201 +304,129 @@ pub fn provider_rows(snapshot: &Snapshot, model: Option<&SessionConfigOption>) -
         }
         row.headers.extend(over.headers.keys().cloned());
     }
-    rows
-}
-
-/// The MCP servers the snapshot carries, with the live status the
-/// active session reports, as one row per server.
-#[must_use]
-pub fn mcp_rows(snapshot: &Snapshot, live: &BTreeMap<String, McpServerStatus>) -> Vec<McpRow> {
-    let mut rows: Vec<McpRow> = Vec::new();
-    for (name, server) in &snapshot.mcp.servers {
-        let transport = if server.url.is_some() {
-            "http"
-        } else {
-            "stdio"
-        };
-        let status = match (server.disabled, live.get(name)) {
-            (true, _) => McpStatus::Disabled,
-            (false, Some(McpServerStatus::Connected)) => McpStatus::Connected,
-            (false, Some(McpServerStatus::Failed { .. })) => McpStatus::Failed,
-            (false, Some(McpServerStatus::NeedsAuth)) => McpStatus::NeedsAuth,
-            (false, Some(McpServerStatus::Starting)) => McpStatus::Starting,
-            (false, None) => McpStatus::Unknown,
-        };
-        let target = match (&server.url, &server.command) {
-            (Some(url), _) => url.clone(),
-            (None, Some(command)) => std::iter::once(command.clone())
-                .chain(server.args.iter().cloned())
-                .collect::<Vec<_>>()
-                .join(" "),
-            (None, None) => "no command or url".to_owned(),
-        };
-        let mut extras: Vec<String> = Vec::new();
-        if !server.env.is_empty() {
-            extras.push(format!(
-                "env: {}",
-                server.env.keys().cloned().collect::<Vec<_>>().join(", ")
-            ));
+    // A provider kage registers is usable once its key is somewhere.
+    for (id, key) in &snapshot.provider_keys {
+        if matches!(key.source.as_str(), "env" | "auth") && !rows.iter().any(|row| &row.id == id) {
+            rows.push(ProviderRow {
+                id: id.clone(),
+                label: id.clone(),
+                protocol: None,
+                base_url: None,
+                key_env: Some(key.env.clone()),
+                headers: Vec::new(),
+                models: Vec::new(),
+                custom: false,
+            });
         }
-        if !server.headers.is_empty() {
-            extras.push(format!(
-                "headers: {}",
-                server
-                    .headers
-                    .keys()
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-        }
-        if server.oauth.is_some() {
-            extras.push("OAuth".to_owned());
-        }
-        if let Some(McpServerStatus::Failed { error }) = live.get(name) {
-            extras.push(error.clone());
-        }
-        rows.push(McpRow {
-            name: name.clone(),
-            transport: transport.to_owned(),
-            status,
-            target,
-            extras,
-        });
     }
     rows
 }
 
-/// One MCP server row: the name, its transport, its live status and
-/// what it connects to.
+/// What is being added to the permission rules while the shared text
+/// field shows.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct McpRow {
-    /// The server's name in config.toml.
-    pub name: String,
-    /// The transport it speaks: `http` or `stdio`.
-    pub transport: String,
-    /// What the session last reported about it.
-    pub status: McpStatus,
-    /// The command line or URL it connects to.
-    pub target: String,
-    /// The names of its environment and headers, OAuth, and any error.
-    pub extras: Vec<String>,
+pub enum RuleAdd {
+    /// A rule for a tool, named in the field.
+    Tool,
+    /// A glob on tool `tool`'s allow list, or its deny list.
+    Glob {
+        /// The tool the rule is for.
+        tool: String,
+        /// Whether the glob refuses instead of allowing.
+        deny: bool,
+    },
 }
 
-/// What the session last reported about an MCP server.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum McpStatus {
-    /// The server is live.
-    Connected,
-    /// The server is starting.
-    Starting,
-    /// The server failed to start or its transport died.
-    Failed,
-    /// The server needs an OAuth login.
-    NeedsAuth,
-    /// The config disables the server.
-    Disabled,
-    /// No session reported a status.
-    Unknown,
-}
+/// The actions a rule's default may take.
+const ACTIONS: [&str; 3] = ["allow", "ask", "deny"];
 
-impl McpStatus {
-    /// The word the row shows.
-    #[must_use]
-    pub fn word(self) -> &'static str {
-        match self {
-            McpStatus::Connected => "connected",
-            McpStatus::Starting => "starting",
-            McpStatus::Failed => "failed",
-            McpStatus::NeedsAuth => "needs auth",
-            McpStatus::Disabled => "disabled",
-            McpStatus::Unknown => "status unknown",
-        }
+/// The config path and value an added `text` writes, read against the
+/// snapshot `config`: a new tool rule that asks, or the tool's rule with
+/// one more glob. `None` when `text` is blank.
+pub fn rule_added(
+    config: &serde_json::Value,
+    add: &RuleAdd,
+    text: &str,
+) -> Option<(Vec<String>, serde_json::Value)> {
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
     }
-}
-
-/// The permission mode cards the session offers, with the plan mode
-/// taken out, as the settings page draws them.
-#[must_use]
-pub fn mode_cards(modes: Option<&SessionConfigOption>, current: Option<&str>) -> Vec<ModeCard> {
-    let Some(option) = modes else {
-        return Vec::new();
+    let path = |tool: &str| {
+        vec![
+            "permissions".to_owned(),
+            "tools".to_owned(),
+            tool.to_owned(),
+        ]
     };
-    option
-        .options
-        .iter()
-        .filter(|choice| choice.value != crate::modes::PLAN_MODE)
-        .map(|choice| ModeCard {
-            value: choice.value.clone(),
-            name: choice.name.clone(),
-            description: choice.description.clone(),
-            on: current == Some(choice.value.as_str()),
-        })
-        .collect()
+    match add {
+        RuleAdd::Tool => Some((path(text), serde_json::json!({ "default": "ask" }))),
+        RuleAdd::Glob { tool, deny } => {
+            let snapshot = Snapshot::parse(config);
+            let mut rule = snapshot
+                .permissions
+                .tools
+                .get(tool)
+                .cloned()
+                .unwrap_or_default();
+            let list = if *deny {
+                &mut rule.deny
+            } else {
+                &mut rule.allow
+            };
+            if !list.iter().any(|glob| glob == text) {
+                list.push(text.to_owned());
+            }
+            Some((path(tool), rule_json(&rule)))
+        }
+    }
 }
 
-/// One permission mode card.
+/// `rule` as `[permissions.tools.<tool>]` holds it.
+fn rule_json(rule: &ToolRules) -> serde_json::Value {
+    serde_json::json!({
+        "default": if rule.default.is_empty() { "allow" } else { rule.default.as_str() },
+        "allow": rule.allow,
+        "deny": rule.deny,
+    })
+}
+
+/// The capabilities `[plugins.capabilities]` may grant, as kage-plugin
+/// names them.
+const CAPABILITIES: [&str; 8] = [
+    "session_write",
+    "exec",
+    "env",
+    "net",
+    "crypto",
+    "context",
+    "provider",
+    "fs_write",
+];
+
+/// One plugin as the Plugins page lists it.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ModeCard {
-    /// The value sent back to the engine.
-    pub value: String,
-    /// The card's title.
+pub struct PluginRow {
+    /// The plugin's name, its file stem.
     pub name: String,
-    /// The card's explanation, when the engine offers one.
-    pub description: Option<String>,
-    /// Whether this is the session's current mode.
-    pub on: bool,
+    /// The capabilities config.toml grants it.
+    pub caps: Vec<String>,
+    /// Whether it loads, whether it has grants and whether it has
+    /// settings.
+    pub detail: String,
+    /// Whether the allowlist lets it load; `None` when no file is
+    /// installed under the name.
+    pub enabled: Option<bool>,
 }
 
-/// The tool rules the snapshot carries, as one row per tool and one per
-/// MCP server rule.
-#[must_use]
-pub fn rule_rows(snapshot: &Snapshot) -> Vec<RuleRow> {
-    let mut rows: Vec<RuleRow> = Vec::new();
-    for (tool, rule) in &snapshot.permissions.tools {
-        rows.push(RuleRow {
-            tool: tool.clone(),
-            action: rule.default.clone(),
-            allow: rule.allow.clone(),
-            deny: rule.deny.clone(),
-        });
-    }
-    for (server, action) in &snapshot.permissions.mcp {
-        let label = if server == "*" {
-            "every MCP server".to_owned()
-        } else {
-            format!("mcp: {server}")
-        };
-        rows.push(RuleRow {
-            tool: label,
-            action: action.clone(),
-            allow: Vec::new(),
-            deny: Vec::new(),
-        });
-    }
-    rows
-}
-
-/// One tool rule row: the tool, its default action and its globs.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RuleRow {
-    /// The tool the rule names.
-    pub tool: String,
-    /// What no glob matches does: `allow`, `ask` or `deny`.
-    pub action: String,
-    /// The globs that always pass.
-    pub allow: Vec<String>,
-    /// The globs that always refuse.
-    pub deny: Vec<String>,
-}
-
-/// The plugins the snapshot configures, as one row per plugin.
-#[must_use]
-pub fn plugin_rows(snapshot: &Snapshot) -> Vec<PluginRow> {
+/// Every plugin installed or named in the config, by name.
+fn plugin_rows(snapshot: &Snapshot) -> Vec<PluginRow> {
     let plugins = &snapshot.plugins;
-    let mut names: Vec<&String> = plugins
-        .capabilities
-        .keys()
+    let mut names: Vec<&String> = snapshot
+        .installed_plugins
+        .iter()
+        .map(|plugin| &plugin.name)
+        .chain(plugins.capabilities.keys())
         .chain(plugins.config.keys())
         .collect();
     names.sort();
@@ -528,148 +435,806 @@ pub fn plugin_rows(snapshot: &Snapshot) -> Vec<PluginRow> {
         .into_iter()
         .map(|name| {
             let caps = plugins.capabilities.get(name).cloned().unwrap_or_default();
+            let enabled = snapshot
+                .installed_plugins
+                .iter()
+                .find(|plugin| &plugin.name == name)
+                .map(|plugin| plugin.enabled);
+            let state = match enabled {
+                Some(true) => "loads",
+                Some(false) => "skipped by the allowlist",
+                None => "not installed",
+            };
+            let detail = [
+                Some(state),
+                (!caps.is_empty()).then_some("capabilities granted in config.toml"),
+                plugins.config.contains_key(name).then_some("has settings"),
+            ]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" \u{b7} ");
             PluginRow {
                 name: name.clone(),
                 caps,
-                has_settings: plugins.config.contains_key(name),
+                detail,
+                enabled,
             }
         })
         .collect()
 }
 
-/// One configured plugin: its name, its grants and whether it has
-/// settings.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PluginRow {
-    /// The plugin's name.
-    pub name: String,
-    /// The capabilities config.toml grants it.
-    pub caps: Vec<String>,
-    /// Whether the snapshot carries settings for it.
-    pub has_settings: bool,
+/// The `[plugins] enabled` allowlist after turning plugin `name` on or
+/// off. An empty list loads every plugin, so turning one off lists every
+/// other installed plugin; names the list holds stay. `None` when the
+/// list would end up empty, which would load every plugin instead of
+/// none.
+fn toggled_allowlist(snapshot: &Snapshot, name: &str, on: bool) -> Option<Vec<String>> {
+    let mut list = if snapshot.plugins.enabled.is_empty() {
+        snapshot
+            .installed_plugins
+            .iter()
+            .map(|plugin| plugin.name.clone())
+            .collect()
+    } else {
+        snapshot.plugins.enabled.clone()
+    };
+    list.retain(|entry| entry != name);
+    if on {
+        list.push(name.to_owned());
+    }
+    list.sort();
+    (!list.is_empty()).then_some(list)
 }
 
-/// The Model Providers page.
+/// What the config pages edit in place: the provider chooser, the
+/// rule being added, and the plugin install field and its outcome.
+#[derive(Debug, Default)]
+pub struct PageState {
+    /// Whether the Providers page shows the providers to add from.
+    pub choosing: bool,
+    /// What the rule field adds, while it shows.
+    pub adding: Option<RuleAdd>,
+    /// The text the rule field holds.
+    pub rule_text: String,
+    /// The plugin install field's text, while it shows.
+    pub plugin_input: Option<String>,
+    /// The install in flight, by write id.
+    pub plugin_install: Option<u64>,
+    /// The plugin whose grants show.
+    pub plugin_open: Option<String>,
+}
+
+/// The tone a badge or chip paints in: its text, fill and border.
+#[derive(Debug, Clone, Copy)]
+struct Tone {
+    fg: egui::Color32,
+    bg: egui::Color32,
+    line: egui::Color32,
+}
+
+impl Tone {
+    /// The neutral badge: muted text over the soft fill.
+    fn plain(palette: &Palette) -> Self {
+        Self {
+            fg: palette.muted,
+            bg: palette.fill,
+            line: palette.line,
+        }
+    }
+
+    fn ok(palette: &Palette) -> Self {
+        Self {
+            fg: palette.ok,
+            bg: palette.ok_soft,
+            line: palette.ok_bd,
+        }
+    }
+
+    fn warn(palette: &Palette) -> Self {
+        Self {
+            fg: palette.warn,
+            bg: palette.warn_soft,
+            line: palette.warn_bd,
+        }
+    }
+
+    fn danger(palette: &Palette) -> Self {
+        Self {
+            fg: palette.danger,
+            bg: palette.danger_soft,
+            line: palette.danger_bd,
+        }
+    }
+}
+
+/// One piece of a list row's name line.
+enum Part {
+    /// Text in the body face.
+    Text(String),
+    /// Text in the mono face, as names and paths read.
+    Mono(String),
+    /// A rounded badge in its tone.
+    Badge(String, Tone),
+}
+
+/// What a list row leads with.
+enum Lead {
+    /// The two-letter tile of a provider without a logo.
+    Initials(String),
+    /// A faint icon.
+    Icon(crate::icons::Icon),
+    /// A status dot.
+    Dot(egui::Color32),
+}
+
+/// What a list row trails with.
+enum Trail {
+    /// Nothing.
+    None,
+    /// A badge.
+    Badge(String, Tone),
+    /// Quiet text, cut at 240px.
+    Faint(String),
+    /// Mono text in the ink.
+    Mono(String),
+    /// A switch, dimmed when it cannot flip.
+    Switch { on: bool, live: bool },
+}
+
+/// What a click on a list row hit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Hit {
+    Nothing,
+    Row,
+    Switch,
+}
+
+/// The reference's text line height, as a multiple of the size.
+const LINE: f32 = 1.618;
+
+/// Paints a badge with its left edge at `at.x`, centered on `at.y`, and
+/// gives back where it landed.
+fn paint_badge(ui: &egui::Ui, at: egui::Pos2, text: &str, mono: bool, tone: Tone) -> egui::Rect {
+    let face = if mono {
+        FAMILY_MONO_REGULAR
+    } else {
+        FAMILY_BODY_MEDIUM
+    };
+    let galley = ui.painter().layout_no_wrap(
+        text.to_owned(),
+        egui::FontId::new(10.5, family(face)),
+        tone.fg,
+    );
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(at.x, at.y - 9.0),
+        egui::vec2(galley.size().x + 16.0, 18.0),
+    );
+    let radius = egui::CornerRadius::same(9);
+    ui.painter().rect_filled(rect, radius, tone.bg);
+    ui.painter().rect_stroke(
+        rect,
+        radius,
+        egui::Stroke::new(1.0, tone.line),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, tone.fg);
+    rect
+}
+
+/// The width a badge of `text` takes.
+fn badge_width(ui: &egui::Ui, text: &str, mono: bool) -> f32 {
+    let face = if mono {
+        FAMILY_MONO_REGULAR
+    } else {
+        FAMILY_BODY_MEDIUM
+    };
+    ui.painter()
+        .layout_no_wrap(
+            text.to_owned(),
+            egui::FontId::new(10.5, family(face)),
+            egui::Color32::WHITE,
+        )
+        .size()
+        .x
+        + 16.0
+}
+
+/// One list row: its lead, a name line with badges, an optional detail
+/// line, and its trailing fact. Clickable rows hover with the soft
+/// fill; the switch answers on its own.
+fn list_row(
+    ui: &mut egui::Ui,
+    id: &str,
+    lead: &Lead,
+    name: &[Part],
+    detail: Option<&str>,
+    trail: &Trail,
+    clickable: bool,
+    palette: &Palette,
+) -> Hit {
+    let name_h = FS_SM * LINE;
+    let detail_h = if detail.is_some() { FS_XS * LINE } else { 0.0 };
+    let height = 10.0
+        + name_h
+        + if detail.is_some() {
+            2.0 + detail_h
+        } else {
+            0.0
+        }
+        + 10.0;
+    let sense = if clickable {
+        egui::Sense::click()
+    } else {
+        egui::Sense::hover()
+    };
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), height.max(28.0 + 20.0)),
+        sense,
+    );
+    let label: String = name
+        .iter()
+        .map(|part| match part {
+            Part::Text(text) | Part::Mono(text) => text.as_str(),
+            Part::Badge(..) => "",
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            if clickable {
+                egui::WidgetType::Button
+            } else {
+                egui::WidgetType::Label
+            },
+            true,
+            label.trim(),
+        )
+    });
+    if clickable && response.hovered() {
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::ZERO, palette.fill_hover);
+    }
+    crate::ui::settings::row_rule(ui, rect, palette);
+    let mid = rect.center().y;
+    let mut x = rect.left() + 16.0;
+    match lead {
+        Lead::Initials(text) => {
+            let tile = egui::Rect::from_min_size(egui::pos2(x, mid - 14.0), egui::vec2(28.0, 28.0));
+            ui.painter()
+                .rect_filled(tile, egui::CornerRadius::same(8), palette.fill);
+            ui.painter().text(
+                tile.center(),
+                egui::Align2::CENTER_CENTER,
+                text,
+                egui::FontId::new(10.5, family(FAMILY_BODY_BOLD)),
+                palette.muted,
+            );
+            x = tile.right() + 12.0;
+        }
+        Lead::Icon(icon) => {
+            let at = egui::Rect::from_min_size(egui::pos2(x, mid - 7.0), egui::vec2(14.0, 14.0));
+            crate::icons::themed_image(*icon, 14.0, palette.faint).paint_at(ui, at);
+            x = at.right() + 12.0;
+        }
+        Lead::Dot(color) => {
+            ui.painter()
+                .circle_filled(egui::pos2(x + 4.0, mid), 4.0, *color);
+            x += 8.0 + 12.0;
+        }
+    }
+    let mut right = rect.right() - 16.0;
+    let mut switch_rect = None;
+    match trail {
+        Trail::None => {}
+        Trail::Badge(text, tone) => {
+            let width = badge_width(ui, text, false);
+            paint_badge(ui, egui::pos2(right - width, mid), text, false, *tone);
+            right -= width + 12.0;
+        }
+        Trail::Faint(text) | Trail::Mono(text) => {
+            let (face, size, color) = match trail {
+                Trail::Mono(_) => (FAMILY_MONO_REGULAR, FS_XS, palette.ink),
+                _ => (FAMILY_BODY_REGULAR, FS_XS, palette.faint),
+            };
+            let galley = crate::ui::transcript::head::one_line(
+                ui,
+                text.clone(),
+                egui::TextFormat::simple(egui::FontId::new(size, family(face)), color),
+                240.0,
+            );
+            let left = right - galley.size().x;
+            ui.painter()
+                .galley(egui::pos2(left, mid - galley.size().y / 2.0), galley, color);
+            right = left - 12.0;
+        }
+        Trail::Switch { on, live } => {
+            let track = egui::Rect::from_min_size(
+                egui::pos2(right - 36.0, mid - 10.0),
+                egui::vec2(36.0, 20.0),
+            );
+            let opacity = if *live { 1.0 } else { 0.45 };
+            let fill = if *on {
+                palette.accent
+            } else {
+                palette.fill_hover
+            };
+            ui.painter().rect_filled(
+                track,
+                egui::CornerRadius::same(10),
+                fill.gamma_multiply(opacity),
+            );
+            let knob = egui::pos2(track.left() + if *on { 26.0 } else { 10.0 }, mid);
+            ui.painter()
+                .circle_filled(knob, 8.0, egui::Color32::WHITE.gamma_multiply(opacity));
+            switch_rect = Some(track);
+            right = track.left() - 12.0;
+        }
+    }
+    let top = rect.top() + 10.0;
+    let mut nx = x;
+    for part in name {
+        match part {
+            Part::Text(text) | Part::Mono(text) => {
+                let (face, size) = match part {
+                    Part::Mono(_) => (FAMILY_MONO_REGULAR, FS_XS),
+                    _ => (FAMILY_BODY_REGULAR, FS_SM),
+                };
+                let galley = crate::ui::transcript::head::one_line(
+                    ui,
+                    text.clone(),
+                    egui::TextFormat::simple(egui::FontId::new(size, family(face)), palette.ink),
+                    (right - nx).max(0.0),
+                );
+                let width = galley.size().x;
+                ui.painter().galley(
+                    egui::pos2(nx, top + (name_h - galley.size().y) / 2.0),
+                    galley,
+                    palette.ink,
+                );
+                nx += width + 6.0;
+            }
+            Part::Badge(text, tone) => {
+                if nx + badge_width(ui, text, false) > right {
+                    continue;
+                }
+                nx = paint_badge(ui, egui::pos2(nx, top + name_h / 2.0), text, false, *tone)
+                    .right()
+                    + 6.0;
+            }
+        }
+    }
+    if let Some(detail) = detail {
+        let galley = crate::ui::transcript::head::one_line(
+            ui,
+            detail.to_owned(),
+            egui::TextFormat::simple(
+                egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR)),
+                palette.muted,
+            ),
+            (right - x).max(0.0),
+        );
+        let y = top + name_h + 2.0 + (detail_h - galley.size().y) / 2.0;
+        ui.painter().galley(egui::pos2(x, y), galley, palette.muted);
+    }
+    if let Some(track) = switch_rect {
+        let toggle = ui
+            .interact(track, ui.id().with(("switch", id)), egui::Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        if toggle.clicked() {
+            return Hit::Switch;
+        }
+    }
+    if response.clicked() {
+        Hit::Row
+    } else {
+        Hit::Nothing
+    }
+}
+
+/// A group heading with an optional small button at its right.
+fn group_with(
+    ui: &mut egui::Ui,
+    text: &str,
+    action: Option<(&str, Option<crate::icons::Icon>)>,
+    palette: &Palette,
+) -> bool {
+    ui.add_space(22.0);
+    let (rect, heading) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 26.0), egui::Sense::hover());
+    heading.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
+    ui.painter().text(
+        rect.left_center(),
+        egui::Align2::LEFT_CENTER,
+        text,
+        egui::FontId::new(FS_SM, family(FAMILY_BODY_SEMIBOLD)),
+        palette.ink_strong,
+    );
+    let mut clicked = false;
+    if let Some((label, icon)) = action {
+        ui.scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(rect)
+                .layout(egui::Layout::right_to_left(egui::Align::Center)),
+            |ui| {
+                clicked = btn_sm(ui, label, icon, BtnTone::Plain, palette).clicked();
+            },
+        );
+    }
+    ui.add_space(8.0);
+    clicked
+}
+
+/// The tone a small button carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BtnTone {
+    Plain,
+    Primary,
+    Danger,
+}
+
+/// The design's small button: 26px tall, an 8px radius, medium 12px
+/// text with an optional leading icon, in one tone.
+fn btn_sm(
+    ui: &mut egui::Ui,
+    label: &str,
+    icon: Option<crate::icons::Icon>,
+    tone: BtnTone,
+    palette: &Palette,
+) -> egui::Response {
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::FontId::new(FS_XS, family(FAMILY_BODY_MEDIUM)),
+        palette.ink,
+    );
+    let icon_w = if icon.is_some() { 12.0 + 6.0 } else { 0.0 };
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(9.0 + icon_w + galley.size().x + 9.0, 26.0),
+        egui::Sense::click(),
+    );
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    let hovered = response.hovered();
+    let (fill, line, ink) = match tone {
+        BtnTone::Plain if hovered => (palette.fill_hover, palette.line_strong, palette.ink),
+        BtnTone::Plain => (palette.fill, palette.line, palette.ink),
+        BtnTone::Primary if hovered => (
+            palette.accent_hover,
+            palette.accent_hover,
+            egui::Color32::WHITE,
+        ),
+        BtnTone::Primary => (palette.accent, palette.accent, egui::Color32::WHITE),
+        BtnTone::Danger if hovered => (palette.danger_soft, palette.danger_bd, palette.danger),
+        BtnTone::Danger => (
+            egui::Color32::TRANSPARENT,
+            palette.danger_bd,
+            palette.danger,
+        ),
+    };
+    let radius = egui::CornerRadius::same(R_MD as u8);
+    ui.painter().rect_filled(rect, radius, fill);
+    ui.painter().rect_stroke(
+        rect,
+        radius,
+        egui::Stroke::new(1.0, line),
+        egui::StrokeKind::Inside,
+    );
+    let mut x = rect.left() + 9.0;
+    if let Some(icon) = icon {
+        crate::icons::themed_image(icon, 12.0, ink).paint_at(
+            ui,
+            egui::Rect::from_min_size(egui::pos2(x, rect.center().y - 6.0), egui::vec2(12.0, 12.0)),
+        );
+        x += icon_w;
+    }
+    let text_h = galley.size().y;
+    ui.painter()
+        .galley(egui::pos2(x, rect.center().y - text_h / 2.0), galley, ink);
+    response
+}
+
+/// A sub heading over one list of a page, such as `Ready · 3`.
+fn subgroup(ui: &mut egui::Ui, text: &str, palette: &Palette) {
+    ui.add_space(4.0);
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), FS_XS * LINE),
+        egui::Sense::hover(),
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
+    ui.painter().text(
+        rect.left_center(),
+        egui::Align2::LEFT_CENTER,
+        text,
+        egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR)),
+        palette.faint,
+    );
+    ui.add_space(6.0);
+}
+
+/// The two letters a provider's tile carries.
+fn initials(id: &str) -> String {
+    id.chars()
+        .filter(char::is_ascii_alphabetic)
+        .take(2)
+        .collect::<String>()
+        .to_uppercase()
+}
+
+/// The waiting state while the snapshot is on its way.
+pub fn waiting(ui: &mut egui::Ui, palette: &Palette) {
+    note(ui, "Reading the engine's configuration\u{2026}", palette);
+}
+
+/// The Model Providers page: the providers, grouped by whether their
+/// key is there, each opening its form, then the ACP agents; or, while
+/// adding, the providers to start from.
 pub fn providers_page(
     ui: &mut egui::Ui,
     snapshot: &Snapshot,
     model: Option<&SessionConfigOption>,
+    state: &mut PageState,
     palette: &Palette,
     events: &mut Vec<SettingsEvent>,
 ) {
     let rows = provider_rows(snapshot, model);
-    let custom = snapshot.providers_custom();
-    let overrides = snapshot.providers_overrides();
-    if rows.is_empty() {
-        note(
+    if state.choosing {
+        provider_chooser(ui, snapshot, &rows, state, palette, events);
+        return;
+    }
+    if group_with(
+        ui,
+        "Providers",
+        Some(("Add provider", Some(crate::icons::Icon::Plus))),
+        palette,
+    ) {
+        state.choosing = true;
+    }
+    let missing = |row: &ProviderRow| {
+        snapshot
+            .key_state(&row.id)
+            .is_some_and(|key| key.source == "missing")
+    };
+    for (title, needs) in [("Ready", false), ("Needs a key", true)] {
+        let group_rows: Vec<&ProviderRow> =
+            rows.iter().filter(|row| missing(row) == needs).collect();
+        if group_rows.is_empty() {
+            continue;
+        }
+        subgroup(ui, &format!("{title} \u{b7} {}", group_rows.len()), palette);
+        boxed(ui, palette, |ui| {
+            for row in group_rows {
+                provider_row(ui, snapshot, row, palette, events);
+            }
+        });
+        ui.add_space(10.0);
+    }
+    if !snapshot.acp.agents.is_empty() {
+        subgroup(
             ui,
-            "No providers configured and no session open to list its models.",
+            &format!("ACP agents \u{b7} {}", snapshot.acp.agents.len()),
             palette,
         );
-    } else {
-        group(ui, &format!("Providers \u{b7} {}", rows.len()), palette);
         boxed(ui, palette, |ui| {
-            for row in &rows {
-                let mut name = row.label.clone();
-                if let Some(protocol) = &row.protocol {
-                    name = format!("{name}  {protocol}");
-                }
-                if row.custom {
-                    name = format!("{name}  config.toml");
-                }
-                let mut parts: Vec<String> = Vec::new();
-                if let Some(url) = &row.base_url {
-                    parts.push(url.clone());
-                }
-                parts.push(match row.models.len() {
-                    0 => "no models listed".to_owned(),
-                    1 => "1 model".to_owned(),
-                    n => format!("{n} models"),
-                });
-                if !row.headers.is_empty() {
-                    parts.push(format!("headers: {}", row.headers.join(", ")));
-                }
-                let key = match &row.key_env {
-                    Some(env) if env.is_empty() => "no key needed".to_owned(),
-                    Some(env) => format!("key from {env}"),
-                    None => "key source unknown".to_owned(),
-                };
-                let target = if custom.contains(&row.id) {
-                    crate::ui::provider_form::Target::Custom(Some(row.id.clone()))
-                } else if overrides.contains(&row.id) {
-                    crate::ui::provider_form::Target::Registered(row.id.clone())
-                } else {
-                    crate::ui::provider_form::Target::Custom(None)
-                };
-                let edit =
-                    crate::ui::forms::button(ui, "Edit", crate::ui::forms::Tone::Plain, palette);
-                if edit.clicked() {
-                    events.push(SettingsEvent::ProviderForm(target));
-                }
-                list_row(
+            for (name, agent) in &snapshot.acp.agents {
+                let line = std::iter::once(agent.command.clone())
+                    .chain(agent.args.iter().cloned())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let hit = list_row(
                     ui,
-                    &initials(&row.id),
-                    &name,
-                    &parts.join(" \u{b7} "),
-                    Some(&key),
+                    &format!("acp-{name}"),
+                    &Lead::Initials(initials(name)),
+                    &[
+                        Part::Text(format!("acp:{name}")),
+                        Part::Badge("acp".to_owned(), Tone::plain(palette)),
+                    ],
+                    Some(&line),
+                    &Trail::None,
+                    true,
                     palette,
                 );
+                if hit == Hit::Row {
+                    events.push(SettingsEvent::AcpForm(Some(name.clone())));
+                }
             }
         });
     }
-    ui.horizontal(|ui| {
-        ui.add_space(32.0);
-        ui.spacing_mut().item_spacing.x = 8.0;
-        let add = crate::ui::forms::add_button(
-            ui,
-            "Add custom provider",
-            crate::icons::Icon::Plus,
-            palette,
-        );
-        if add.clicked() {
-            events.push(SettingsEvent::ProviderForm(
-                crate::ui::provider_form::Target::Custom(None),
-            ));
-        }
-        let local = crate::ui::forms::button(
-            ui,
-            "Add local server",
-            crate::ui::forms::Tone::Plain,
-            palette,
-        );
-        if local.clicked() {
-            events.push(SettingsEvent::ProviderForm(
-                crate::ui::provider_form::Target::Local,
-            ));
-        }
-        let directory = crate::ui::forms::button(
-            ui,
-            "Import from models.dev",
-            crate::ui::forms::Tone::Plain,
-            palette,
-        );
-        if directory.clicked() {
-            events.push(SettingsEvent::Directory(false));
-        }
-        let named = crate::ui::forms::button(
-            ui,
-            "Import from api.json",
-            crate::ui::forms::Tone::Plain,
-            palette,
-        );
-        if named.clicked() {
-            events.push(SettingsEvent::Directory(true));
-        }
-    });
+    if rows.is_empty() && snapshot.acp.agents.is_empty() {
+        note(ui, "No providers configured yet.", palette);
+    }
     note(
         ui,
-        "Custom providers and overrides come from config.toml; the others are the ones the session's model picker offers. Whether a key is present stays with the engine. A save writes the entry and asks the engine to read the configuration again.",
+        "Providers kage registers itself become usable with a key; edits to them are saved as overrides. Custom providers are saved whole under [providers.custom] in config.toml. Keys stay with the engine.",
         palette,
     );
 }
 
+/// One provider's row: its tile, name, protocol and origin badges, the
+/// endpoint and models, and where its key is. A click opens its form.
+fn provider_row(
+    ui: &mut egui::Ui,
+    snapshot: &Snapshot,
+    row: &ProviderRow,
+    palette: &Palette,
+    events: &mut Vec<SettingsEvent>,
+) {
+    let mut name = vec![Part::Text(row.label.clone())];
+    if let Some(protocol) = &row.protocol {
+        name.push(Part::Badge(protocol.clone(), Tone::plain(palette)));
+    }
+    if row.custom {
+        name.push(Part::Badge("config.toml".to_owned(), Tone::plain(palette)));
+    }
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(url) = &row.base_url {
+        parts.push(url.clone());
+    }
+    parts.push(match row.models.len() {
+        0 => "no models listed".to_owned(),
+        1 => "1 model".to_owned(),
+        n => format!("{n} models"),
+    });
+    if !row.headers.is_empty() {
+        parts.push(format!("headers: {}", row.headers.join(", ")));
+    }
+    let key = match snapshot.key_state(&row.id) {
+        Some(state) => match state.source.as_str() {
+            "env" => (format!("key from {}", state.env), Tone::ok(palette)),
+            "auth" => ("key in auth.json".to_owned(), Tone::ok(palette)),
+            "unneeded" => ("no key needed".to_owned(), Tone::plain(palette)),
+            _ => (format!("{} not set", state.env), Tone::warn(palette)),
+        },
+        None => (
+            "key source unknown".to_owned(),
+            Tone {
+                fg: palette.faint,
+                bg: palette.fill,
+                line: palette.subtle,
+            },
+        ),
+    };
+    let hit = list_row(
+        ui,
+        &format!("provider-{}", row.id),
+        &Lead::Initials(initials(&row.id)),
+        &name,
+        Some(&parts.join(" \u{b7} ")),
+        &Trail::Badge(key.0, key.1),
+        true,
+        palette,
+    );
+    if hit == Hit::Row {
+        let target = if row.custom {
+            Target::Custom(Some(row.id.clone()))
+        } else {
+            Target::Registered(row.id.clone())
+        };
+        events.push(SettingsEvent::ProviderForm(target));
+    }
+}
+
+/// A rounded chip with an optional leading icon, as the chooser lists
+/// the providers to start from.
+fn pick_chip(
+    ui: &mut egui::Ui,
+    label: &str,
+    icon: Option<crate::icons::Icon>,
+    palette: &Palette,
+) -> egui::Response {
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::FontId::new(FS_XS, family(FAMILY_BODY_MEDIUM)),
+        palette.ink,
+    );
+    let lead = if icon.is_some() { 14.0 + 7.0 } else { 0.0 };
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(9.0 + lead + galley.size().x + 12.0, 30.0),
+        egui::Sense::click(),
+    );
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    let (fill, line) = if response.hovered() {
+        (palette.fill_hover, palette.muted)
+    } else {
+        (palette.surface, palette.line)
+    };
+    let radius = egui::CornerRadius::same(15);
+    ui.painter().rect_filled(rect, radius, fill);
+    ui.painter().rect_stroke(
+        rect,
+        radius,
+        egui::Stroke::new(1.0, line),
+        egui::StrokeKind::Inside,
+    );
+    let mut x = rect.left() + 9.0;
+    if let Some(icon) = icon {
+        crate::icons::themed_image(icon, 14.0, palette.muted).paint_at(
+            ui,
+            egui::Rect::from_min_size(egui::pos2(x, rect.center().y - 7.0), egui::vec2(14.0, 14.0)),
+        );
+        x += lead;
+    }
+    let h = galley.size().y;
+    ui.painter().galley(
+        egui::pos2(x, rect.center().y - h / 2.0),
+        galley,
+        palette.ink,
+    );
+    response
+}
+
+/// The providers to start a new one from: each registered provider not
+/// listed yet, the directories to import from, a local server, a custom
+/// endpoint, and an ACP agent.
+fn provider_chooser(
+    ui: &mut egui::Ui,
+    snapshot: &Snapshot,
+    rows: &[ProviderRow],
+    state: &mut PageState,
+    palette: &Palette,
+    events: &mut Vec<SettingsEvent>,
+) {
+    if group_with(ui, "Add provider", Some(("Cancel", None)), palette) {
+        state.choosing = false;
+    }
+    let chips = |ui: &mut egui::Ui, add: &mut dyn FnMut(&mut egui::Ui)| {
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+            add(ui);
+        });
+    };
+    note(ui, "A provider kage knows: give it a key.", palette);
+    chips(ui, &mut |ui| {
+        for id in snapshot
+            .registered()
+            .filter(|id| !rows.iter().any(|row| row.id == *id))
+        {
+            if pick_chip(ui, &snapshot.provider_name(id), None, palette).clicked() {
+                events.push(SettingsEvent::ProviderForm(Target::Registered(
+                    id.to_owned(),
+                )));
+                state.choosing = false;
+            }
+        }
+    });
+    note(ui, "Or import one from a directory.", palette);
+    chips(ui, &mut |ui| {
+        if pick_chip(
+            ui,
+            "From models.dev",
+            Some(crate::icons::Icon::Globe),
+            palette,
+        )
+        .clicked()
+        {
+            events.push(SettingsEvent::Directory(false));
+            state.choosing = false;
+        }
+        if pick_chip(ui, "api.json", Some(crate::icons::Icon::File), palette).clicked() {
+            events.push(SettingsEvent::Directory(true));
+            state.choosing = false;
+        }
+    });
+    note(ui, "Or an endpoint of your own.", palette);
+    chips(ui, &mut |ui| {
+        if pick_chip(ui, "Local server (Ollama)", None, palette).clicked() {
+            events.push(SettingsEvent::ProviderForm(Target::Local));
+            state.choosing = false;
+        }
+        if pick_chip(ui, "Custom", None, palette).clicked() {
+            events.push(SettingsEvent::ProviderForm(Target::Custom(None)));
+            state.choosing = false;
+        }
+        if pick_chip(ui, "ACP agent", Some(crate::icons::Icon::Bot), palette).clicked() {
+            events.push(SettingsEvent::AcpForm(None));
+            state.choosing = false;
+        }
+    });
+}
+
 /// The MCP Servers page: configured servers with the live status the
-/// active session reports.
+/// active session reports, each opening its form.
 pub fn mcp_page(
     ui: &mut egui::Ui,
     snapshot: &Snapshot,
@@ -677,26 +1242,108 @@ pub fn mcp_page(
     palette: &Palette,
     events: &mut Vec<SettingsEvent>,
 ) {
-    if !snapshot.mcp.servers.is_empty() {
-        let rows = mcp_rows(snapshot, live);
-        boxed(ui, palette, |ui| {
-            for row in &rows {
-                let name = format!("{}  {}  {}", row.name, row.transport, row.status.word());
-                let extras = row.extras.join(" \u{b7} ");
-                let edit =
-                    crate::ui::forms::button(ui, "Edit", crate::ui::forms::Tone::Plain, palette);
-                if edit.clicked() {
-                    events.push(SettingsEvent::McpForm(Some(row.name.clone())));
-                }
-                list_row(ui, "", &name, &row.target, Some(&extras), palette);
-            }
-        });
+    if group_with(
+        ui,
+        "Servers",
+        Some(("Add server", Some(crate::icons::Icon::Plus))),
+        palette,
+    ) {
+        events.push(SettingsEvent::McpForm(None));
     }
-    ui.horizontal(|ui| {
-        ui.add_space(32.0);
-        let add = crate::ui::forms::add_button(ui, "Add server", crate::icons::Icon::Plus, palette);
-        if add.clicked() {
-            events.push(SettingsEvent::McpForm(None));
+    let servers = &snapshot.mcp.servers;
+    if servers.is_empty() {
+        note(ui, "No MCP servers configured yet.", palette);
+        return;
+    }
+    boxed(ui, palette, |ui| {
+        for (name, server) in servers {
+            let transport = if server.url.is_some() {
+                "http"
+            } else {
+                "stdio"
+            };
+            let faint = Tone {
+                fg: palette.faint,
+                bg: palette.fill,
+                line: palette.line,
+            };
+            let (word, tone, dot) = match (server.disabled, live.get(name)) {
+                (true, _) => ("disabled", faint, palette.faint),
+                (false, Some(McpServerStatus::Connected)) => {
+                    ("connected", Tone::ok(palette), palette.ok)
+                }
+                (false, Some(McpServerStatus::Failed { .. })) => {
+                    ("failed", Tone::danger(palette), palette.danger)
+                }
+                (false, Some(McpServerStatus::NeedsAuth)) => {
+                    ("needs auth", Tone::warn(palette), palette.warn)
+                }
+                (false, Some(McpServerStatus::Starting)) => {
+                    ("starting", Tone::warn(palette), palette.warn)
+                }
+                (false, None) => (
+                    "status unknown",
+                    Tone {
+                        line: palette.subtle,
+                        ..faint
+                    },
+                    palette.faint,
+                ),
+            };
+            let target = match (&server.url, &server.command) {
+                (Some(url), _) => url.clone(),
+                (None, Some(command)) => std::iter::once(command.clone())
+                    .chain(server.args.iter().cloned())
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                (None, None) => "no command or url".to_owned(),
+            };
+            let mut extras: Vec<String> = Vec::new();
+            if !server.env.is_empty() {
+                extras.push(format!(
+                    "env: {}",
+                    server.env.keys().cloned().collect::<Vec<_>>().join(", ")
+                ));
+            }
+            if !server.headers.is_empty() {
+                extras.push(format!(
+                    "headers: {}",
+                    server
+                        .headers
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+            if server.oauth.is_some() {
+                extras.push("OAuth".to_owned());
+            }
+            if let Some(McpServerStatus::Failed { error }) = live.get(name) {
+                extras.push(error.clone());
+            }
+            let trail = if extras.is_empty() {
+                Trail::None
+            } else {
+                Trail::Faint(extras.join(" \u{b7} "))
+            };
+            let hit = list_row(
+                ui,
+                &format!("mcp-{name}"),
+                &Lead::Dot(dot),
+                &[
+                    Part::Mono(name.clone()),
+                    Part::Badge(transport.to_owned(), Tone::plain(palette)),
+                    Part::Badge(word.to_owned(), tone),
+                ],
+                Some(&target),
+                &trail,
+                true,
+                palette,
+            );
+            if hit == Hit::Row {
+                events.push(SettingsEvent::McpForm(Some(name.clone())));
+            }
         }
     });
     note(
@@ -710,343 +1357,881 @@ pub fn mcp_page(
     );
 }
 
-/// The ACP Agents page: the external agents the snapshot configures.
-pub fn acp_page(
-    ui: &mut egui::Ui,
-    snapshot: &Snapshot,
-    palette: &Palette,
-    events: &mut Vec<SettingsEvent>,
-) {
-    if !snapshot.acp.agents.is_empty() {
-        boxed(ui, palette, |ui| {
-            for (name, agent) in &snapshot.acp.agents {
-                let command = std::iter::once(agent.command.clone())
-                    .chain(agent.args.iter().cloned())
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                let edit =
-                    crate::ui::forms::button(ui, "Edit", crate::ui::forms::Tone::Plain, palette);
-                if edit.clicked() {
-                    events.push(SettingsEvent::AcpForm(Some(name.clone())));
-                }
-                let extras = if agent.env.is_empty() {
-                    String::new()
-                } else {
-                    format!(
-                        "env: {}",
-                        agent.env.keys().cloned().collect::<Vec<_>>().join(", ")
-                    )
-                };
-                list_row(ui, "", name, &command, Some(&extras), palette);
-            }
-        });
-    }
-    ui.horizontal(|ui| {
-        ui.add_space(32.0);
-        let add =
-            crate::ui::forms::add_button(ui, "Add ACP agent", crate::icons::Icon::Plus, palette);
-        if add.clicked() {
-            events.push(SettingsEvent::AcpForm(None));
-        }
-    });
-    note(
-        ui,
-        "An external agent kage drives over ACP, picked as acp:<name> in the model picker. The engine starts it and runs its handshake.",
-        palette,
-    );
-}
-
-/// The Permissions page: the session's mode cards and the configured
-/// rules.
+/// The Permissions page: the session's mode cards, then the configured
+/// rules, editable in place.
 pub fn permissions_page(
     ui: &mut egui::Ui,
+    store: &mut Store,
     snapshot: &Snapshot,
     modes: Option<&SessionConfigOption>,
     current: Option<&str>,
+    state: &mut PageState,
     palette: &Palette,
     events: &mut Vec<SettingsEvent>,
 ) {
-    group(ui, "This session", palette);
-    let cards = mode_cards(modes, current);
-    if cards.is_empty() {
-        note(
+    crate::ui::settings::group(ui, "This session", palette);
+    match modes {
+        Some(option) if !option.options.is_empty() => {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
+                for choice in &option.options {
+                    let on = current == Some(choice.value.as_str());
+                    if mode_card(ui, choice, on, palette).clicked() {
+                        events.push(SettingsEvent::Mode(choice.value.clone()));
+                    }
+                }
+            });
+        }
+        _ => note(
             ui,
             "Open a session to see and change its permission mode.",
             palette,
-        );
-    } else {
-        ui.horizontal_wrapped(|ui| {
-            ui.add_space(32.0);
-            ui.spacing_mut().item_spacing.x = 10.0;
-            ui.spacing_mut().item_spacing.y = 10.0;
-            for card in &cards {
-                mode_card(ui, card, palette, events);
-            }
-        });
+        ),
     }
-    group(ui, "Tool rules", palette);
-    let rules = rule_rows(snapshot);
-    if rules.is_empty() {
-        note(
+    if group_with(
+        ui,
+        "Tool rules",
+        Some(("Add rule", Some(crate::icons::Icon::Plus))),
+        palette,
+    ) {
+        state.adding = Some(RuleAdd::Tool);
+        state.rule_text.clear();
+    }
+    let rules = &snapshot.permissions;
+    boxed(ui, palette, |ui| {
+        let hit = list_row(
             ui,
-            "No rules configured: every tool follows the session's mode.",
+            "confine",
+            &Lead::Icon(crate::icons::Icon::FolderLock),
+            &[Part::Text(
+                "Confine file tools to the working directory".to_owned(),
+            )],
+            Some("Reads and writes outside the session's directory are refused"),
+            &Trail::Switch {
+                on: rules.confine_paths,
+                live: true,
+            },
+            false,
             palette,
         );
-    } else {
-        boxed(ui, palette, |ui| {
-            for rule in &rules {
-                let mut parts: Vec<String> = Vec::new();
-                parts.push(format!("default {}", rule.action));
-                if !rule.allow.is_empty() {
-                    parts.push(format!("allow {}", rule.allow.join(", ")));
-                }
-                if !rule.deny.is_empty() {
-                    parts.push(format!("deny {}", rule.deny.join(", ")));
-                }
-                list_row(ui, "", &rule.tool, &parts.join(" \u{b7} "), None, palette);
-            }
-        });
-    }
+        if hit == Hit::Switch {
+            store.config_set(
+                &["permissions", "confine_paths"],
+                Some(serde_json::json!(!rules.confine_paths)),
+            );
+        }
+        if state.adding == Some(RuleAdd::Tool) {
+            rule_field_row(
+                ui,
+                state,
+                store,
+                snapshot,
+                "Name the tool, such as shell or github__create_issue, then Enter",
+                palette,
+            );
+        }
+        if !rules.tools.is_empty() || !rules.mcp.is_empty() {
+            rule_header(ui, palette);
+        }
+        for (tool, rule) in &rules.tools {
+            tool_rule_row(ui, store, snapshot, tool, rule, state, palette);
+        }
+        for (server, action) in &rules.mcp {
+            server_rule_row(ui, store, server, action, palette);
+        }
+    });
     note(
         ui,
-        if snapshot.permissions.confine_paths {
-            "File tools are confined to the working directory. Rules live in config.toml under [permissions.tools.<tool>]; deny beats allow, and the mode decides what no rule matches."
-        } else {
-            "Rules live in config.toml under [permissions.tools.<tool>]; deny beats allow, and the mode decides what no rule matches."
-        },
+        "Rules are saved to config.toml under [permissions] and apply to sessions opened after. Deny beats allow, and the mode decides what no rule matches.",
         palette,
     );
 }
 
-/// One permission mode card, chosen on a click. The whole card
-/// answers, as the design's control did.
+/// One permission mode card: its name with the check on the active
+/// mode, over its description, outlined in the accent when chosen.
 fn mode_card(
     ui: &mut egui::Ui,
-    card: &ModeCard,
+    choice: &kage_client::wire::SessionConfigSelectOption,
+    on: bool,
     palette: &Palette,
-    events: &mut Vec<SettingsEvent>,
-) {
+) -> egui::Response {
     let width = 200.0_f32.min(ui.available_width());
-    let response = ui.add(
-        egui::Button::new("")
-            .fill(palette.surface)
-            .stroke(egui::Stroke::new(
-                1.0,
-                if card.on {
-                    palette.accent
-                } else {
-                    palette.line
-                },
-            ))
-            .corner_radius(egui::CornerRadius::same(R_LG as u8))
-            .min_size(egui::vec2(width, 84.0)),
+    let description = choice.description.as_deref().map(|text| {
+        let mut job = egui::text::LayoutJob::simple(
+            text.to_owned(),
+            egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR)),
+            palette.muted,
+            width - 24.0,
+        );
+        job.wrap.max_width = width - 24.0;
+        ui.painter().layout_job(job)
+    });
+    let name_h = FS_SM * LINE;
+    let body = name_h + description.as_ref().map_or(0.0, |text| 6.0 + text.size().y);
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(width, (12.0 + body + 12.0).max(84.0)),
+        egui::Sense::click(),
     );
-    let rect = response.rect;
-    if response.hovered() && !card.on {
-        ui.painter().rect_stroke(
-            rect,
-            egui::CornerRadius::same(R_LG as u8),
-            egui::Stroke::new(1.0, palette.line_strong),
-            egui::StrokeKind::Inside,
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, on, &choice.name)
+    });
+    let border = if on {
+        palette.accent
+    } else if response.hovered() {
+        palette.line_strong
+    } else {
+        palette.line
+    };
+    let radius = egui::CornerRadius::same(R_LG as u8);
+    ui.painter().rect_filled(rect, radius, palette.surface);
+    ui.painter().rect_stroke(
+        rect,
+        radius,
+        egui::Stroke::new(1.0, border),
+        egui::StrokeKind::Inside,
+    );
+    let top = rect.top() + 12.0;
+    ui.painter().text(
+        egui::pos2(rect.left() + 12.0, top + name_h / 2.0),
+        egui::Align2::LEFT_CENTER,
+        &choice.name,
+        egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
+        palette.ink_strong,
+    );
+    if on {
+        crate::icons::themed_image(crate::icons::Icon::Check, 14.0, palette.accent).paint_at(
+            ui,
+            egui::Rect::from_min_size(
+                egui::pos2(rect.right() - 12.0 - 14.0, top + name_h / 2.0 - 7.0),
+                egui::vec2(14.0, 14.0),
+            ),
         );
     }
-    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-        ui.add_space(12.0);
-        ui.horizontal(|ui| {
-            ui.add_space(12.0);
-            ui.spacing_mut().item_spacing.x = 6.0;
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(&card.name)
-                        .size(FS_SM)
-                        .color(palette.ink_strong),
-                )
-                .selectable(false),
-            );
-            if card.on {
-                crate::icons::icon(ui, crate::icons::Icon::Check, 14.0, palette.accent);
-            }
-        });
-        if let Some(description) = &card.description {
-            ui.add_space(6.0);
-            ui.horizontal_wrapped(|ui| {
-                ui.add_space(12.0);
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(description)
-                            .size(FS_XS)
-                            .color(palette.muted),
-                    )
-                    .selectable(false),
-                );
-            });
-        }
-    });
-    if response.clicked() {
-        events.push(SettingsEvent::Mode(card.value.clone()));
+    if let Some(text) = description {
+        ui.painter().galley(
+            egui::pos2(rect.left() + 12.0, top + name_h + 6.0),
+            text,
+            palette.muted,
+        );
+    }
+    response
+}
+
+/// The columns of the rule table.
+const RULE_TOOL_W: f32 = 180.0;
+const RULE_DEFAULT_W: f32 = 132.0;
+const RULE_REMOVE_W: f32 = 22.0;
+
+/// The x ranges of the rule table's columns inside `rect`: tool,
+/// default, allow, deny and remove.
+fn rule_columns(rect: egui::Rect) -> [egui::Rangef; 5] {
+    let gap = 12.0;
+    let left = rect.left() + 16.0;
+    let right = rect.right() - 16.0;
+    let tool = egui::Rangef::new(left, left + RULE_TOOL_W);
+    let default = egui::Rangef::new(tool.max + gap, tool.max + gap + RULE_DEFAULT_W);
+    let remove = egui::Rangef::new(right - RULE_REMOVE_W, right);
+    let flex = ((remove.min - gap) - (default.max + gap) - gap) / 2.0;
+    let allow = egui::Rangef::new(default.max + gap, default.max + gap + flex);
+    let deny = egui::Rangef::new(allow.max + gap, allow.max + gap + flex);
+    [tool, default, allow, deny, remove]
+}
+
+/// The rule table's header row.
+fn rule_header(ui: &mut egui::Ui, palette: &Palette) {
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), 8.0 + FS_XS * LINE + 8.0),
+        egui::Sense::hover(),
+    );
+    crate::ui::settings::row_rule(ui, rect, palette);
+    let columns = rule_columns(rect);
+    for (column, text) in columns.iter().zip(["Tool", "Default", "Allow", "Deny"]) {
+        ui.painter().text(
+            egui::pos2(column.min, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            text,
+            egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR)),
+            palette.faint,
+        );
     }
 }
 
-/// The Plugins page: the directory, the allowlist and the grants.
-pub fn plugins_page(ui: &mut egui::Ui, snapshot: &Snapshot, palette: &Palette) {
-    let dir = snapshot
-        .plugins
+/// The field that names a new tool or glob, and the hint beside it.
+/// Enter writes it; Escape drops it.
+fn rule_field_row(
+    ui: &mut egui::Ui,
+    state: &mut PageState,
+    store: &mut Store,
+    snapshot: &Snapshot,
+    hint: &str,
+    palette: &Palette,
+) {
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 44.0), egui::Sense::hover());
+    crate::ui::settings::row_rule(ui, rect, palette);
+    let field = egui::Rect::from_min_size(
+        egui::pos2(rect.left() + 16.0, rect.center().y - 13.0),
+        egui::vec2(RULE_TOOL_W, 26.0),
+    );
+    rule_input(ui, field, state, store, snapshot, palette);
+    ui.painter().text(
+        egui::pos2(field.right() + 12.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        hint,
+        egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR)),
+        palette.muted,
+    );
+}
+
+/// The small text field the rule edits type into, at `rect`.
+fn rule_input(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    state: &mut PageState,
+    store: &mut Store,
+    snapshot: &Snapshot,
+    palette: &Palette,
+) {
+    let _ = snapshot;
+    let mut submitted = false;
+    let mut dropped = false;
+    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+        let response = ui.add(
+            egui::TextEdit::singleline(&mut state.rule_text)
+                .id(egui::Id::new("settings-rule-input"))
+                .font(egui::FontId::new(FS_XS, family(FAMILY_MONO_REGULAR)))
+                .desired_width(rect.width()),
+        );
+        response.request_focus();
+        submitted = ui.input(|input| input.key_pressed(egui::Key::Enter));
+        dropped = ui.input(|input| input.key_pressed(egui::Key::Escape));
+    });
+    let _ = palette;
+    if submitted
+        && let Some(add) = state.adding.clone()
+        && let Some(config) = store.config().cloned()
+        && let Some((path, value)) = rule_added(&config, &add, &state.rule_text)
+    {
+        let path: Vec<&str> = path.iter().map(String::as_str).collect();
+        store.config_set(&path, Some(value));
+        state.adding = None;
+        state.rule_text.clear();
+    } else if dropped {
+        state.adding = None;
+        state.rule_text.clear();
+    }
+}
+
+/// One glob of a rule as a badge with its remove mark inside, left
+/// edge at `at.x`, centered on `at.y`. Gives back where it landed.
+fn glob_chip(ui: &egui::Ui, at: egui::Pos2, glob: &str, tone: Tone) -> egui::Rect {
+    let galley = ui.painter().layout_no_wrap(
+        glob.to_owned(),
+        egui::FontId::new(10.5, family(FAMILY_MONO_REGULAR)),
+        tone.fg,
+    );
+    let text_w = galley.size().x;
+    let text_h = galley.size().y;
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(at.x, at.y - 9.0),
+        egui::vec2(7.0 + text_w + 4.0 + 10.0 + 7.0, 18.0),
+    );
+    let radius = egui::CornerRadius::same(9);
+    ui.painter().rect_filled(rect, radius, tone.bg);
+    ui.painter().rect_stroke(
+        rect,
+        radius,
+        egui::Stroke::new(1.0, tone.line),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter().galley(
+        egui::pos2(rect.left() + 7.0, at.y - text_h / 2.0),
+        galley,
+        tone.fg,
+    );
+    crate::icons::themed_image(crate::icons::Icon::X, 10.0, tone.fg).paint_at(
+        ui,
+        egui::Rect::from_min_size(
+            egui::pos2(rect.left() + 7.0 + text_w + 4.0, at.y - 5.0),
+            egui::vec2(10.0, 10.0),
+        ),
+    );
+    rect
+}
+
+/// One choice of a rule's default, filled in its tone when chosen.
+fn action_chip(
+    ui: &egui::Ui,
+    at: egui::Pos2,
+    action: &str,
+    on: bool,
+    palette: &Palette,
+) -> egui::Rect {
+    let tone = match action {
+        "deny" => Tone::danger(palette),
+        "ask" => Tone::warn(palette),
+        _ => Tone::ok(palette),
+    };
+    let galley = ui.painter().layout_no_wrap(
+        action.to_owned(),
+        egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR)),
+        if on { tone.fg } else { palette.faint },
+    );
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(at.x, at.y - 10.0),
+        egui::vec2(galley.size().x + 14.0, 20.0),
+    );
+    if on {
+        let radius = egui::CornerRadius::same(10);
+        ui.painter().rect_filled(rect, radius, tone.bg);
+        ui.painter().rect_stroke(
+            rect,
+            radius,
+            egui::Stroke::new(1.0, tone.line),
+            egui::StrokeKind::Inside,
+        );
+    }
+    let color = if on { tone.fg } else { palette.faint };
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, color);
+    rect
+}
+
+/// One tool's rule: its default, its allow and deny globs, and a remove
+/// button, each writing the rule back when clicked.
+fn tool_rule_row(
+    ui: &mut egui::Ui,
+    store: &mut Store,
+    snapshot: &Snapshot,
+    tool: &str,
+    rule: &ToolRules,
+    state: &mut PageState,
+    palette: &Palette,
+) {
+    let (rect, row) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 40.0), egui::Sense::hover());
+    row.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, tool));
+    crate::ui::settings::row_rule(ui, rect, palette);
+    let [tool_col, default_col, allow_col, deny_col, remove_col] = rule_columns(rect);
+    let mid = rect.center().y;
+    ui.painter().text(
+        egui::pos2(tool_col.min, mid),
+        egui::Align2::LEFT_CENTER,
+        tool,
+        egui::FontId::new(FS_XS, family(FAMILY_MONO_REGULAR)),
+        palette.ink,
+    );
+    let mut write: Option<ToolRules> = None;
+    let mut x = default_col.min;
+    for action in ACTIONS {
+        let on = rule.default == action || (rule.default.is_empty() && action == "allow");
+        let chip = action_chip(ui, egui::pos2(x, mid), action, on, palette);
+        x = chip.right() + 2.0;
+        let response = ui
+            .interact(
+                chip,
+                ui.id().with(("rule-default", tool, action)),
+                egui::Sense::click(),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        if response.clicked() {
+            let mut next = rule.clone();
+            action.clone_into(&mut next.default);
+            write = Some(next);
+        }
+    }
+    for (deny, column) in [(false, allow_col), (true, deny_col)] {
+        let list = if deny { &rule.deny } else { &rule.allow };
+        let mut x = column.min;
+        for (ix, glob) in list.iter().enumerate() {
+            let tone = if deny {
+                Tone::danger(palette)
+            } else {
+                Tone::plain(palette)
+            };
+            let width = badge_width(ui, glob, true) + 14.0;
+            if x + width > column.max {
+                break;
+            }
+            let chip = glob_chip(ui, egui::pos2(x, mid), glob, tone);
+            let response = ui
+                .interact(
+                    chip,
+                    ui.id().with(("glob", tool, deny, ix)),
+                    egui::Sense::click(),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text("Remove");
+            if response.clicked() {
+                let mut next = rule.clone();
+                if deny {
+                    next.deny.remove(ix);
+                } else {
+                    next.allow.remove(ix);
+                }
+                write = Some(next);
+            }
+            x = chip.right() + 4.0;
+        }
+        let adding = RuleAdd::Glob {
+            tool: tool.to_owned(),
+            deny,
+        };
+        if state.adding.as_ref() == Some(&adding) {
+            let field = egui::Rect::from_min_size(
+                egui::pos2(x, mid - 12.0),
+                egui::vec2((column.max - x).clamp(60.0, 140.0), 24.0),
+            );
+            rule_input(ui, field, state, store, snapshot, palette);
+        } else {
+            let galley = ui.painter().layout_no_wrap(
+                "+ glob".to_owned(),
+                egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR)),
+                palette.faint,
+            );
+            let chip = egui::Rect::from_min_size(
+                egui::pos2(x, mid - 9.0),
+                egui::vec2(galley.size().x + 12.0, 18.0),
+            );
+            crate::ui::transcript::text_rows::dashed_rect(ui, chip, 9.0, palette.line);
+            ui.painter()
+                .galley(chip.center() - galley.size() / 2.0, galley, palette.faint);
+            let response = ui
+                .interact(
+                    chip,
+                    ui.id().with(("glob-add", tool, deny)),
+                    egui::Sense::click(),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            if response.clicked() {
+                state.adding = Some(adding);
+                state.rule_text.clear();
+            }
+        }
+    }
+    let bin = egui::Rect::from_center_size(
+        egui::pos2(remove_col.center(), mid),
+        egui::vec2(RULE_REMOVE_W, 22.0),
+    );
+    crate::icons::themed_image(crate::icons::Icon::Trash, 13.0, palette.faint).paint_at(
+        ui,
+        egui::Rect::from_center_size(bin.center(), egui::vec2(13.0, 13.0)),
+    );
+    let remove = ui
+        .interact(
+            bin,
+            ui.id().with(("rule-remove", tool)),
+            egui::Sense::click(),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Remove the rule");
+    if remove.clicked() {
+        store.config_set(&["permissions", "tools", tool], None);
+    } else if let Some(next) = write {
+        store.config_set(&["permissions", "tools", tool], Some(rule_json(&next)));
+    }
+}
+
+/// One MCP server's fallback action, with a remove button.
+fn server_rule_row(
+    ui: &mut egui::Ui,
+    store: &mut Store,
+    server: &str,
+    action: &str,
+    palette: &Palette,
+) {
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 40.0), egui::Sense::hover());
+    crate::ui::settings::row_rule(ui, rect, palette);
+    let [tool_col, default_col, _, _, remove_col] = rule_columns(rect);
+    let mid = rect.center().y;
+    let label = if server == "*" {
+        "every MCP server".to_owned()
+    } else {
+        format!("mcp: {server}")
+    };
+    ui.painter().text(
+        egui::pos2(tool_col.min, mid),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::FontId::new(FS_XS, family(FAMILY_MONO_REGULAR)),
+        palette.ink,
+    );
+    let mut x = default_col.min;
+    for choice in ACTIONS {
+        let chip = action_chip(ui, egui::pos2(x, mid), choice, action == choice, palette);
+        x = chip.right() + 2.0;
+        let response = ui
+            .interact(
+                chip,
+                ui.id().with(("mcp-default", server, choice)),
+                egui::Sense::click(),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        if response.clicked() {
+            store.config_set(
+                &["permissions", "mcp", server],
+                Some(serde_json::json!(choice)),
+            );
+        }
+    }
+    let bin = egui::Rect::from_center_size(
+        egui::pos2(remove_col.center(), mid),
+        egui::vec2(RULE_REMOVE_W, 22.0),
+    );
+    crate::icons::themed_image(crate::icons::Icon::Trash, 13.0, palette.faint).paint_at(
+        ui,
+        egui::Rect::from_center_size(bin.center(), egui::vec2(13.0, 13.0)),
+    );
+    let remove = ui
+        .interact(
+            bin,
+            ui.id().with(("mcp-remove", server)),
+            egui::Sense::click(),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    if remove.clicked() {
+        store.config_set(&["permissions", "mcp", server], None);
+    }
+}
+
+/// The Plugins page: the directory and the allowlist, then every plugin
+/// installed or named in the config, with whether it loads, its
+/// capability grants and whether it has settings.
+pub fn plugins_page(
+    ui: &mut egui::Ui,
+    store: &mut Store,
+    snapshot: &Snapshot,
+    state: &mut PageState,
+    palette: &Palette,
+) {
+    let plugins = &snapshot.plugins;
+    let dir = plugins
         .dir
         .clone()
         .unwrap_or_else(|| "~/.config/kage/plugins".to_owned());
     boxed(ui, palette, |ui| {
-        list_row(ui, "", "Plugin directory", &dir, None, palette);
-        let loaded = if snapshot.plugins.enabled.is_empty() {
+        list_row(
+            ui,
+            "plugin-dir",
+            &Lead::Icon(crate::icons::Icon::Folder),
+            &[Part::Text("Plugin directory".to_owned())],
+            None,
+            &Trail::Mono(dir),
+            false,
+            palette,
+        );
+        let loaded = if plugins.enabled.is_empty() {
             "Every plugin in the directory loads".to_owned()
         } else {
-            format!("Only these load: {}", snapshot.plugins.enabled.join(", "))
+            format!("Only these load: {}", plugins.enabled.join(", "))
         };
-        list_row(ui, "", "Loaded plugins", &loaded, None, palette);
+        list_row(
+            ui,
+            "plugin-loaded",
+            &Lead::Icon(crate::icons::Icon::ListTodo),
+            &[Part::Text("Loaded plugins".to_owned())],
+            Some(&loaded),
+            &Trail::None,
+            false,
+            palette,
+        );
     });
+    if group_with(
+        ui,
+        "Plugins",
+        Some(("Install a plugin", Some(crate::icons::Icon::Plus))),
+        palette,
+    ) {
+        state.plugin_input = Some(String::new());
+        state.plugin_install = None;
+    }
+    install_row(ui, store, state, palette);
     let rows = plugin_rows(snapshot);
     if !rows.is_empty() {
-        group(ui, "Configured plugins", palette);
         boxed(ui, palette, |ui| {
             for row in &rows {
-                let name = format!("{}  {}", row.name, row.caps.join(" "));
-                let detail = match (row.caps.is_empty(), row.has_settings) {
-                    (true, true) => "has settings",
-                    (false, true) => "capabilities granted in config.toml \u{b7} has settings",
-                    (false, false) => "capabilities granted in config.toml",
-                    (true, false) => "",
-                };
-                list_row(ui, "", &name, detail, None, palette);
+                plugin_row(ui, store, snapshot, row, state, palette);
             }
         });
     }
     note(
         ui,
-        "Lua plugins load from the plugin directory. Blocks and widgets a plugin draws carry its name as an owner badge. Enabling and installing wait for _kage/config/set.",
+        "Lua plugins load from the plugin directory when a session opens, so a change applies to the next session. Blocks and widgets a plugin draws carry its name as an owner badge.",
         palette,
     );
 }
 
-/// A group heading above a page section.
-fn group(ui: &mut egui::Ui, text: &str, palette: &Palette) {
-    ui.add_space(22.0);
-    ui.horizontal(|ui| {
-        ui.add_space(32.0);
-        ui.label(
-            egui::RichText::new(text)
-                .size(FS_SM)
-                .family(family(crate::theme::FAMILY_BODY_SEMIBOLD))
-                .color(palette.ink_strong),
-        );
-    });
-    ui.add_space(8.0);
-}
-
-/// A muted note under a page section.
-fn note(ui: &mut egui::Ui, text: &str, palette: &Palette) {
-    ui.add_space(8.0);
-    ui.horizontal_wrapped(|ui| {
-        ui.add_space(32.0);
-        ui.label(egui::RichText::new(text).size(FS_XS).color(palette.faint));
-    });
-    ui.add_space(8.0);
-}
-
-/// The rounded box rows sit in.
-fn boxed(ui: &mut egui::Ui, palette: &Palette, add: impl FnOnce(&mut egui::Ui)) {
-    let width = ui.available_width();
-    egui::Frame::NONE
-        .fill(palette.surface)
-        .stroke(egui::Stroke::new(1.0, palette.subtle))
-        .corner_radius(egui::CornerRadius::same(R_LG as u8))
-        .inner_margin(egui::Margin::symmetric(16, 0))
-        .show(ui, |ui| {
-            ui.set_min_width(width - 32.0);
-            add(ui);
+/// The install field with its buttons, and the install's outcome.
+fn install_row(ui: &mut egui::Ui, store: &mut Store, state: &mut PageState, palette: &Palette) {
+    if let Some(text) = state.plugin_input.as_mut() {
+        let mut install = false;
+        let mut cancel = false;
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            let width = ui.available_width() - 150.0;
+            ui.add(
+                egui::TextEdit::singleline(text)
+                    .id(egui::Id::new("settings-plugin-source"))
+                    .font(egui::FontId::new(FS_XS, family(FAMILY_MONO_REGULAR)))
+                    .desired_width(width),
+            );
+            install = btn_sm(ui, "Install", None, BtnTone::Primary, palette).clicked();
+            cancel = btn_sm(ui, "Cancel", None, BtnTone::Plain, palette).clicked();
         });
-    ui.add_space(8.0);
+        ui.add_space(6.0);
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(
+                    "An https:// URL or a path on the engine's machine, to one .lua file. It is checked to compile, then loads with the next session.",
+                )
+                .size(FS_XS)
+                .color(palette.faint),
+            )
+            .wrap(),
+        );
+        ui.add_space(10.0);
+        if install && !text.trim().is_empty() {
+            state.plugin_install = Some(store.install_plugin(text.trim(), false));
+            state.plugin_input = None;
+        } else if cancel {
+            state.plugin_input = None;
+        }
+    }
+    let line = match state
+        .plugin_install
+        .map(|id| store.write_outcome(id).cloned())
+    {
+        Some(None) => Some(("Installing\u{2026}".to_owned(), palette.muted)),
+        Some(Some(Ok(()))) => Some((
+            "Installed. It loads with the next session.".to_owned(),
+            palette.ok,
+        )),
+        Some(Some(Err(why))) => Some((why, palette.danger)),
+        None => None,
+    };
+    if let Some((text, color)) = line {
+        ui.label(egui::RichText::new(text).size(FS_XS).color(color));
+        ui.add_space(8.0);
+    }
 }
 
-/// One list row: its leading initials, a name line, a detail line and
-/// anything trailing.
-fn list_row(
+/// One plugin's row: its name, grants and state, a switch for whether
+/// it loads, and once opened the capabilities it may be granted.
+fn plugin_row(
     ui: &mut egui::Ui,
-    lead: &str,
-    name: &str,
-    detail: &str,
-    trailing: Option<&str>,
+    store: &mut Store,
+    snapshot: &Snapshot,
+    row: &PluginRow,
+    state: &mut PageState,
     palette: &Palette,
 ) {
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width().max(1.0), 44.0),
-        egui::Sense::hover(),
-    );
-    let painter = ui.painter();
-    painter.line_segment(
-        [
-            egui::pos2(rect.left(), rect.top()),
-            egui::pos2(rect.right(), rect.top()),
-        ],
-        egui::Stroke::new(1.0, palette.subtle),
-    );
-    let mut text = name.to_owned();
-    if let Some(trailing) = trailing.filter(|trailing| !trailing.is_empty()) {
-        text = format!("{text}  {trailing}");
+    let expanded = state.plugin_open.as_deref() == Some(row.name.as_str());
+    let mut name = vec![Part::Mono(row.name.clone())];
+    for cap in &row.caps {
+        name.push(Part::Badge(cap.clone(), Tone::plain(palette)));
     }
-    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-        ui.horizontal(|ui| {
-            ui.add_space(16.0);
-            ui.spacing_mut().item_spacing.x = 12.0;
-            if !lead.is_empty() {
-                let (badge, _) =
-                    ui.allocate_exact_size(egui::vec2(28.0, 28.0), egui::Sense::hover());
-                ui.painter()
-                    .rect_filled(badge, egui::CornerRadius::same(8), palette.fill);
-                ui.scope_builder(egui::UiBuilder::new().max_rect(badge), |ui| {
-                    ui.centered_and_justified(|ui| {
-                        ui.label(egui::RichText::new(lead).size(10.5).color(palette.muted));
-                    });
-                });
+    let allowlist = row
+        .enabled
+        .map(|on| (on, toggled_allowlist(snapshot, &row.name, !on)));
+    let trail = match &allowlist {
+        Some((on, list)) => Trail::Switch {
+            on: *on,
+            live: list.is_some(),
+        },
+        None => Trail::None,
+    };
+    let lead = Lead::Icon(if expanded {
+        crate::icons::Icon::ChevronDown
+    } else {
+        crate::icons::Icon::ChevronRight
+    });
+    match list_row(
+        ui,
+        &format!("plugin-{}", row.name),
+        &lead,
+        &name,
+        Some(&row.detail),
+        &trail,
+        true,
+        palette,
+    ) {
+        Hit::Row => {
+            state.plugin_open = (!expanded).then(|| row.name.clone());
+        }
+        Hit::Switch => {
+            if let Some((_, Some(list))) = allowlist {
+                store.config_set(&["plugins", "enabled"], Some(serde_json::json!(list)));
             }
-            ui.vertical(|ui| {
-                ui.label(egui::RichText::new(text).size(FS_SM).color(palette.ink));
-                if !detail.is_empty() {
-                    ui.label(
-                        egui::RichText::new(detail)
-                            .size(FS_XS)
-                            .family(family(FAMILY_MONO_REGULAR))
-                            .color(palette.muted),
-                    );
+        }
+        Hit::Nothing => {}
+    }
+    if !expanded {
+        return;
+    }
+    egui::Frame::NONE
+        .inner_margin(egui::Margin {
+            left: 42,
+            right: 42,
+            top: 0,
+            bottom: 12,
+        })
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 8.0;
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(
+                        "Capabilities granted in config.toml. A plugin still asks for each one before it gets it.",
+                    )
+                    .size(FS_XS)
+                    .color(palette.muted),
+                )
+                .wrap(),
+            );
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
+                for cap in CAPABILITIES {
+                    let granted = row.caps.iter().any(|have| have == cap);
+                    if grant_chip(ui, cap, granted, palette).clicked() {
+                        let mut next: Vec<String> = row
+                            .caps
+                            .iter()
+                            .filter(|have| *have != cap)
+                            .cloned()
+                            .collect();
+                        if !granted {
+                            next.push(cap.to_owned());
+                        }
+                        let value = (!next.is_empty()).then(|| serde_json::json!(next));
+                        store.config_set(&["plugins", "capabilities", &row.name], value);
+                    }
                 }
             });
+            if row.enabled.is_some()
+                && btn_sm(ui, "Remove plugin", None, BtnTone::Danger, palette).clicked()
+            {
+                store.remove_plugin(&row.name);
+            }
         });
-    });
 }
 
-/// The two letters a provider's initials mark carries.
-fn initials(id: &str) -> String {
-    id.chars()
-        .filter(char::is_ascii_alphabetic)
-        .take(2)
-        .collect::<String>()
-        .to_uppercase()
-}
-
-/// One outlined badge drawn at the cursor.
-#[allow(dead_code)]
-fn badge(ui: &mut egui::Ui, text: &str, palette: &Palette) {
-    egui::Frame::NONE
-        .fill(palette.fill)
-        .stroke(egui::Stroke::new(1.0, palette.line))
-        .corner_radius(egui::CornerRadius::same(R_FULL as u8))
-        .inner_margin(egui::Margin::symmetric(7, 1))
-        .show(ui, |ui| {
-            ui.label(egui::RichText::new(text).size(10.5).color(palette.muted));
-        });
+/// One capability a plugin may be granted, accent-filled when it is.
+fn grant_chip(ui: &mut egui::Ui, cap: &str, granted: bool, palette: &Palette) -> egui::Response {
+    let ink = if granted {
+        palette.ink_strong
+    } else {
+        palette.muted
+    };
+    let galley = ui.painter().layout_no_wrap(
+        cap.to_owned(),
+        egui::FontId::new(FS_XS, family(FAMILY_MONO_REGULAR)),
+        ink,
+    );
+    let lead = if granted { 12.0 + 5.0 } else { 0.0 };
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(8.0 + lead + galley.size().x + 8.0, 24.0),
+        egui::Sense::click(),
+    );
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    response
+        .widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, granted, cap));
+    let (fill, line) = if granted {
+        (palette.accent_soft, palette.accent)
+    } else {
+        (palette.surface, palette.line)
+    };
+    let radius = egui::CornerRadius::same(12);
+    ui.painter().rect_filled(rect, radius, fill);
+    ui.painter().rect_stroke(
+        rect,
+        radius,
+        egui::Stroke::new(1.0, line),
+        egui::StrokeKind::Inside,
+    );
+    let mut x = rect.left() + 8.0;
+    if granted {
+        crate::icons::themed_image(crate::icons::Icon::Check, 12.0, ink).paint_at(
+            ui,
+            egui::Rect::from_min_size(egui::pos2(x, rect.center().y - 6.0), egui::vec2(12.0, 12.0)),
+        );
+        x += lead;
+    }
+    let h = galley.size().y;
+    ui.painter()
+        .galley(egui::pos2(x, rect.center().y - h / 2.0), galley, ink);
+    response
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{McpStatus, Snapshot, mcp_rows, mode_cards, plugin_rows, provider_rows, rule_rows};
+    use super::{RuleAdd, Snapshot, plugin_rows, provider_rows, rule_added, toggled_allowlist};
+
+    #[test]
+    fn an_added_glob_writes_the_whole_rule() {
+        let config = serde_json::json!({"permissions": {"tools": {
+            "shell": {"default": "ask", "allow": ["git status"], "deny": []}
+        }}});
+        let add = RuleAdd::Glob {
+            tool: "shell".into(),
+            deny: true,
+        };
+        let (path, value) = rule_added(&config, &add, " rm -rf * ").unwrap();
+        assert_eq!(path, ["permissions", "tools", "shell"]);
+        assert_eq!(
+            value,
+            serde_json::json!({"default": "ask", "allow": ["git status"], "deny": ["rm -rf *"]})
+        );
+        let (path, value) = rule_added(&config, &RuleAdd::Tool, "write").unwrap();
+        assert_eq!(path, ["permissions", "tools", "write"]);
+        assert_eq!(value, serde_json::json!({"default": "ask"}));
+        assert!(rule_added(&config, &RuleAdd::Tool, "  ").is_none());
+        let fresh = RuleAdd::Glob {
+            tool: "read".into(),
+            deny: false,
+        };
+        let (_, value) = rule_added(&config, &fresh, "src/**").unwrap();
+        assert_eq!(value["default"], "allow");
+    }
+
+    #[test]
+    fn plugins_join_the_installed_files_with_the_config() {
+        let snapshot = Snapshot::parse(&serde_json::json!({
+            "plugins": {
+                "enabled": ["tokps"],
+                "capabilities": {"tokps": ["session_write"]},
+                "config": {"gone": {"k": "<redacted>"}}
+            },
+            "installedPlugins": [
+                {"name": "tokps", "enabled": true},
+                {"name": "clock", "enabled": false}
+            ]
+        }));
+        let rows = plugin_rows(&snapshot);
+        let lines: Vec<(&str, &str)> = rows
+            .iter()
+            .map(|row| (row.name.as_str(), row.detail.as_str()))
+            .collect();
+        assert_eq!(
+            lines,
+            [
+                ("clock", "skipped by the allowlist"),
+                ("gone", "not installed \u{b7} has settings"),
+                ("tokps", "loads \u{b7} capabilities granted in config.toml"),
+            ]
+        );
+        assert_eq!(rows[2].caps, ["session_write"]);
+        assert_eq!(rows[1].enabled, None);
+        assert_eq!(
+            toggled_allowlist(&snapshot, "clock", true).unwrap(),
+            ["clock", "tokps"]
+        );
+        assert_eq!(toggled_allowlist(&snapshot, "tokps", false), None);
+        let open = Snapshot::parse(&serde_json::json!({
+            "installedPlugins": [{"name": "a", "enabled": true}, {"name": "b", "enabled": true}]
+        }));
+        assert_eq!(toggled_allowlist(&open, "a", false).unwrap(), ["b"]);
+    }
 
     #[test]
     fn providers_join_the_snapshot_with_the_offered_models() {
@@ -1054,7 +2239,7 @@ mod tests {
             "providers": {
                 "custom": {"lab": {"base_url": "http://lab:8080", "api_key_env": "LAB_KEY",
                     "models": [{"id": "m1", "name": "Lab One", "context": 128000}]}},
-                "deepseek": {"api_key_env": "DS", "headers": {"X-Org": "x"}}
+                "deepseek": {"api_key_env": "DS", "headers": {"X-Org": "<redacted>"}}
             }
         }));
         let model: kage_client::wire::SessionConfigOption =
@@ -1086,107 +2271,5 @@ mod tests {
         let snapshot = Snapshot::parse(&serde_json::json!({"providers": 3}));
         assert!(snapshot.mcp.servers.is_empty());
         assert!(provider_rows(&snapshot, None).is_empty());
-    }
-
-    #[test]
-    fn mcp_rows_carry_the_live_status_and_the_transport() {
-        let snapshot = Snapshot::parse(&serde_json::json!({
-            "mcp": {"servers": {
-                "lab": {"command": "lab-mcp", "args": ["--port", "9"], "env": {"K": "v"}},
-                "web": {"url": "https://mcp.example.com", "headers": {"A": "b"}},
-                "off": {"command": "x", "disabled": true}
-            }}
-        }));
-        let mut live = std::collections::BTreeMap::new();
-        live.insert(
-            "lab".to_owned(),
-            kage_client::wire::McpServerStatus::Connected,
-        );
-        live.insert(
-            "web".to_owned(),
-            kage_client::wire::McpServerStatus::Failed {
-                error: "handshake refused".to_owned(),
-            },
-        );
-        let rows = mcp_rows(&snapshot, &live);
-        let lab = rows.iter().find(|row| row.name == "lab").expect("lab");
-        assert_eq!(lab.transport, "stdio");
-        assert_eq!(lab.status, McpStatus::Connected);
-        assert_eq!(lab.target, "lab-mcp --port 9");
-        assert_eq!(lab.extras, ["env: K"]);
-        let web = rows.iter().find(|row| row.name == "web").expect("web");
-        assert_eq!(web.transport, "http");
-        assert_eq!(web.status, McpStatus::Failed);
-        assert_eq!(web.target, "https://mcp.example.com");
-        let off = rows.iter().find(|row| row.name == "off").expect("off");
-        assert_eq!(off.status, McpStatus::Disabled);
-        assert_eq!(off.status.word(), "disabled");
-    }
-
-    #[test]
-    fn an_unreported_server_reads_status_unknown() {
-        let snapshot = Snapshot::parse(&serde_json::json!({
-            "mcp": {"servers": {"lab": {"command": "lab-mcp"}}}
-        }));
-        let rows = mcp_rows(&snapshot, &std::collections::BTreeMap::new());
-        assert_eq!(rows[0].status, McpStatus::Unknown);
-        assert_eq!(rows[0].status.word(), "status unknown");
-    }
-
-    #[test]
-    fn mode_cards_drop_the_plan_mode_and_mark_the_current_one() {
-        let modes: kage_client::wire::SessionConfigOption =
-            serde_json::from_value(serde_json::json!({
-                "id": "mode", "name": "Mode", "type": "select", "currentValue": "ask",
-                "options": [
-                    {"value": "plan", "name": "Plan"},
-                    {"value": "ask", "name": "Ask"},
-                    {"value": "allow", "name": "Allow", "description": "Let it run"}
-                ]
-            }))
-            .unwrap();
-        let cards = mode_cards(Some(&modes), Some("allow"));
-        let values: Vec<&str> = cards.iter().map(|card| card.value.as_str()).collect();
-        assert_eq!(values, ["ask", "allow"]);
-        assert!(!cards[0].on);
-        assert!(cards[1].on);
-        assert_eq!(cards[1].description.as_deref(), Some("Let it run"));
-        assert!(mode_cards(None, None).is_empty());
-    }
-
-    #[test]
-    fn rule_rows_list_tools_then_mcp_servers() {
-        let snapshot = Snapshot::parse(&serde_json::json!({
-            "permissions": {
-                "tools": {"shell": {"default": "ask", "allow": ["cargo *"], "deny": ["rm *"]}},
-                "mcp": {"*": "ask", "lab": "deny"}
-            }
-        }));
-        let rows = rule_rows(&snapshot);
-        assert_eq!(rows.len(), 3);
-        assert_eq!(rows[0].tool, "shell");
-        assert_eq!(rows[0].action, "ask");
-        assert_eq!(rows[0].allow, ["cargo *"]);
-        assert_eq!(rows[0].deny, ["rm *"]);
-        assert_eq!(rows[1].tool, "every MCP server");
-        assert_eq!(rows[2].tool, "mcp: lab");
-        assert_eq!(rows[2].action, "deny");
-    }
-
-    #[test]
-    fn plugin_rows_merge_the_grants_with_the_settings() {
-        let snapshot = Snapshot::parse(&serde_json::json!({
-            "plugins": {
-                "enabled": ["lab"],
-                "capabilities": {"lab": ["net"], "web": ["fs"]},
-                "config": {"lab": {"key": 1}}
-            }
-        }));
-        let rows = plugin_rows(&snapshot);
-        let names: Vec<&str> = rows.iter().map(|row| row.name.as_str()).collect();
-        assert_eq!(names, ["lab", "web"]);
-        assert_eq!(rows[0].caps, ["net"]);
-        assert!(rows[0].has_settings);
-        assert!(!rows[1].has_settings);
     }
 }

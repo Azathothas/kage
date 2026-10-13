@@ -132,60 +132,41 @@ fn detail_frame(ui: &mut egui::Ui, palette: &Palette, contents: impl FnOnce(&mut
 
 /// The steered bubble's border, drawn as dashes because egui strokes
 /// carry no dash pattern.
-fn dashed_rect(ui: &egui::Ui, rect: egui::Rect, radius: f32, color: egui::Color32) {
-    let stroke = egui::Stroke::new(1.0, color);
-    let dash = |from: egui::Pos2, to: egui::Pos2| {
-        let along = to - from;
-        let length = along.length();
-        if length <= 0.0 {
-            return Vec::new();
-        }
-        let step = along / length * DASH;
-        let mut points = Vec::new();
-        let mut at = from;
-        let mut on = true;
-        let mut drawn = 0.0;
-        while drawn < length {
-            let next = at + step;
-            if on {
-                points.push(at);
-                points.push(next.min(to));
-            }
-            at = next;
-            drawn += DASH;
-            on = !on;
-        }
-        points
-    };
-    let inset = egui::Rect::from_min_max(
-        rect.min + egui::vec2(radius, radius),
-        rect.max - egui::vec2(radius, radius),
-    );
-    let top_left = inset.left_top();
-    let top_right = inset.right_top();
-    let bottom_right = inset.right_bottom();
-    let bottom_left = inset.left_bottom();
-    let sides = [
-        (egui::pos2(rect.left(), inset.top()), top_left),
-        (top_left, top_right),
-        (top_right, egui::pos2(rect.right(), inset.top())),
-        (
-            egui::pos2(rect.right(), inset.top()),
-            egui::pos2(rect.right(), inset.bottom()),
-        ),
-        (egui::pos2(rect.right(), inset.bottom()), bottom_right),
-        (bottom_right, bottom_left),
-        (bottom_left, egui::pos2(rect.left(), inset.bottom())),
-        (
-            egui::pos2(rect.left(), inset.bottom()),
-            egui::pos2(rect.left(), inset.top()),
-        ),
+pub(crate) fn dashed_rect(ui: &egui::Ui, rect: egui::Rect, radius: f32, color: egui::Color32) {
+    let r = radius.min(rect.width() / 2.0).min(rect.height() / 2.0).max(0.0);
+    let quarter = std::f32::consts::FRAC_PI_2;
+    let corners = [
+        (egui::pos2(rect.right() - r, rect.top() + r), -quarter),
+        (egui::pos2(rect.right() - r, rect.bottom() - r), 0.0),
+        (egui::pos2(rect.left() + r, rect.bottom() - r), quarter),
+        (egui::pos2(rect.left() + r, rect.top() + r), 2.0 * quarter),
     ];
-    for (from, to) in sides {
-        let points = dash(from, to);
-        for pair in points.chunks(2) {
-            if let [from, to] = pair {
-                ui.painter().line_segment([*from, *to], stroke);
+    let mut outline: Vec<egui::Pos2> = Vec::new();
+    for (center, start) in corners {
+        for step in 0..=8 {
+            let angle = start + quarter * step as f32 / 8.0;
+            outline.push(center + r * egui::vec2(angle.cos(), angle.sin()));
+        }
+    }
+    outline.push(outline[0]);
+    let stroke = egui::Stroke::new(1.0, color);
+    let mut on = true;
+    let mut left = DASH;
+    for pair in outline.windows(2) {
+        let (mut from, to) = (pair[0], pair[1]);
+        let mut length = (to - from).length();
+        while length > 0.0 {
+            let take = left.min(length);
+            let next = from + (to - from) * (take / length);
+            if on {
+                ui.painter().line_segment([from, next], stroke);
+            }
+            from = next;
+            length -= take;
+            left -= take;
+            if left <= 0.0 {
+                on = !on;
+                left = DASH;
             }
         }
     }

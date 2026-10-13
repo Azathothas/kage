@@ -6,8 +6,6 @@
 //! shell stores; everything about the engine is read from what the
 //! connection reported and says unknown where it reported nothing.
 
-use kage_client::wire::SessionConfigOption;
-
 use crate::prefs::Prefs;
 use crate::store::Store;
 use crate::theme::{
@@ -264,6 +262,8 @@ pub struct Settings {
     section: Section,
     /// The forms open over their page, one at most.
     form: Option<Form>,
+    /// What the config pages edit in place.
+    pages: config::PageState,
 }
 
 /// A form open over a settings page.
@@ -293,6 +293,7 @@ impl Settings {
             open: false,
             section: Section::General,
             form: None,
+            pages: config::PageState::default(),
         }
     }
 
@@ -326,6 +327,7 @@ impl Settings {
     pub fn go(&mut self, section: Section) {
         self.section = section;
         self.form = None;
+        self.pages = config::PageState::default();
     }
 
     /// Opens `form` over the page that shows.
@@ -376,7 +378,15 @@ impl Settings {
                 None => FormOutcome::Done(false),
             },
             None => {
-                page(ui, store, self.section, palette, updates, events);
+                page(
+                    ui,
+                    store,
+                    self.section,
+                    &mut self.pages,
+                    palette,
+                    updates,
+                    events,
+                );
                 FormOutcome::Done(false)
             }
         }
@@ -730,6 +740,7 @@ fn page(
     ui: &mut egui::Ui,
     store: &mut Store,
     section: Section,
+    pages: &mut config::PageState,
     palette: &Palette,
     updates: &UpdateState,
     events: &mut Vec<SettingsEvent>,
@@ -755,7 +766,9 @@ fn page(
                         Section::Providers
                         | Section::Mcp
                         | Section::Permissions
-                        | Section::Plugins => config_page(ui, store, section, palette, events),
+                        | Section::Plugins => {
+                            config_page(ui, store, section, pages, palette, events);
+                        }
                         Section::Connection => connection(ui, store, palette),
                         Section::Keyboard => keyboard(ui, store, palette),
                         Section::Archived => archived(ui, store, palette, events),
@@ -1341,37 +1354,57 @@ fn theme_card(
     }
 }
 
-/// One page the configuration snapshot backs.
+/// One page the configuration snapshot backs. The pages read the
+/// active session, or the first open one, for its live facts.
 fn config_page(
     ui: &mut egui::Ui,
-    store: &Store,
+    store: &mut Store,
     section: Section,
+    pages: &mut config::PageState,
     palette: &Palette,
     events: &mut Vec<SettingsEvent>,
 ) {
     let Some(config) = store.config() else {
-        note(ui, "Reading the engine's configuration\u{2026}", palette);
+        config::waiting(ui, palette);
         return;
     };
     let snapshot = config::Snapshot::parse(config);
-    let session = store.active_session();
+    let session = store
+        .active_session()
+        .or_else(|| {
+            store
+                .state()
+                .sessions
+                .values()
+                .find(|session| session.opened && session.parent.is_none())
+        })
+        .cloned();
     let option = |id: &str| {
-        session.and_then(|session| session.config_options.iter().find(|option| option.id == id))
+        session
+            .as_ref()
+            .and_then(|session| session.config_options.iter().find(|option| option.id == id))
+            .cloned()
     };
     match section {
         Section::Providers => {
-            config::providers_page(ui, &snapshot, option("model"), palette, events);
-            config::acp_page(ui, &snapshot, palette, events);
+            config::providers_page(
+                ui,
+                &snapshot,
+                option("model").as_ref(),
+                pages,
+                palette,
+                events,
+            );
         }
         Section::Mcp => {
             let live = session
+                .as_ref()
                 .map(|session| session.mcp.clone())
                 .unwrap_or_default();
             config::mcp_page(ui, &snapshot, &live, palette, events);
         }
         Section::Permissions => {
-            let modes: Option<SessionConfigOption> = option("mode").map(|option| {
-                let mut option = option.clone();
+            let modes = option("mode").map(|mut option| {
                 option
                     .options
                     .retain(|choice| choice.value != crate::modes::PLAN_MODE);
@@ -1380,14 +1413,16 @@ fn config_page(
             let current = store.permission_mode();
             config::permissions_page(
                 ui,
+                store,
                 &snapshot,
                 modes.as_ref(),
                 current.as_deref(),
+                pages,
                 palette,
                 events,
             );
         }
-        Section::Plugins => config::plugins_page(ui, &snapshot, palette),
+        Section::Plugins => config::plugins_page(ui, store, &snapshot, pages, palette),
         _ => {}
     }
 }

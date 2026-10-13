@@ -173,22 +173,19 @@ fn the_providers_page_add_button_opens_the_provider_form() {
     let mut harness = harness_for(configured());
     harness.state_mut().1.open(Section::Providers);
     settle(&mut harness);
+    harness.get_by_label("Add provider").click();
+    harness.run();
     assert_eq!(
-        testutil::count(&harness, "Add custom provider"),
+        testutil::count(&harness, "Custom"),
         1,
-        "the page draws its add button"
+        "the chooser offers a custom endpoint"
     );
-    harness.get_by_label("Add custom provider").click();
+    harness.get_by_label("Custom").click();
     harness.run();
     assert_eq!(
         testutil::count(&harness, "Add provider"),
         1,
         "the provider form draws over the page"
-    );
-    assert_eq!(
-        testutil::count(&harness, "Add custom provider"),
-        0,
-        "the page it opened from is gone"
     );
     assert_eq!(
         testutil::count(&harness, "Base URL"),
@@ -203,20 +200,11 @@ fn the_providers_page_add_button_opens_the_provider_form() {
 }
 
 #[test]
-fn the_providers_page_edit_button_opens_the_form_on_that_row() {
+fn a_provider_row_opens_the_form_on_that_provider() {
     let mut harness = harness_for(configured());
     harness.state_mut().1.open(Section::Providers);
     settle(&mut harness);
-    assert_eq!(
-        harness.query_all_by_label("Edit").count(),
-        4,
-        "one edit button per configured provider and agent"
-    );
-    harness
-        .query_all_by_label("Edit")
-        .next()
-        .expect("the first row's edit button")
-        .click();
+    harness.get_by_label("lab").click();
     harness.run();
     assert_eq!(
         testutil::count(&harness, "Edit lab"),
@@ -264,26 +252,23 @@ fn the_mcp_page_add_button_opens_the_server_form() {
 }
 
 #[test]
-fn the_providers_page_acp_button_opens_the_agent_form() {
+fn the_chooser_opens_the_acp_agent_form() {
     let mut harness = harness_for(configured());
     harness.state_mut().1.open(Section::Providers);
     settle(&mut harness);
     assert_eq!(
-        testutil::count(&harness, "Add ACP agent"),
+        testutil::count(&harness, "acp:claude"),
         1,
-        "the page draws its add button"
+        "the configured agent lists with the providers"
     );
-    assert_eq!(
-        testutil::count(&harness, "npx -y claude-code-acp"),
-        1,
-        "the configured agent's command line draws"
-    );
-    harness.get_by_label("Add ACP agent").click();
+    harness.get_by_label("Add provider").click();
+    harness.run();
+    harness.get_by_label("ACP agent").click();
     harness.run();
     assert_eq!(
         testutil::count(&harness, "Add ACP agent"),
         1,
-        "the form's own title reuses the page's add label"
+        "the agent form draws"
     );
     assert_eq!(
         testutil::count(&harness, "Command"),
@@ -303,15 +288,11 @@ fn the_providers_page_acp_button_opens_the_agent_form() {
 }
 
 #[test]
-fn the_providers_page_opens_the_form_on_an_acp_agent() {
+fn an_acp_agent_row_opens_the_form_on_that_agent() {
     let mut harness = harness_for(configured());
     harness.state_mut().1.open(Section::Providers);
     settle(&mut harness);
-    harness
-        .query_all_by_label("Edit")
-        .last()
-        .expect("the agent row has an edit button")
-        .click();
+    harness.get_by_label("acp:claude").click();
     harness.run();
     assert_eq!(
         testutil::count(&harness, "Edit acp:claude"),
@@ -329,7 +310,9 @@ fn the_directory_button_opens_the_models_dev_picker() {
     let mut harness = harness_for(configured());
     harness.state_mut().1.open(Section::Providers);
     settle(&mut harness);
-    harness.get_by_label("Import from models.dev").click();
+    harness.get_by_label("Add provider").click();
+    harness.run();
+    harness.get_by_label("From models.dev").click();
     harness.run();
     assert_eq!(
         testutil::count(&harness, "Import from models.dev"),
@@ -372,4 +355,23 @@ fn the_escape_key_leaves_a_form_before_the_dialog() {
         "the key left the form and the page is back"
     );
     assert!(harness.state().1.is_open(), "the dialog itself stayed open");
+}
+
+/// Renders every settings page to `/tmp/settings-<page>.png` for a
+/// side-by-side against the reference, when `KAGE_PROBE_PNG` is set.
+#[test]
+fn every_page_renders_for_review() {
+    if std::env::var_os("KAGE_PROBE_PNG").is_none() {
+        return;
+    }
+    for section in Section::ALL {
+        let mut harness = harness_for(configured());
+        harness.state_mut().1.open(section);
+        settle(&mut harness);
+        let name = section.label().to_lowercase().replace([' ', '&'], "-");
+        let image = harness.render().expect("the page renders");
+        image
+            .save(format!("/tmp/settings-{name}.png"))
+            .expect("the page image saves");
+    }
 }
