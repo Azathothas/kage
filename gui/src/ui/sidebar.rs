@@ -481,24 +481,12 @@ fn brand_row(ui: &mut egui::Ui, version: Option<&str>, events: &mut Vec<SidebarE
         egui::Sense::hover(),
     );
     let painter = ui.painter();
-    let mark = 22.0;
-    let center = egui::pos2(rect.left() + 14.0 + mark / 2.0, rect.center().y);
-    painter.rect_filled(
-        egui::Rect::from_center_size(center, egui::vec2(mark, mark)),
-        egui::CornerRadius::same((mark / 2.0) as u8),
-        palette.orb_1,
-    );
-    let inner = mark * 17.0 / 24.0;
-    painter.rect_filled(
-        egui::Rect::from_center_size(
-            center + egui::vec2(mark * 8.0 / 24.0, -mark * 0.5 / 24.0),
-            egui::vec2(inner, inner),
-        ),
-        egui::CornerRadius::same((inner / 2.0) as u8),
-        palette.sidebar,
-    );
+    let radius = 11.0;
+    let center = egui::pos2(rect.left() + 6.0 + radius, rect.center().y);
+    painter.add(orb(center, radius, palette.orb_1, palette.orb_2));
+    painter.circle_filled(center + egui::vec2(4.1, 0.2), 6.8, palette.sidebar);
     let wordmark = painter.text(
-        egui::pos2(center.x + mark / 2.0 + 9.0, rect.center().y),
+        egui::pos2(center.x + radius + 9.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         "kage",
         egui::FontId::new(15.0, family(FAMILY_BODY_EXTRABOLD)),
@@ -535,13 +523,34 @@ fn brand_row(ui: &mut egui::Ui, version: Option<&str>, events: &mut Vec<SidebarE
     }
 }
 
+/// A disc filled with a diagonal gradient from `from` at its top left
+/// to `to` at its bottom right.
+fn orb(center: egui::Pos2, radius: f32, from: egui::Color32, to: egui::Color32) -> egui::Shape {
+    const STEPS: usize = 48;
+    let mut mesh = egui::Mesh::default();
+    let shade = |at: egui::Pos2| {
+        let t = ((at.x - center.x) + (at.y - center.y)) / (4.0 * radius) + 0.5;
+        from.lerp_to_gamma(to, t.clamp(0.0, 1.0))
+    };
+    mesh.colored_vertex(center, shade(center));
+    for step in 0..=STEPS {
+        let angle = step as f32 / STEPS as f32 * std::f32::consts::TAU;
+        let at = center + egui::vec2(angle.cos(), angle.sin()) * radius;
+        mesh.colored_vertex(at, shade(at));
+    }
+    for step in 0..STEPS as u32 {
+        mesh.add_triangle(0, step + 1, step + 2);
+    }
+    egui::Shape::mesh(mesh)
+}
+
 /// The New session and Search nav rows.
 fn nav_rows(ui: &mut egui::Ui, events: &mut Vec<SidebarEvent>) {
     let palette = Palette::active_of(ui.ctx());
     if nav_row(
         ui,
         palette,
-        crate::icons::Icon::Plus,
+        crate::icons::Icon::SquarePen,
         "New session",
         "Ctrl N",
     ) {
@@ -713,10 +722,13 @@ fn project_row(
                     FS_SM,
                     palette.muted,
                 ),
-                egui::RichText::new(format!("{project} ({})", members.len()))
+                egui::RichText::new(project)
                     .size(FS_SM)
                     .color(palette.muted),
                 egui::Atom::grow(),
+                egui::RichText::new(members.len().to_string())
+                    .size(FS_XS)
+                    .color(palette.faint),
             ))
             .fill(egui::Color32::TRANSPARENT)
             .stroke(egui::Stroke::NONE)
@@ -801,6 +813,11 @@ fn session_row(
             rect.center().y,
             egui::Stroke::new(1.0, color),
         );
+        ui.painter().vline(
+            left,
+            egui::Rangef::new(rect.top(), rect.center().y),
+            egui::Stroke::new(1.0, palette.line_strong),
+        );
         if !place.last {
             ui.painter().vline(
                 left,
@@ -818,9 +835,8 @@ fn session_row(
         RowState::Failed => Some(("Failed".to_owned(), palette.danger, palette.danger_soft)),
         RowState::Running => None,
         RowState::Idle if item.swarm => None,
-        RowState::Idle => {
-            ago(item.updated_at.as_deref(), now).map(|when| (when, palette.faint, palette.fill))
-        }
+        RowState::Idle => ago(item.updated_at.as_deref(), now)
+            .map(|when| (when, palette.faint, egui::Color32::TRANSPARENT)),
     };
     let badge = trailing.map(|(label, fg, bg)| {
         let galley = ui.painter().layout_no_wrap(

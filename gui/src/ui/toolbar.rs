@@ -265,7 +265,7 @@ fn pill(
         .show(ui, |ui| {
             ui.set_min_height(PILL_H);
             ui.style_mut().interaction.selectable_labels = false;
-            ui.horizontal(|ui| {
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
                 body(ui);
             })
