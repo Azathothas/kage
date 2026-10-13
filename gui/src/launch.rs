@@ -1094,12 +1094,11 @@ impl ShellApp {
             self.shell.transcript.scroll_to_row(key);
         }
 
+        let mut chosen = None;
         if self.shell.palette.is_open() {
             let registry = crate::ui::palette::RegistryOwned::of(self.shell.store());
             let rows = registry.view().rows(self.shell.palette.query());
-            if let Some(entry) = palette.show(ui, &rows) {
-                let _ = entry;
-            }
+            chosen = palette.show(ui, &rows);
         }
         // The dialog layer sits above every panel, over the palette
         // too: a dialog the palette opens must not answer beneath it.
@@ -1133,6 +1132,9 @@ impl ShellApp {
         self.shell.gate_banner = banner;
         self.shell.panels = panels;
         self.shell.palette = palette;
+        if let Some(entry) = chosen {
+            self.run_palette_entry(entry, ui.ctx());
+        }
         self.shell.toasts = toasts;
         self.carry_toast_actions();
     }
@@ -1175,7 +1177,10 @@ impl ShellApp {
                 crate::ui::sidebar::SidebarEvent::OpenPalette => {
                     self.shell.palette.open();
                 }
-                crate::ui::sidebar::SidebarEvent::OpenSettings => {}
+                crate::ui::sidebar::SidebarEvent::OpenSettings => self
+                    .shell
+                    .settings
+                    .open(crate::ui::settings::Section::General),
                 crate::ui::sidebar::SidebarEvent::Collapse => {
                     self.shell.panels.toggle_sidebar();
                 }
@@ -2235,6 +2240,66 @@ impl ShellApp {
         true
     }
 
+    /// Carries out the row the command palette ran.
+    fn run_palette_entry(&mut self, entry: crate::ui::palette::PaletteEntry, ctx: &egui::Context) {
+        use crate::ui::palette::{Action, PaletteEntry};
+        use crate::ui::workbench::Tab;
+        match entry {
+            PaletteEntry::Action { action, .. } => match action {
+                Action::NewSession => self.carry(crate::ui::keys::Action::NewSession),
+                Action::Workbench => self.carry(crate::ui::keys::Action::ToggleWorkbench),
+                Action::Sidebar => self.carry(crate::ui::keys::Action::ToggleSidebar),
+                Action::Settings | Action::Theme => {
+                    self.carry(crate::ui::keys::Action::OpenSettings);
+                }
+                Action::Agents => self.show_workbench_tab(Tab::Agents),
+                Action::Changes => self.show_workbench_tab(Tab::Changes),
+                Action::Goal => {
+                    self.shell
+                        .dialogs
+                        .show_dialog(crate::ui::dialog::DialogKind::Goal, &mut self.shell.store);
+                }
+                Action::Plan => {
+                    if self.shell.store.plan_on() {
+                        self.shell.store.exit_plan();
+                    } else {
+                        self.shell.store.enter_plan();
+                    }
+                }
+                Action::Swarm => {
+                    let on = self
+                        .shell
+                        .store
+                        .composer_option("swarm")
+                        .is_some_and(|option| option.current_value == "on");
+                    if on {
+                        self.shell.store.set_option("swarm", "off");
+                    } else if self.shell.store.prefs().confirm_swarm {
+                        self.shell.dialogs.show_dialog(
+                            crate::ui::dialog::DialogKind::ConfirmSwarm,
+                            &mut self.shell.store,
+                        );
+                    } else {
+                        self.shell.store.set_option("swarm", "on");
+                    }
+                }
+            },
+            PaletteEntry::Session { id, .. } => self.shell.store.set_active(id),
+            PaletteEntry::Command { name, .. } => {
+                self.shell.composer.set_draft(format!("/{name} "));
+                ctx.memory_mut(|memory| {
+                    memory.request_focus(egui::Id::new("composer-input"));
+                });
+            }
+        }
+    }
+
+    /// Shows the workbench on `tab`.
+    fn show_workbench_tab(&mut self, tab: crate::ui::workbench::Tab) {
+        self.shell.panels.workbench_visible = true;
+        self.shell.workbench.set_tab(tab);
+    }
+
     /// Carries out one routed action.
     fn carry(&mut self, action: crate::ui::keys::Action) {
         use crate::ui::keys::Action;
@@ -2269,12 +2334,14 @@ impl ShellApp {
                 }
             }
             Action::CycleMode => self.cycle_permission(),
-            Action::SendPrompt
-            | Action::ToggleSwarm
-            | Action::TogglePlan
-            | Action::SetGoal
-            | Action::ShowAgents
-            | Action::ReviewChanges => {}
+            Action::ShowAgents => self.show_workbench_tab(crate::ui::workbench::Tab::Agents),
+            Action::ReviewChanges => self.show_workbench_tab(crate::ui::workbench::Tab::Changes),
+            Action::SetGoal => {
+                self.shell
+                    .dialogs
+                    .show_dialog(crate::ui::dialog::DialogKind::Goal, &mut self.shell.store);
+            }
+            Action::SendPrompt | Action::ToggleSwarm | Action::TogglePlan => {}
         }
     }
 

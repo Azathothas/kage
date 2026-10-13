@@ -1657,9 +1657,15 @@ fn row(
             ui.add_space(16.0);
             ui.spacing_mut().item_spacing.x = 16.0;
             ui.vertical(|ui| {
+                ui.set_max_width(rect.width() - 320.0);
                 ui.label(egui::RichText::new(label).size(FS_SM).color(palette.ink));
                 if !hint.is_empty() {
-                    ui.label(egui::RichText::new(hint).size(FS_XS).color(palette.muted));
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(hint).size(FS_XS).color(palette.muted),
+                        )
+                        .wrap(),
+                    );
                 }
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
