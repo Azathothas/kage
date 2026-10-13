@@ -86,6 +86,8 @@ pub enum RowAction {
     ResumeSwarm(Vec<String>),
     /// Copy this text to the clipboard.
     Copy(String),
+    /// Put this message's text in the composer to edit and resend.
+    Edit(String),
     /// Retry the run with this prompt.
     Retry(String),
     /// Fork the session through this item, when named.

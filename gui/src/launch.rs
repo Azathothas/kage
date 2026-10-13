@@ -1053,6 +1053,9 @@ impl ShellApp {
                 }
             }
         }
+        for action in std::mem::take(&mut self.row_actions) {
+            self.carry_row(ui.ctx(), &mut panels, action);
+        }
         self.shell.sidebar = sidebar.into_inner();
         self.shell.store = store.into_inner();
         self.shell.workbench = workbench_state.into_inner();
@@ -1320,6 +1323,65 @@ impl ShellApp {
             }
         } else {
             self.shell.approval.blur();
+        }
+    }
+
+    /// Carries out what a transcript row asked for.
+    fn carry_row(
+        &mut self,
+        ctx: &egui::Context,
+        panels: &mut crate::ui::shell::Panels,
+        action: crate::ui::transcript::tool_rows::RowAction,
+    ) {
+        use crate::ui::transcript::tool_rows::RowAction;
+        use crate::ui::workbench::Tab;
+        match action {
+            RowAction::OpenFile(path) => self.show_workbench(panels, Tab::Files, Some(path)),
+            RowAction::OpenChange(path) => self.show_workbench(panels, Tab::Changes, Some(path)),
+            RowAction::OpenBrowser => self.show_workbench(panels, Tab::Browser, None),
+            RowAction::OpenAgent(id) => {
+                self.show_workbench(panels, Tab::Agents, None);
+                self.shell.workbench.select(Some(id));
+            }
+            RowAction::OpenAgents => self.show_workbench(panels, Tab::Agents, None),
+            RowAction::Review(choice, revision) => {
+                self.shell.store.review_plan(choice, revision.as_deref());
+            }
+            RowAction::CancelAgent(id) => self.shell.store.cancel_session(&id),
+            RowAction::ResumeSwarm(members) => {
+                self.shell.store.resume_swarm(&members);
+            }
+            RowAction::Copy(text) => ctx.copy_text(text),
+            RowAction::Edit(text) => {
+                self.shell.composer.set_draft(text);
+                ctx.memory_mut(|memory| {
+                    memory.request_focus(egui::Id::new("composer-input"));
+                });
+            }
+            RowAction::Retry(prompt) => {
+                self.shell.store.prompt(&prompt);
+            }
+            RowAction::Fork(through) => {
+                self.shell.store.fork(through);
+            }
+            RowAction::Rewind(prompt) => {
+                self.shell.store.rewind(prompt);
+            }
+        }
+    }
+
+    /// Shows the workbench on `tab`, previewing `file` when the tab
+    /// shows files.
+    fn show_workbench(
+        &mut self,
+        panels: &mut crate::ui::shell::Panels,
+        tab: crate::ui::workbench::Tab,
+        file: Option<String>,
+    ) {
+        panels.workbench_visible = true;
+        self.shell.workbench.set_tab(tab);
+        if file.is_some() {
+            self.shell.workbench.set_file(file);
         }
     }
 

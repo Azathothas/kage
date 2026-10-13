@@ -14,7 +14,7 @@ use kage_client::wire::{NoticeTone, SubagentState};
 use kage_client::{Session, Subagent, TranscriptItem};
 
 use crate::store::Store;
-use crate::theme::Palette;
+use crate::theme::{FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_SM, FS_XS, Palette, R_LG, family};
 use crate::ui::transcript::model::tool_verb;
 
 /// Where one subagent stands, as the cards label it.
@@ -30,6 +30,98 @@ pub enum Phase {
     Failed,
     /// Stopped.
     Cancelled,
+}
+
+/// The card a delivered agent report renders as: who finished, how it
+/// ended, its run time and the first lines of its reply. Reports
+/// whether the card was clicked, which opens the agent.
+pub fn report_card(ui: &mut egui::Ui, n: usize, report: &Report, palette: &Palette) -> bool {
+    const SHOWN: usize = 6;
+    let phase = match report.state.as_str() {
+        "completed" => Phase::Done,
+        "failed" => Phase::Failed,
+        "cancelled" => Phase::Cancelled,
+        _ => Phase::Running,
+    };
+    let word = match report.limit.as_deref() {
+        Some("turns") => "Turn limit",
+        Some("time") => "Timed out",
+        Some("budget") => "Over budget",
+        _ => phase.label(),
+    };
+    let lines: Vec<&str> = report.body.lines().collect();
+    let mut reply = lines
+        .iter()
+        .take(SHOWN)
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n");
+    if lines.len() > SHOWN {
+        let more = lines.len() - SHOWN;
+        reply.push_str(&format!(
+            "\n... {more} more {}",
+            if more == 1 { "line" } else { "lines" }
+        ));
+    }
+    let frame = egui::Frame::NONE
+        .fill(palette.surface)
+        .stroke(egui::Stroke::new(1.0, palette.line))
+        .corner_radius(egui::CornerRadius::same(R_LG as u8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.add_space(12.0);
+                ui.label(
+                    egui::RichText::new(format!("{} finished", report.name))
+                        .size(FS_SM)
+                        .family(family(FAMILY_BODY_SEMIBOLD))
+                        .color(palette.ink_strong),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add_space(12.0);
+                    if let Some(ms) = report.run_ms {
+                        ui.label(
+                            egui::RichText::new(crate::clock::span(Duration::from_millis(ms)))
+                                .size(FS_XS)
+                                .family(family(FAMILY_MONO_REGULAR))
+                                .color(palette.faint),
+                        );
+                    }
+                    egui::Frame::NONE
+                        .fill(palette.fill)
+                        .corner_radius(egui::CornerRadius::same(u8::MAX))
+                        .inner_margin(egui::Margin::symmetric(9, 3))
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                crate::icons::icon(ui, phase.icon(), 12.0, phase.color(palette));
+                                ui.label(
+                                    egui::RichText::new(word)
+                                        .size(FS_XS)
+                                        .color(phase.color(palette)),
+                                );
+                            });
+                        });
+                });
+            });
+            if !reply.trim().is_empty() {
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.add_space(12.0);
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(reply).size(FS_XS).color(palette.muted),
+                        )
+                        .wrap(),
+                    );
+                });
+            }
+        });
+    ui.interact(
+        frame.response.rect,
+        ui.id().with(("report", n)),
+        egui::Sense::click(),
+    )
+    .clicked()
 }
 
 impl Phase {

@@ -716,16 +716,32 @@ fn render_row(
             Some(TranscriptItem::User { steered, .. })
                 if let Some((words, parts)) = text_rows::split_prompt(text) =>
             {
-                let (response, actions) =
-                    text_rows::render_delivered(ui, session, *ix, words, &parts, None);
-                route_user(ui, actions);
+                let palette = Palette::active_of(ui.ctx());
+                let mut opened = None;
+                let mut draw = |ui: &mut egui::Ui, n: usize, report: &kage_client::agent_text::Report| {
+                    if crate::ui::agents::report_card(ui, n, report, palette) {
+                        opened = Some(report.session.clone());
+                    }
+                };
+                let (response, actions) = text_rows::render_delivered(
+                    ui,
+                    session,
+                    *ix,
+                    words,
+                    &parts,
+                    Some(&mut draw),
+                );
+                events.extend(actions.into_iter().map(user_row_action));
+                if let Some(id) = opened {
+                    events.push(RowAction::OpenAgent(id));
+                }
                 response
             }
             Some(TranscriptItem::User { steered, .. }) => {
                 let attached = text_rows::attachments(session, *ix);
                 let (response, actions) =
                     text_rows::render_user(ui, session, *ix, text, &attached, *steered);
-                route_user(ui, actions);
+                events.extend(actions.into_iter().map(user_row_action));
                 response
             }
             _ => blank_row(ui),
@@ -849,17 +865,10 @@ fn render_row(
 
 /// Carries out the actions a user row raised: the copy goes to the
 /// clipboard now, and the edit asks for the composer E05 brings.
-fn route_user(ui: &egui::Ui, actions: Vec<UserAction>) {
-    for action in actions {
-        match action {
-            UserAction::Copy(text) => ui.ctx().copy_text(text),
-            UserAction::Edit(text) => {
-                crate::warn(&format!(
-                    "the composer arrives with E05; the edit of {} chars was raised",
-                    text.chars().count()
-                ));
-            }
-        }
+fn user_row_action(action: UserAction) -> RowAction {
+    match action {
+        UserAction::Copy(text) => RowAction::Copy(text),
+        UserAction::Edit(text) => RowAction::Edit(text),
     }
 }
 
