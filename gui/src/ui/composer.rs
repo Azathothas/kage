@@ -849,9 +849,6 @@ impl Composer {
                             .margin(egui::Margin::ZERO)
                             .lock_focus(true);
                         let output = edit.show(ui);
-                        if !store.prefs().vim && ui.ctx().memory(|m| m.focused().is_none()) {
-                            output.response.request_focus();
-                        }
                         if let Some(range) = output.cursor_range {
                             // The caret is a char index; the draft's caret
                             // is a byte offset, so it converts.

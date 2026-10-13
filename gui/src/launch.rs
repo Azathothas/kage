@@ -291,6 +291,9 @@ pub struct Shell {
     /// The composer under the chat column: the field, its toolbar and
     /// its suggestion menus.
     composer: crate::ui::composer::Composer,
+    /// The session the composer last took the keyboard for, so a new
+    /// session takes it again.
+    composer_focus_for: Option<Option<String>>,
     /// The welcome pane, shown in the chat column while no session is
     /// open.
     welcome: crate::ui::welcome::Welcome,
@@ -354,6 +357,7 @@ impl Shell {
             transcript: crate::ui::transcript::view::TranscriptView::new(),
             find: crate::ui::find::FindBar::new(),
             composer: crate::ui::composer::Composer::new(),
+            composer_focus_for: None,
             welcome: crate::ui::welcome::Welcome::new(),
             sidebar: crate::ui::sidebar::Sidebar::new(),
             workbench: crate::ui::workbench::Workbench::new(),
@@ -849,6 +853,15 @@ impl ShellApp {
     /// status bar under them, and the chrome (splash, palette,
     /// toasts) over the top.
     fn draw(&mut self, ui: &mut egui::Ui) {
+        let active = self.shell.store.active_id().map(str::to_owned);
+        if self.shell.composer_focus_for.as_ref() != Some(&active) {
+            if !self.shell.store.prefs().vim {
+                ui.ctx().memory_mut(|memory| {
+                    memory.request_focus(egui::Id::new("composer-input"));
+                });
+            }
+            self.shell.composer_focus_for = Some(active);
+        }
         // The key context: a modal sits above the shell.
         let context = self.context();
         let gate = self.shell.store.gate().clone();
