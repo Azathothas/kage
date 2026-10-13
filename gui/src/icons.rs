@@ -834,8 +834,8 @@ pub fn themed(ui: &mut egui::Ui, icon: Icon, size: f32) -> egui::Response {
     themed_image(icon, size, palette.ink).ui(ui)
 }
 
-/// The image widget for one icon.
-fn themed_image(icon: Icon, size: f32, color: egui::Color32) -> egui::Image<'static> {
+/// The image widget for one icon, for buttons that take an image.
+pub(crate) fn themed_image(icon: Icon, size: f32, color: egui::Color32) -> egui::Image<'static> {
     egui::Image::new(egui::ImageSource::Bytes {
         uri: icon.uri(),
         bytes: icon.bytes().into(),

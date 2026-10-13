@@ -642,14 +642,19 @@ fn project_row(
     let open = !sidebar.collapsed(project);
     let dir = members.iter().find_map(|item| item.dir.clone());
     let response = ui.add(
-        egui::Button::new(
-            egui::RichText::new(format!(
-                "{} {project} ({})",
-                if open { "\u{1F4C2}" } else { "\u{1F4C1}" },
-                members.len()
-            ))
-            .size(FS_SM)
-            .color(palette.muted),
+        egui::Button::image_and_text(
+            crate::icons::themed_image(
+                if open {
+                    crate::icons::Icon::FolderOpen
+                } else {
+                    crate::icons::Icon::Folder
+                },
+                FS_SM,
+                palette.muted,
+            ),
+            egui::RichText::new(format!("{project} ({})", members.len()))
+                .size(FS_SM)
+                .color(palette.muted),
         )
         .fill(egui::Color32::TRANSPARENT)
         .corner_radius(egui::CornerRadius::same(R_MD as u8))
@@ -703,7 +708,7 @@ fn session_row(
                 egui::Color32::TRANSPARENT
             })
             .corner_radius(egui::CornerRadius::same(R_MD as u8))
-            .min_size(egui::vec2(0.0, 32.0)),
+            .min_size(egui::vec2(ui.available_width(), 32.0)),
     );
     let rect = response.rect;
     // The fork guides: a rail per depth, with the elbow at the row's
@@ -738,20 +743,6 @@ fn session_row(
             );
         }
     }
-    ui.painter().text(
-        egui::pos2(rect.left() + indent, rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        title,
-        egui::FontId::new(
-            FS_SM,
-            if item.unread && !item.active {
-                family(FAMILY_BODY_SEMIBOLD)
-            } else {
-                family(FAMILY_BODY_REGULAR)
-            },
-        ),
-        fg,
-    );
     // The trailing fact: the badge, the eclipse, the swarm glyph, the
     // fork count, or the relative time.
     let trailing = match item.state {
@@ -765,12 +756,45 @@ fn session_row(
             ago(item.updated_at.as_deref(), now).map(|when| (when, palette.faint, palette.fill))
         }
     };
-    if let Some((label, fg, bg)) = trailing {
+    let badge = trailing.map(|(label, fg, bg)| {
         let galley = ui.painter().layout_no_wrap(
             label,
             egui::FontId::new(FS_2XS, family(FAMILY_BODY_SEMIBOLD)),
             fg,
         );
+        (galley, fg, bg)
+    });
+    let reserved = match &badge {
+        Some((galley, _, _)) if place.kids > 0 => galley.size().x + 52.0,
+        Some((galley, _, _)) => galley.size().x + 28.0,
+        None if item.state == RowState::Running || place.kids > 0 => 28.0,
+        None => 8.0,
+    };
+    let mut job = egui::text::LayoutJob::simple_singleline(
+        title,
+        egui::FontId::new(
+            FS_SM,
+            if item.unread && !item.active {
+                family(FAMILY_BODY_SEMIBOLD)
+            } else {
+                family(FAMILY_BODY_REGULAR)
+            },
+        ),
+        fg,
+    );
+    job.wrap.max_width = (rect.right() - rect.left() - indent - reserved).max(0.0);
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    job.wrap.overflow_character = Some('…');
+    let title_galley = ui.painter().layout_job(job);
+    let title_y = rect.center().y - title_galley.size().y / 2.0;
+    ui.painter().galley(
+        egui::pos2(rect.left() + indent, title_y),
+        title_galley,
+        fg,
+    );
+    let mut fork_count_right = rect.right() - 12.0;
+    if let Some((galley, fg, bg)) = badge {
         let width = galley.size().x + 12.0;
         let pill_rect = egui::Rect::from_min_size(
             egui::pos2(rect.right() - width - 8.0, rect.center().y - 9.0),
@@ -780,6 +804,7 @@ fn session_row(
             .rect_filled(pill_rect, egui::CornerRadius::same(9), bg);
         ui.painter()
             .galley(pill_rect.center() - galley.size() / 2.0, galley, fg);
+        fork_count_right = pill_rect.left() - 6.0;
     }
     if item.state == RowState::Running {
         // The working eclipse: a filled disc with a crescent bitten out
@@ -796,7 +821,7 @@ fn session_row(
     }
     if place.kids > 0 {
         ui.painter().text(
-            egui::pos2(rect.right() - 12.0, rect.center().y),
+            egui::pos2(fork_count_right, rect.center().y),
             egui::Align2::RIGHT_CENTER,
             format!("\u{2387} {}", place.kids),
             egui::FontId::new(10.5, family(FAMILY_MONO_REGULAR)),
