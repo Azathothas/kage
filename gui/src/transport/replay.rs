@@ -81,6 +81,22 @@ impl ReplayTransport {
         }
     }
 
+    /// The request id `frame` must wait for before it plays, given the
+    /// last answer played so far, which it updates. An answer waits for
+    /// its own request; anything after an answer waits for the request
+    /// that follows it, so a turn's updates never land before the
+    /// prompt that started the turn.
+    fn gate(frame: &Frame, answered: &mut u64) -> u64 {
+        match Self::answer_id(frame) {
+            Some(id) => {
+                *answered = id;
+                id
+            }
+            None if *answered > 0 => *answered + 1,
+            None => 0,
+        }
+    }
+
     /// Waits until the shell has sent requests up to `id`, so the
     /// answer about to play lands on the request it answers.
     #[cfg(not(target_arch = "wasm32"))]
@@ -147,13 +163,12 @@ impl Transport for ReplayTransport {
 fn play_blocking(transport: ReplayTransport, events: EventSender) {
     let _ = events.send_blocking(Event::State(State::Connecting));
     let _ = events.send_blocking(Event::State(State::Connected));
+    let mut answered = 0;
     for frame in transcript() {
         if transport.stop.load(Ordering::SeqCst) {
             return;
         }
-        if let Some(id) = ReplayTransport::answer_id(&frame) {
-            transport.wait_for(id);
-        }
+        transport.wait_for(ReplayTransport::gate(&frame, &mut answered));
         thread::sleep(BEAT);
         if events.send_blocking(Event::Frame(frame)).is_err() {
             return;
@@ -168,14 +183,14 @@ fn play_blocking(transport: ReplayTransport, events: EventSender) {
 async fn play_timed(transport: ReplayTransport, events: EventSender) {
     let _ = events.send(Event::State(State::Connecting)).await;
     let _ = events.send(Event::State(State::Connected)).await;
+    let mut answered = 0;
     for frame in transcript() {
         if transport.stop.load(Ordering::SeqCst) {
             return;
         }
-        if let Some(id) = ReplayTransport::answer_id(&frame) {
-            while transport.asked.load(Ordering::SeqCst) < id {
-                crate::transport::web::sleep(5).await;
-            }
+        let id = ReplayTransport::gate(&frame, &mut answered);
+        while transport.asked.load(Ordering::SeqCst) < id {
+            crate::transport::web::sleep(5).await;
         }
         crate::transport::web::sleep(BEAT_MILLIS).await;
         if events.send(Event::Frame(frame)).await.is_err() {
@@ -237,6 +252,31 @@ mod tests {
             "the second playback frame is the session answer"
         );
         transport.close();
+    }
+
+    /// A turn's updates wait for the prompt after the session answer,
+    /// so they never land ahead of the user message that started it.
+    #[test]
+    fn updates_wait_for_the_request_after_the_last_answer() {
+        let mut answered = 0;
+        let gates: Vec<u64> = transcript()
+            .iter()
+            .map(|frame| ReplayTransport::gate(frame, &mut answered))
+            .collect();
+        assert_eq!(
+            &gates[..3],
+            &[1, 2, 3],
+            "the boot, the session, then the turn"
+        );
+        assert!(
+            gates[2..gates.len() - 1].iter().all(|gate| *gate == 3),
+            "every update of the turn waits for the prompt"
+        );
+        assert_eq!(
+            gates.last(),
+            Some(&3),
+            "the prompt's answer waits for the prompt"
+        );
     }
 
     /// Drives the transcript into a client the way the shell does:
