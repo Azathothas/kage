@@ -806,6 +806,109 @@ fn files_pane(
             }
         }
     }
+    file_preview(ui, store, &id, workbench, palette, events);
+}
+
+/// The preview of the selected file: its path with a mention button,
+/// then the numbered lines, or a note when the file is binary or was
+/// cut short.
+fn file_preview(
+    ui: &mut egui::Ui,
+    store: &Store,
+    session: &str,
+    workbench: &Workbench,
+    palette: &Palette,
+    events: &mut Vec<WorkbenchEvent>,
+) {
+    let Some(selected) = workbench.file() else {
+        return;
+    };
+    let Some((path, read)) = store.fs_preview(session) else {
+        return;
+    };
+    if path != selected {
+        return;
+    }
+    ui.add_space(10.0);
+    egui::Frame::NONE
+        .stroke(egui::Stroke::new(1.0, palette.subtle))
+        .inner_margin(egui::Margin::symmetric(14, 8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                crate::icons::icon(ui, crate::icons::Icon::FilePlus, 14.0, palette.faint);
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(path)
+                            .size(FS_XS)
+                            .family(family(FAMILY_MONO_REGULAR))
+                            .color(palette.ink),
+                    )
+                    .truncate(),
+                );
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if crate::ui::forms::icon_button(
+                        ui,
+                        "file-mention",
+                        crate::icons::Icon::AtSign,
+                        palette,
+                    )
+                    .on_hover_text("Mention in composer")
+                    .clicked()
+                    {
+                        events.push(WorkbenchEvent::Mention(path.to_owned()));
+                    }
+                });
+            });
+        });
+    if read.binary {
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.add_space(14.0);
+            ui.label(
+                egui::RichText::new("Binary file; not shown.")
+                    .size(FS_XS)
+                    .color(palette.faint),
+            );
+        });
+        return;
+    }
+    egui::Frame::NONE
+        .fill(palette.deep)
+        .inner_margin(egui::Margin::symmetric(10, 6))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            for (n, line) in read.content.lines().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 12.0;
+                    ui.add_sized(
+                        egui::vec2(28.0, 19.0),
+                        egui::Label::new(
+                            egui::RichText::new((n + 1).to_string())
+                                .size(12.0)
+                                .family(family(FAMILY_MONO_REGULAR))
+                                .color(palette.ghost),
+                        ),
+                    );
+                    ui.label(
+                        egui::RichText::new(line)
+                            .size(12.0)
+                            .family(family(FAMILY_MONO_REGULAR))
+                            .color(palette.ink),
+                    );
+                });
+            }
+        });
+    if read.truncated {
+        ui.horizontal(|ui| {
+            ui.add_space(14.0);
+            ui.label(
+                egui::RichText::new("Truncated: the file is longer than the preview.")
+                    .size(FS_XS)
+                    .color(palette.faint),
+            );
+        });
+    }
 }
 
 /// The agents pane: the filter chips over the session's agent cards.
