@@ -514,7 +514,7 @@ impl Palette {
                                                 ui.horizontal_top(|ui| {
                                                     crate::icons::icon(ui, icon, 14.0, palette.faint);
                                                     ui.add_space(SP_3);
-                                                    ui.vertical(|ui| {
+                                                    let text_block = ui.vertical(|ui| {
                                                         let mut text = egui::RichText::new(entry.label())
                                                             .color(palette.ink);
                                                         if mono_label {
@@ -537,7 +537,9 @@ impl Palette {
                                                             );
                                                         }
                                                     });
-                                                    ui.with_layout(
+                                                    let text_height = text_block.response.rect.height();
+                                                    ui.allocate_ui_with_layout(
+                                                        egui::vec2(ui.available_width(), text_height),
                                                         egui::Layout::right_to_left(
                                                             egui::Align::Center,
                                                         ),
