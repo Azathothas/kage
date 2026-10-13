@@ -27,7 +27,7 @@ use super::text_rows::{self, UserAction};
 use super::tool_rows::{self, PlanRevise, RowAction};
 use crate::reveal::{self, Reveal};
 use crate::store::Store;
-use crate::theme::{CONTENT_W, Palette, SP_8};
+use crate::theme::{CONTENT_W, Palette, R_SM, SP_3, SP_8};
 use crate::timing::SessionTimes;
 
 /// The vim cursor's rail: how far left of the column it sits.
@@ -248,16 +248,20 @@ impl TranscriptView {
             area = area.vertical_scroll_offset(target);
         }
         let shown = area.show_viewport(ui, |ui, viewport| {
-            ui.set_height(content);
+            ui.set_height(content.max(0.0));
             let (first, last) = list.window(viewport.min.y, viewport.height());
             if last <= first {
                 return;
             }
             let top = ui.max_rect().top();
             let mid = ui.max_rect().center().x;
+            // The rows lay out top down from the window's first row; the
+            // bottom is left far below the last, so a row that draws
+            // taller than it measured never squeezes the rows after it
+            // into a negative height.
             let rect = egui::Rect::from_x_y_ranges(
                 mid - column_w / 2.0..=mid + column_w / 2.0,
-                top + list.offset_of(first)..=top + list.offset_of(last),
+                top + list.offset_of(first)..=top + list.offset_of(last) + MEASURE_MAX_H,
             );
             ui.scope_builder(
                 egui::UiBuilder::new()
@@ -268,17 +272,29 @@ impl TranscriptView {
                         let row = &rows[ix];
                         let prev = ix.checked_sub(1).map(|p| &rows[p]);
                         let last_row = ix + 1 == rows.len();
+                        let row_top = ui.cursor().top();
+                        let tint = ui.painter().add(egui::Shape::Noop);
                         let height = draw_row(ui, row, prev, last_row, &mut ctx, events);
-                        list.set_height(ix, height);
-                        if let Some(tint) = find.as_ref().and_then(|find| row_tint(find, row.key()))
-                        {
-                            // The tint paints behind the row, so a row
-                            // that paints its own fill covers it.
-                            let _ = tint;
+                        list.set_height(ix, finite_height(height, ix, row));
+                        let cell = egui::Rect::from_x_y_ranges(
+                            ui.max_rect().x_range(),
+                            row_top..=row_top + height,
+                        );
+                        if let Some(fill) = find.as_ref().and_then(|find| {
+                            row_tint(find, row.key(), Palette::active_of(ui.ctx()))
+                        }) {
+                            ui.painter().set(
+                                tint,
+                                egui::Shape::rect_filled(
+                                    cell.expand2(egui::vec2(SP_3, 0.0)),
+                                    egui::CornerRadius::same(R_SM as u8),
+                                    fill,
+                                ),
+                            );
                         }
                         if vim_cursor == Some(ix) {
                             let rail = egui::Rect::from_min_size(
-                                egui::pos2(ui.max_rect().left() - CURSOR_RAIL, ui.cursor().top()),
+                                egui::pos2(ui.max_rect().left() - CURSOR_RAIL, row_top),
                                 egui::vec2(CURSOR_W, height),
                             );
                             ui.painter().rect_filled(
@@ -601,8 +617,7 @@ fn shown<'a>(revealed: &HashMap<usize, usize>, ix: usize, text: &'a str) -> &'a 
 
 /// The tint a row renders with under the find bar: the current match
 /// strongest, the other matches softer.
-fn row_tint(find: &FindMarks, key: RowKey) -> Option<egui::Color32> {
-    let palette = Palette::shadow();
+fn row_tint(find: &FindMarks, key: RowKey, palette: &Palette) -> Option<egui::Color32> {
     if find.keys.get(find.current) == Some(&key) {
         return Some(palette.selected_hover);
     }
@@ -648,11 +663,17 @@ fn measure_row(
     let top = child.cursor().top();
     let mut actions = Vec::new();
     row_cell(&mut child, row, prev, last, ctx, &mut actions);
-    let measured = child.min_rect().bottom() - top;
-    if measured.is_finite() {
-        measured
+    finite_height(child.min_rect().bottom() - top, ix, row)
+}
+
+/// `height`, or nothing when a row's layout came back non-finite: the
+/// list must not carry a NaN into the content height, so the row is
+/// reported and placed as empty instead.
+fn finite_height(height: f32, ix: usize, row: &Row) -> f32 {
+    if height.is_finite() {
+        height
     } else {
-        eprintln!("kage: row {ix} measured {measured}: {row:?}");
+        eprintln!("kage: transcript row {ix} laid out {height} tall: {row:?}");
         0.0
     }
 }
@@ -949,10 +970,11 @@ mod tests {
             keys: vec![RowKey::Item(1), RowKey::Item(4)],
             current: 1,
         };
-        let current = row_tint(&marks, RowKey::Item(4)).expect("the current match tints");
-        let other = row_tint(&marks, RowKey::Item(1)).expect("a match tints");
+        let palette = Palette::shadow();
+        let current = row_tint(&marks, RowKey::Item(4), &palette).expect("the current match tints");
+        let other = row_tint(&marks, RowKey::Item(1), &palette).expect("a match tints");
         assert_ne!(current, other, "the current match reads strongest");
-        assert!(row_tint(&marks, RowKey::Item(2)).is_none());
+        assert!(row_tint(&marks, RowKey::Item(2), &palette).is_none());
     }
 
     #[test]

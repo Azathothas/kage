@@ -209,3 +209,62 @@ fn the_lab_toggle_turns_the_timeline_rail_off() {
         "no rail, no seek from the edge"
     );
 }
+
+/// Feeds the replayed session a finished tool call of `title` whose
+/// output runs `lines` lines, the way the engine streams one.
+fn add_long_call(store: &mut Store, id: &str, title: &str, input: serde_json::Value, lines: usize) {
+    let session = store
+        .active_id()
+        .expect("the replay opened a session")
+        .to_owned();
+    let text: String = (0..lines)
+        .map(|n| format!("line {n}: the quick brown fox jumps over the lazy dog\n"))
+        .collect();
+    for update in [
+        serde_json::json!({
+            "sessionUpdate": "tool_call", "toolCallId": id, "title": title,
+            "kind": "execute", "status": "pending", "rawInput": input
+        }),
+        serde_json::json!({
+            "sessionUpdate": "tool_call_update", "toolCallId": id, "status": "completed",
+            "content": [{"type": "content", "content": {"type": "text", "text": text}}]
+        }),
+    ] {
+        store.absorb(kage_client::Frame::Notification {
+            method: "session/update".to_owned(),
+            params: serde_json::json!({ "sessionId": session, "update": update }),
+        });
+    }
+}
+
+#[test]
+fn expanded_rows_survive_the_pointer_sweeping_over_them() {
+    let mut harness = harness_sized(900.0, 500.0);
+    {
+        let store = &mut harness.state_mut().1;
+        add_long_call(
+            store,
+            "call-shell",
+            "shell",
+            serde_json::json!({"command": "cargo test"}),
+            80,
+        );
+        add_long_call(
+            store,
+            "call-cat",
+            "read",
+            serde_json::json!({"path": "src/lib.rs"}),
+            120,
+        );
+    }
+    harness.run();
+    harness.state_mut().0.fold_all(true);
+    harness.run_steps(3);
+    for y in (0..500).step_by(5) {
+        for x in [60.0, 300.0, 600.0, 840.0, 850.0, 858.0, 864.0, 870.0, 874.0] {
+            harness.hover_at(egui::pos2(x, y as f32));
+            harness.step();
+            harness.step();
+        }
+    }
+}
