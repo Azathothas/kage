@@ -218,6 +218,11 @@ pub(crate) fn gap_after(prev: Option<&Block>) -> f32 {
 
 /// Draws `block` across the available width.
 pub(crate) fn show(ui: &mut egui::Ui, block: &Block, palette: &Palette) {
+    show_at(ui, block, palette, 0);
+}
+
+/// Draws `block` inside `depth` lists, which picks its list markers.
+fn show_at(ui: &mut egui::Ui, block: &Block, palette: &Palette, depth: usize) {
     let ink = ui.visuals().text_color();
     match block {
         Block::Para(spans) => {
@@ -243,7 +248,7 @@ pub(crate) fn show(ui: &mut egui::Ui, block: &Block, palette: &Palette) {
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.visuals_mut().override_text_color = Some(palette.muted);
-                    stack(ui, blocks, palette);
+                    stack(ui, blocks, palette, depth);
                 });
             let rect = inner.response.rect;
             ui.painter().rect_filled(
@@ -256,7 +261,12 @@ pub(crate) fn show(ui: &mut egui::Ui, block: &Block, palette: &Palette) {
             for (n, item) in items.iter().enumerate() {
                 let marker = match start {
                     Some(first) => format!("{}.", first + n as u64),
-                    None => "\u{2022}".to_owned(),
+                    None => match depth {
+                        0 => "\u{2022}",
+                        1 => "\u{25E6}",
+                        _ => "\u{25AA}",
+                    }
+                    .to_owned(),
                 };
                 // The marker sets inline, so the text starts after the
                 // marker and a space, as the reference's list runs.
@@ -279,7 +289,7 @@ pub(crate) fn show(ui: &mut egui::Ui, block: &Block, palette: &Palette) {
                             })
                             .show(ui, |ui| {
                                 ui.set_width(ui.available_width());
-                                stack_tight(ui, item, palette);
+                                stack_tight(ui, item, palette, depth + 1);
                             })
                             .response
                             .rect
@@ -309,21 +319,21 @@ pub(crate) fn show(ui: &mut egui::Ui, block: &Block, palette: &Palette) {
 }
 
 /// `blocks` one under the other, at the block gaps.
-fn stack(ui: &mut egui::Ui, blocks: &[Block], palette: &Palette) {
+fn stack(ui: &mut egui::Ui, blocks: &[Block], palette: &Palette, depth: usize) {
     let mut prev = None;
     for (n, block) in blocks.iter().enumerate() {
         if n > 0 {
             ui.add_space(gap_after(prev));
         }
-        ui.push_id(n, |ui| show(ui, block, palette));
+        ui.push_id(n, |ui| show_at(ui, block, palette, depth));
         prev = Some(block);
     }
 }
 
 /// An item's blocks, with no gap between them, as a tight list sets.
-fn stack_tight(ui: &mut egui::Ui, blocks: &[Block], palette: &Palette) {
+fn stack_tight(ui: &mut egui::Ui, blocks: &[Block], palette: &Palette, depth: usize) {
     for (n, block) in blocks.iter().enumerate() {
-        ui.push_id(n, |ui| show(ui, block, palette));
+        ui.push_id(n, |ui| show_at(ui, block, palette, depth));
     }
 }
 

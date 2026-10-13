@@ -1081,15 +1081,14 @@ fn plan_chip(ui: &mut egui::Ui, store: &Store, events: &mut Vec<ToolbarEvent>) -
         return Some(());
     }
     let palette = Palette::active_of(ui.ctx());
-    mode_chip(
+    if mode_chip(
         ui,
         palette,
         Icon::PenLine,
         "Plan",
         palette.accent,
         palette.accent_soft,
-    );
-    if chip_exit(ui, palette.accent, palette).clicked() {
+    ) {
         events.push(ToolbarEvent::TogglePlan);
     }
     Some(())
@@ -1101,64 +1100,78 @@ fn swarm_chip(ui: &mut egui::Ui, store: &Store, events: &mut Vec<ToolbarEvent>) 
         return Some(());
     }
     let palette = Palette::active_of(ui.ctx());
-    mode_chip(
+    if mode_chip(
         ui,
         palette,
         Icon::Waypoints,
         "Swarm",
         palette.done,
         palette.done_soft,
-    );
-    if chip_exit(ui, palette.done, palette).clicked() {
+    ) {
         events.push(ToolbarEvent::SwarmOff);
     }
     Some(())
 }
 
-/// The exit button a mode chip trails with: an X in the chip's tone,
-/// quiet until the pointer reaches it.
-fn chip_exit(ui: &mut egui::Ui, tone: egui::Color32, palette: &Palette) -> egui::Response {
-    crate::ui::forms::icon_btn(
-        ui,
-        "Exit mode",
-        Icon::X,
-        18.0,
-        12.0,
-        R_FULL,
-        crate::ui::forms::IconTones {
-            fill: egui::Color32::TRANSPARENT,
-            hover_fill: palette.fill_hover,
-            ink: tone.gamma_multiply(0.7),
-            hover_ink: tone,
-        },
-    )
-}
-
-/// One active-mode chip: the colored pill with its exit button.
+/// One active-mode chip, as the reference sets it: a 26px pill on the
+/// mode's tint holding its icon, its label and the round exit button
+/// at its right end. Answers whether the exit was pressed.
 fn mode_chip(
     ui: &mut egui::Ui,
-    _palette: &Palette,
+    palette: &Palette,
     icon: Icon,
     label: &str,
     fg: egui::Color32,
     bg: egui::Color32,
-) -> egui::Response {
-    let text = egui::RichText::new(label)
-        .size(FS_XS)
-        .family(family(FAMILY_BODY_SEMIBOLD))
-        .color(fg);
-    egui::Frame::NONE
-        .fill(bg)
-        .corner_radius(egui::CornerRadius::same(R_FULL as u8))
-        .inner_margin(egui::Margin::symmetric(9, 4))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 5.0;
-                crate::icons::icon(ui, icon, 12.0, fg);
-                ui.label(text);
-            });
-        })
-        .response
+) -> bool {
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::FontId::new(FS_XS, family(FAMILY_BODY_SEMIBOLD)),
+        fg,
+    );
+    let size = egui::vec2(9.0 + 12.0 + 5.0 + galley.size().x + 5.0 + 18.0 + 4.0, 26.0);
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let mid = rect.center().y;
+    ui.painter()
+        .rect_filled(rect, egui::CornerRadius::same(R_FULL as u8), bg);
+    crate::icons::themed_image(icon, 12.0, fg).paint_at(
+        ui,
+        egui::Rect::from_min_size(
+            egui::pos2(rect.left() + 9.0, mid - 6.0),
+            egui::vec2(12.0, 12.0),
+        ),
+    );
+    let text_x = rect.left() + 9.0 + 12.0 + 5.0;
+    ui.painter()
+        .galley(egui::pos2(text_x, mid - galley.size().y / 2.0), galley, fg);
+    let exit = egui::Rect::from_center_size(
+        egui::pos2(rect.right() - 4.0 - 9.0, mid),
+        egui::vec2(18.0, 18.0),
+    );
+    let response = ui
+        .interact(
+            exit,
+            ui.id().with(("mode-exit", label)),
+            egui::Sense::click(),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Exit mode");
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Exit mode"));
+    let tint = if response.hovered() {
+        ui.painter().rect_filled(
+            exit,
+            egui::CornerRadius::same(R_FULL as u8),
+            palette.fill_hover,
+        );
+        fg
+    } else {
+        fg.gamma_multiply(0.7)
+    };
+    crate::icons::themed_image(Icon::X, 12.0, tint).paint_at(
+        ui,
+        egui::Rect::from_center_size(exit.center(), egui::vec2(12.0, 12.0)),
+    );
+    response.clicked()
 }
 
 /// The model and thinking pill: one control naming the model's label

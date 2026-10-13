@@ -97,16 +97,6 @@ pub fn show(
                         ui.label(egui::RichText::new("fork").size(FS_XS).color(palette.muted));
                     });
                 }
-                if session.in_turn || session.running {
-                    pill(ui, palette, |ui| {
-                        crate::ui::eclipse::eclipse(ui, 14.0, None);
-                        ui.label(
-                            egui::RichText::new("Working")
-                                .size(FS_XS)
-                                .color(palette.muted),
-                        );
-                    });
-                }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = SP_4;
@@ -123,9 +113,49 @@ pub fn show(
                 }
                 if let Some(session) = store.active_session() {
                     session_menu(ui, store, session, palette, events);
+                    // The working pill at the bar's end, with how long
+                    // the run has gone, as the reference shows it.
+                    if session.in_turn || session.running {
+                        let took = store
+                            .timings(&session.id)
+                            .and_then(|times| times.running_for())
+                            .unwrap_or_default();
+                        working_pill(ui, &crate::clock::duration(took.as_secs() as i64), palette);
+                    }
                 }
             });
         },
+    );
+}
+
+/// The working pill: the turning eclipse and the elapsed label on the
+/// fill, 24px tall.
+fn working_pill(ui: &mut egui::Ui, elapsed: &str, palette: &Palette) {
+    let label = format!("Working {elapsed}");
+    let galley = ui.painter().layout_no_wrap(
+        label.clone(),
+        egui::FontId::new(
+            FS_XS,
+            crate::theme::family(crate::theme::FAMILY_BODY_REGULAR),
+        ),
+        palette.muted,
+    );
+    let size = egui::vec2(9.0 + 14.0 + 6.0 + galley.size().x + 9.0, 24.0);
+    let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &label));
+    ui.painter()
+        .rect_filled(rect, egui::CornerRadius::same(u8::MAX), palette.fill);
+    let mark = egui::Rect::from_min_size(
+        egui::pos2(rect.left() + 9.0, rect.center().y - 7.0),
+        egui::vec2(14.0, 14.0),
+    );
+    crate::ui::eclipse::paint(ui, mark, 14.0, Some(crate::clock::epoch()), palette);
+    ui.ctx()
+        .request_repaint_after(std::time::Duration::from_millis(250));
+    ui.painter().galley(
+        egui::pos2(mark.right() + 6.0, rect.center().y - galley.size().y / 2.0),
+        galley,
+        palette.muted,
     );
 }
 

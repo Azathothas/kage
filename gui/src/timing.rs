@@ -56,6 +56,12 @@ pub struct SessionTimes {
 }
 
 impl SessionTimes {
+    /// How long the run in flight has gone, while one runs.
+    #[must_use]
+    pub fn running_for(&self) -> Option<Duration> {
+        self.run_started.map(|started| started.elapsed())
+    }
+
     /// How long the thinking item at `ix` streamed, once it stopped.
     #[must_use]
     pub fn thinking(&self, ix: usize) -> Option<Duration> {
