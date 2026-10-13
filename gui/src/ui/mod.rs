@@ -10,7 +10,6 @@ pub mod agents;
 pub mod approval;
 pub mod composer;
 pub mod constellation;
-pub mod copy;
 pub mod dialog;
 pub mod directory_picker;
 pub mod dock;

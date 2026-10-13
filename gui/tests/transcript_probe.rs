@@ -138,6 +138,9 @@ fn the_find_marks_tint_the_matched_rows() {
     assert_eq!(view.searchable_rows(store).len(), count);
 }
 
+/// The rail's center line in the 900px harness.
+const RAIL_X: f32 = 900.0 - 8.0 - 6.0 - 8.0;
+
 #[test]
 fn the_timeline_rail_seeks_the_rows() {
     let mut harness = harness_sized(900.0, 180.0);
@@ -146,9 +149,10 @@ fn the_timeline_rail_seeks_the_rows() {
     let (view, _, _) = harness.state();
     let fresh = view.scroll_offset();
 
-    // The rail hangs 6px off the pane's right edge, 16px wide. A press
-    // at its bottom seeks the last rows.
-    let bottom = egui::Pos2::new(900.0 - 6.0 - 8.0, 166.0);
+    // The rail hangs 6px off the pane's right edge, 16px wide, inside
+    // the panel's 8px margin, and 10px off the pane's top and bottom.
+    // A press at its bottom seeks the last rows.
+    let bottom = egui::Pos2::new(RAIL_X, 158.0);
     harness.drag_at(bottom);
     harness.run();
     harness.drop_at(bottom);
@@ -162,7 +166,7 @@ fn the_timeline_rail_seeks_the_rows() {
     );
 
     // A press at its very top seeks the first rows again.
-    let top = egui::Pos2::new(900.0 - 6.0 - 8.0, 14.0);
+    let top = egui::Pos2::new(RAIL_X, 22.0);
     harness.drag_at(top);
     harness.run();
     harness.drop_at(top);
@@ -193,7 +197,7 @@ fn the_lab_toggle_turns_the_timeline_rail_off() {
     // The follow holds the tail; only a rail seek could pull the view
     // away from it. With the toggle off, a click where the rail would
     // hang leaves the offset alone.
-    let top = egui::Pos2::new(900.0 - 6.0 - 8.0, 14.0);
+    let top = egui::Pos2::new(RAIL_X, 22.0);
     harness.drag_at(top);
     harness.drop_at(top);
     harness.run();
