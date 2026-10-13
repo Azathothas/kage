@@ -18,7 +18,7 @@ use crate::clock::unix_seconds;
 use crate::store::Store;
 use crate::theme::{
     FAMILY_BODY_BOLD, FAMILY_BODY_REGULAR, FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_2XS,
-    FS_BASE, FS_SM, FS_XS, Palette, R_MD, family,
+    FS_BASE, FS_SM, FS_XS, Palette, R_MD, SP_4, family,
 };
 
 const FOOTER_H: f32 = 52.0;
@@ -467,7 +467,7 @@ pub fn show_rows(
     ui.vertical(|ui| {
         ui.set_width(ui.available_width());
         brand_row(ui, version, &mut events);
-        ui.add_space(6.0);
+        ui.add_space(4.0);
         nav_rows(ui, &mut events);
         ui.add_space(16.0);
         list_header(ui, grouped, &mut events);
@@ -504,7 +504,7 @@ fn brand_row(ui: &mut egui::Ui, version: Option<&str>, events: &mut Vec<SidebarE
     );
     if let Some(version) = version {
         painter.text(
-            egui::pos2(wordmark.right() + 6.0, rect.center().y),
+            egui::pos2(wordmark.right() + 10.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
             version,
             egui::FontId::new(FS_XS, family(FAMILY_MONO_REGULAR)),
@@ -512,23 +512,11 @@ fn brand_row(ui: &mut egui::Ui, version: Option<&str>, events: &mut Vec<SidebarE
         );
     }
     let collapse = egui::Rect::from_center_size(
-        egui::pos2(rect.right() - 22.0, rect.center().y),
+        egui::pos2(rect.right() - 16.0, rect.center().y),
         egui::vec2(28.0, 28.0),
     );
-    if ui
-        .put(
-            collapse,
-            egui::Button::image(crate::icons::themed_image(
-                crate::icons::Icon::PanelLeft,
-                16.0,
-                palette.muted,
-            ))
-            .fill(egui::Color32::TRANSPARENT)
-            .corner_radius(egui::CornerRadius::same(R_MD as u8)),
-        )
-        .on_hover_text("Collapse sidebar (Ctrl \\)")
-        .clicked()
-    {
+    let tip = "Collapse sidebar (Ctrl \\)";
+    if ghost_icon(ui, collapse, crate::icons::Icon::PanelLeft, tip, palette).clicked() {
         events.push(SidebarEvent::Collapse);
     }
 }
@@ -640,7 +628,6 @@ fn list_header(ui: &mut egui::Ui, grouped: bool, events: &mut Vec<SidebarEvent>)
                 .color(palette.faint),
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.add_space(8.0);
             let (rect, response) =
                 ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
             let response = response
@@ -664,7 +651,7 @@ fn list_header(ui: &mut egui::Ui, grouped: bool, events: &mut Vec<SidebarEvent>)
             }
         });
     });
-    ui.add_space(3.0);
+    ui.add_space(4.0);
 }
 
 /// The list body: groups under project rows, or one flat list.
@@ -678,7 +665,7 @@ fn list_body(
 ) {
     let palette = Palette::active_of(ui.ctx());
     let filtered = filter_rows(rows, &sidebar.query().clone());
-    let body_height = (ui.available_height() - FOOTER_H).max(0.0);
+    let body_height = (ui.available_height() - (FOOTER_H - SP_4)).max(0.0);
     egui::ScrollArea::vertical()
         .max_height(body_height)
         .auto_shrink([false, false])
@@ -686,8 +673,20 @@ fn list_body(
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 0.0;
             if grouped {
-                for (project, members) in project_groups(&filtered) {
-                    project_row(ui, sidebar, palette, &project, &members, events);
+                let groups = project_groups(&filtered);
+                let shown: usize = groups
+                    .iter()
+                    .filter(|(project, _)| !sidebar.collapsed(project))
+                    .map(|(_, members)| members.len().max(1))
+                    .sum();
+                let content = groups.len() as f32 * (PROJECT_ROW_H + 4.0) + shown as f32 * 32.0;
+                let head_h = if content <= body_height {
+                    PROJECT_ROW_H
+                } else {
+                    PROJECT_ROW_SHRUNK_H
+                };
+                for (project, members) in groups {
+                    project_row(ui, sidebar, palette, &project, &members, head_h, events);
                     if sidebar.collapsed(&project) {
                         continue;
                     }
@@ -720,13 +719,14 @@ fn project_row(
     palette: &Palette,
     project: &str,
     members: &[RowItem],
+    height: f32,
     events: &mut Vec<SidebarEvent>,
 ) {
     let open = !sidebar.collapsed(project);
     let dir = members.iter().find_map(|item| item.dir.clone());
     ui.add_space(4.0);
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), PROJECT_ROW_H),
+        egui::vec2(ui.available_width(), height),
         egui::Sense::click(),
     );
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -820,9 +820,11 @@ fn project_row(
     }
 }
 
-/// A project header's height. The reference declares 32px, but its
-/// overflowing list shrinks the header to its 22px plus button.
-const PROJECT_ROW_H: f32 = 22.0;
+/// A project header's height, as the reference declares it.
+const PROJECT_ROW_H: f32 = 32.0;
+/// A project header's height once the list overflows: the reference's
+/// flex list shrinks the header down to its 22px plus button.
+const PROJECT_ROW_SHRUNK_H: f32 = 22.0;
 
 /// One session row: title, then the attention badge, the working
 /// eclipse or the swarm glyph, else the relative time. An unread row
@@ -1013,54 +1015,74 @@ fn connect_footer(
     halo: bool,
     events: &mut Vec<SidebarEvent>,
 ) {
-    let (rect, _) = ui.allocate_at_least(
-        egui::vec2(ui.available_width(), FOOTER_H),
+    // The footer runs to the panel's edges, under its margins, as
+    // the reference's full-bleed footer does.
+    let (inner, _) = ui.allocate_at_least(
+        egui::vec2(ui.available_width(), FOOTER_H - SP_4),
         egui::Sense::hover(),
+    );
+    let rect = egui::Rect::from_min_max(
+        egui::pos2(inner.left() - SP_4, inner.top()),
+        egui::pos2(inner.right() + SP_4, inner.top() + FOOTER_H),
     );
     ui.painter().hline(
         rect.x_range(),
         rect.top(),
         egui::Stroke::new(1.0, palette.line),
     );
-    let center = egui::pos2(rect.left() + 18.0, rect.center().y);
+    let mid = rect.center().y;
+    let center = egui::pos2(rect.left() + 21.0, mid);
     if halo {
         ui.painter().circle_filled(center, 7.0, palette.ok_soft);
     }
     ui.painter().circle_filled(center, 4.0, dot);
     ui.painter().text(
-        egui::pos2(rect.left() + 34.0, rect.center().y - 7.0),
+        egui::pos2(rect.left() + 36.0, mid - 8.0),
         egui::Align2::LEFT_CENTER,
         name,
         egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
         palette.ink,
     );
     ui.painter().text(
-        egui::pos2(rect.left() + 34.0, rect.center().y + 8.0),
+        egui::pos2(rect.left() + 36.0, mid + 11.0),
         egui::Align2::LEFT_CENTER,
         status,
         egui::FontId::new(11.0, family(FAMILY_BODY_REGULAR)),
         palette.faint,
     );
-    let gear = egui::Rect::from_center_size(
-        egui::pos2(rect.right() - 24.0, rect.center().y),
-        egui::vec2(28.0, 28.0),
-    );
-    if ui
-        .put(
-            gear,
-            egui::Button::image(crate::icons::themed_image(
-                crate::icons::Icon::Settings,
-                16.0,
-                palette.muted,
-            ))
-            .fill(egui::Color32::TRANSPARENT)
-            .corner_radius(egui::CornerRadius::same(R_MD as u8)),
-        )
-        .on_hover_text("Settings (Ctrl ,)")
-        .clicked()
-    {
+    let gear =
+        egui::Rect::from_center_size(egui::pos2(rect.right() - 24.0, mid), egui::vec2(28.0, 28.0));
+    let tip = "Settings (Ctrl ,)";
+    if ghost_icon(ui, gear, crate::icons::Icon::Settings, tip, palette).clicked() {
         events.push(SidebarEvent::OpenSettings);
     }
+}
+
+/// The reference's ghost icon button at `rect`: the icon in the ink,
+/// with no frame until the hover fill.
+fn ghost_icon(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    icon: crate::icons::Icon,
+    tooltip: &str,
+    palette: &Palette,
+) -> egui::Response {
+    let response = ui
+        .interact(rect, ui.id().with(("ghost", tooltip)), egui::Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tooltip));
+    if response.hovered() {
+        ui.painter().rect_filled(
+            rect,
+            egui::CornerRadius::same(R_MD as u8),
+            palette.fill_hover,
+        );
+    }
+    crate::icons::themed_image(icon, 16.0, palette.ink).paint_at(
+        ui,
+        egui::Rect::from_center_size(rect.center(), egui::vec2(16.0, 16.0)),
+    );
+    response.on_hover_text(tooltip)
 }
 
 #[cfg(test)]
