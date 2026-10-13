@@ -430,8 +430,19 @@ pub fn show(ui: &mut egui::Ui, sidebar: &mut Sidebar, store: &Store) -> Vec<Side
     let (name, status) = connect_lines(store);
     let palette = Palette::active_of(ui.ctx());
     let (dot, halo) = connect_dot(palette, store);
-    let version = store.state().agent.as_ref().and_then(|agent| agent.version.clone());
-    show_rows(ui, sidebar, &rows, grouped, (&name, &status, dot, halo), version.as_deref())
+    let version = store
+        .state()
+        .agent
+        .as_ref()
+        .and_then(|agent| agent.version.clone());
+    show_rows(
+        ui,
+        sidebar,
+        &rows,
+        grouped,
+        (&name, &status, dot, halo),
+        version.as_deref(),
+    )
 }
 
 /// Draws the sidebar over `rows`, which the caller read from the store
@@ -527,7 +538,13 @@ fn brand_row(ui: &mut egui::Ui, version: Option<&str>, events: &mut Vec<SidebarE
 /// The New session and Search nav rows.
 fn nav_rows(ui: &mut egui::Ui, events: &mut Vec<SidebarEvent>) {
     let palette = Palette::active_of(ui.ctx());
-    if nav_row(ui, palette, crate::icons::Icon::Plus, "New session", "Ctrl N") {
+    if nav_row(
+        ui,
+        palette,
+        crate::icons::Icon::Plus,
+        "New session",
+        "Ctrl N",
+    ) {
         events.push(SidebarEvent::NewSession(None));
     }
     if nav_row(ui, palette, crate::icons::Icon::Search, "Search", "Ctrl K") {
@@ -544,10 +561,8 @@ fn nav_row(
     label: &str,
     keys: &str,
 ) -> bool {
-    let (rect, response) = ui.allocate_at_least(
-        egui::vec2(ui.available_width(), 34.0),
-        egui::Sense::click(),
-    );
+    let (rect, response) =
+        ui.allocate_at_least(egui::vec2(ui.available_width(), 34.0), egui::Sense::click());
     let painter = ui.painter();
     if response.hovered() {
         painter.rect_filled(rect, egui::CornerRadius::same(R_MD as u8), palette.hover);
@@ -584,7 +599,11 @@ fn nav_row(
         egui::Stroke::new(1.0, palette.line),
         egui::StrokeKind::Inside,
     );
-    painter.galley(chip.center() - chip_text.size() / 2.0, chip_text, palette.faint);
+    painter.galley(
+        chip.center() - chip_text.size() / 2.0,
+        chip_text,
+        palette.faint,
+    );
     response.clicked()
 }
 
@@ -827,11 +846,8 @@ fn session_row(
     job.wrap.overflow_character = Some('…');
     let title_galley = ui.painter().layout_job(job);
     let title_y = rect.center().y - title_galley.size().y / 2.0;
-    ui.painter().galley(
-        egui::pos2(rect.left() + indent, title_y),
-        title_galley,
-        fg,
-    );
+    ui.painter()
+        .galley(egui::pos2(rect.left() + indent, title_y), title_galley, fg);
     let mut fork_count_right = rect.right() - 12.0;
     if let Some((galley, fg, bg)) = badge {
         let width = galley.size().x + 12.0;
@@ -892,8 +908,10 @@ fn connect_footer(
     halo: bool,
     events: &mut Vec<SidebarEvent>,
 ) {
-    let (rect, _) =
-        ui.allocate_at_least(egui::vec2(ui.available_width(), FOOTER_H), egui::Sense::hover());
+    let (rect, _) = ui.allocate_at_least(
+        egui::vec2(ui.available_width(), FOOTER_H),
+        egui::Sense::hover(),
+    );
     ui.painter().hline(
         rect.x_range(),
         rect.top(),

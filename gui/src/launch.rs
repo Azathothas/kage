@@ -1038,6 +1038,9 @@ impl ShellApp {
             match event {
                 crate::ui::topbar::TopbarEvent::ShowSidebar => panels.toggle_sidebar(),
                 crate::ui::topbar::TopbarEvent::ToggleWorkbench => panels.toggle_workbench(),
+                crate::ui::topbar::TopbarEvent::Session(action) => {
+                    self.carry_session(ui.ctx(), action);
+                }
             }
         }
         self.shell.sidebar = sidebar.into_inner();
@@ -1301,6 +1304,30 @@ impl ShellApp {
             }
         } else {
             self.shell.approval.blur();
+        }
+    }
+
+    /// Carries out a session action of the top bar's menu on the active
+    /// session.
+    fn carry_session(&mut self, ctx: &egui::Context, action: crate::ui::topbar::SessionAction) {
+        use crate::ui::topbar::SessionAction;
+        let Some(id) = self.shell.store.active_id().map(str::to_owned) else {
+            return;
+        };
+        match action {
+            SessionAction::Pin => self.shell.store.toggle_pin(&id),
+            SessionAction::Fork => {
+                self.shell.store.fork(None);
+            }
+            SessionAction::Compact => {
+                self.shell.store.compact();
+            }
+            SessionAction::Export => {
+                self.shell.store.export();
+            }
+            SessionAction::CopyId => ctx.copy_text(id),
+            SessionAction::Close => self.shell.store.close_active(),
+            SessionAction::Archive => self.shell.store.archive(&id),
         }
     }
 
