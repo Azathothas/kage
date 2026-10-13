@@ -1322,6 +1322,16 @@ impl Store {
         self.config_set(&["ui", key], name.map(serde_json::Value::from))
     }
 
+    /// The theme catalog: the engine's user themes and its System picks.
+    #[must_use]
+    pub fn theme_catalog(&self) -> crate::themes::Catalog {
+        crate::themes::Catalog {
+            user: self.themes.clone(),
+            dark: self.system_theme(true).map(str::to_owned),
+            light: self.system_theme(false).map(str::to_owned),
+        }
+    }
+
     /// The config options the composer shows for `id`: the active
     /// session's, or on the welcome pane the last session's, or before
     /// any the ones a new session opens with, with the choices held for

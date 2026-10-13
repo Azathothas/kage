@@ -227,6 +227,9 @@ pub enum SettingsEvent {
     Flip(&'static str),
     /// Store engine option `name` in the user config with `value`.
     EngineOption(String, serde_json::Value),
+    /// Make `name` the theme System draws on a dark desktop, or on a
+    /// light one.
+    SystemTheme { dark: bool, name: String },
     /// Set the active session's permission mode to this value.
     Mode(String),
     /// Bring archived session `id` back to the sidebar.
@@ -695,17 +698,25 @@ fn page(
 fn general(ui: &mut egui::Ui, store: &Store, palette: &Palette, events: &mut Vec<SettingsEvent>) {
     let prefs = store.prefs();
     group(ui, "Appearance", palette);
+    let catalog = store.theme_catalog();
     ui.horizontal(|ui| {
         ui.add_space(32.0);
-        ui.spacing_mut().item_spacing.x = 10.0;
-        for choice in [
-            crate::theme::ThemeChoice::System,
-            crate::theme::ThemeChoice::Named("kage-shadow".to_owned()),
-            crate::theme::ThemeChoice::Named("kage-dawn".to_owned()),
-        ] {
-            theme_card(ui, choice, prefs, palette, events);
-        }
+        ui.vertical(|ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 10.0;
+                let choices = std::iter::once(crate::theme::ThemeChoice::System).chain(
+                    catalog
+                        .names()
+                        .into_iter()
+                        .map(crate::theme::ThemeChoice::Named),
+                );
+                for choice in choices {
+                    theme_card(ui, choice, prefs, &catalog, palette, events);
+                }
+            });
+        });
     });
+
     group(ui, "Input", palette);
     let mut vim = prefs.vim;
     toggle_row(
@@ -797,6 +808,10 @@ fn general(ui: &mut egui::Ui, store: &Store, palette: &Palette, events: &mut Vec
     if constellation != prefs.constellation {
         events.push(SettingsEvent::Flip("constellation"));
     }
+    boxed(ui, palette, |ui| {
+        system_pick_row(ui, true, &catalog, palette, events);
+        system_pick_row(ui, false, &catalog, palette, events);
+    });
 }
 
 /// The Agent & Sessions page: the engine's options, grouped as the
@@ -963,10 +978,55 @@ fn stepper_button(
 }
 
 /// One theme card: the swatch and the name, chosen on a click.
+/// The row that picks the theme System draws on a dark or a light
+/// desktop.
+fn system_pick_row(
+    ui: &mut egui::Ui,
+    dark: bool,
+    catalog: &crate::themes::Catalog,
+    palette: &Palette,
+    events: &mut Vec<SettingsEvent>,
+) {
+    let (label, hint) = if dark {
+        (
+            "System on a dark desktop",
+            "The theme System draws when the desktop is dark",
+        )
+    } else {
+        (
+            "System on a light desktop",
+            "The theme System draws when the desktop is light",
+        )
+    };
+    let current = catalog.system(!dark);
+    row(
+        ui,
+        label,
+        hint,
+        |ui| {
+            egui::ComboBox::from_id_salt(("system-pick", dark))
+                .selected_text(crate::themes::label(&current))
+                .show_ui(ui, |ui| {
+                    for name in catalog.names() {
+                        let on = name == current;
+                        if ui
+                            .selectable_label(on, crate::themes::label(&name))
+                            .clicked()
+                        {
+                            events.push(SettingsEvent::SystemTheme { dark, name });
+                        }
+                    }
+                });
+        },
+        palette,
+    );
+}
+
 fn theme_card(
     ui: &mut egui::Ui,
     choice: crate::theme::ThemeChoice,
     prefs: &Prefs,
+    catalog: &crate::themes::Catalog,
     palette: &Palette,
     events: &mut Vec<SettingsEvent>,
 ) {
@@ -979,13 +1039,11 @@ fn theme_card(
             );
             (shadow.bg, dawn.bg, shadow.accent)
         }
-        crate::theme::ThemeChoice::Named(name) if name == "kage-dawn" => {
-            let dawn = crate::theme::Palette::dawn();
-            (dawn.bg, dawn.surface, dawn.accent)
-        }
-        crate::theme::ThemeChoice::Named(_) => {
+        crate::theme::ThemeChoice::Named(name) => {
             let shadow = crate::theme::Palette::shadow();
-            (shadow.bg, shadow.surface, shadow.accent)
+            let themed =
+                crate::themes::resolve(name, catalog, false).map_or(&shadow, |(themed, _)| themed);
+            (themed.bg, themed.surface, themed.accent)
         }
     };
     let width = (ui.available_width() - 20.0).max(120.0) / 3.0;

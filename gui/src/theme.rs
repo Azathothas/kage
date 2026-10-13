@@ -574,17 +574,23 @@ fn black(alpha: u8) -> Color32 {
 }
 
 /// Builds one shadow from the design's shadow recipe. Shadow colors
-/// always carry alpha, so `hex` is read as all four bytes: black at 55
-/// percent is `0x0000008C`, which [`color`] would take for blue. The
-/// design's negative spreads (which pull a shadow inward) have no egui
-/// equivalent, so they drop.
+/// always carry alpha, so `hex` is read as all four bytes. A pure
+/// black shadow such as the design's 55 percent `0x0000008C` has no
+/// top byte for [`color`] to see, so those take the [`black`] path.
+/// The design's negative spreads (which pull a shadow inward) have no
+/// egui equivalent, so they drop.
 #[must_use]
 fn layer(hex: u32, x: f32, y: f32, blur: f32, spread: f32) -> egui::Shadow {
+    let color = if hex <= 0xFF {
+        black(hex as u8)
+    } else {
+        color(hex)
+    };
     egui::Shadow {
         offset: [x as i8, y as i8],
         blur: blur as u8,
         spread: spread.max(0.0) as u8,
-        color: color(hex),
+        color,
     }
 }
 
@@ -1084,36 +1090,43 @@ fn corner(px: f32) -> egui::CornerRadius {
 /// flips re-map on their own, or one theme by name, which pins its
 /// slot and pins the preference with it.
 pub fn apply_choice(choice: &ThemeChoice, ctx: &egui::Context) {
+    apply_choice_with(choice, ctx, &crate::themes::Catalog::default());
+}
+
+/// Applies `choice`, resolving names and System picks through `catalog`
+/// so the engine's user themes draw.
+pub fn apply_choice_with(
+    choice: &ThemeChoice,
+    ctx: &egui::Context,
+    catalog: &crate::themes::Catalog,
+) {
     match choice {
         ThemeChoice::System => {
             ctx.set_theme(egui::ThemePreference::System);
-            apply_slot(
-                ctx,
-                egui::Theme::Dark,
-                crate::themes::builtin("kage-shadow").unwrap_or_else(|| unreachable!()),
-            );
-            apply_slot(
-                ctx,
-                egui::Theme::Light,
-                crate::themes::builtin("kage-dawn").unwrap_or_else(|| unreachable!()),
-            );
+            for light in [false, true] {
+                let name = catalog.system(light);
+                if let Some((palette, mode)) = crate::themes::resolve(&name, catalog, light) {
+                    apply_slot(ctx, slot_of(mode), (palette, mode));
+                }
+            }
         }
         ThemeChoice::Named(name) => {
-            if let Some((palette, mode)) = crate::themes::builtin(name) {
+            if let Some((palette, mode)) = crate::themes::resolve(name, catalog, false) {
                 ctx.set_theme(match mode {
                     Mode::Dark => egui::ThemePreference::Dark,
                     Mode::Light => egui::ThemePreference::Light,
                 });
-                apply_slot(
-                    ctx,
-                    match mode {
-                        Mode::Dark => egui::Theme::Dark,
-                        Mode::Light => egui::Theme::Light,
-                    },
-                    (palette, mode),
-                );
+                apply_slot(ctx, slot_of(mode), (palette, mode));
             }
         }
+    }
+}
+
+/// The egui style slot a theme's mode fills.
+fn slot_of(mode: Mode) -> egui::Theme {
+    match mode {
+        Mode::Dark => egui::Theme::Dark,
+        Mode::Light => egui::Theme::Light,
     }
 }
 

@@ -294,6 +294,8 @@ pub struct Shell {
     /// The session the composer last took the keyboard for, so a new
     /// session takes it again.
     composer_focus_for: Option<Option<String>>,
+    /// The theme catalog the last theme was applied with.
+    theme_catalog: crate::themes::Catalog,
     /// The welcome pane, shown in the chat column while no session is
     /// open.
     welcome: crate::ui::welcome::Welcome,
@@ -358,6 +360,7 @@ impl Shell {
             find: crate::ui::find::FindBar::new(),
             composer: crate::ui::composer::Composer::new(),
             composer_focus_for: None,
+            theme_catalog: crate::themes::Catalog::default(),
             welcome: crate::ui::welcome::Welcome::new(),
             sidebar: crate::ui::sidebar::Sidebar::new(),
             workbench: crate::ui::workbench::Workbench::new(),
@@ -853,6 +856,12 @@ impl ShellApp {
     /// status bar under them, and the chrome (splash, palette,
     /// toasts) over the top.
     fn draw(&mut self, ui: &mut egui::Ui) {
+        let catalog = self.shell.store.theme_catalog();
+        if catalog != self.shell.theme_catalog {
+            self.shell.theme_catalog = catalog;
+            let choice = self.shell.store.prefs().theme.clone();
+            crate::theme::apply_choice_with(&choice, ui.ctx(), &self.shell.theme_catalog);
+        }
         let link = self.shell.link();
         self.shell.store.set_link(link);
         let active = self.shell.store.active_id().map(str::to_owned);
@@ -1240,7 +1249,10 @@ impl ShellApp {
                     self.shell
                         .store
                         .update_prefs(|prefs| prefs.theme = choice.clone());
-                    crate::theme::apply_choice(&choice, ctx);
+                    crate::theme::apply_choice_with(&choice, ctx, &self.shell.theme_catalog);
+                }
+                crate::ui::settings::SettingsEvent::SystemTheme { dark, name } => {
+                    self.shell.store.set_system_theme(dark, Some(&name));
                 }
                 crate::ui::settings::SettingsEvent::Flip(field) => {
                     self.shell.store.update_prefs(|prefs| match field {
@@ -2072,7 +2084,7 @@ impl ShellApp {
                 self.shell
                     .store
                     .update_prefs(|prefs| prefs.theme = choice.clone());
-                crate::theme::apply_choice(&choice, ctx);
+                crate::theme::apply_choice_with(&choice, ctx, &self.shell.theme_catalog);
             }
             Command::Theme(None) => {
                 warn(
