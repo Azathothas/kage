@@ -374,4 +374,24 @@ fn every_page_renders_for_review() {
             .save(format!("/tmp/settings-{name}.png"))
             .expect("the page image saves");
     }
+    let forms: [(&str, Section, &[&str]); 4] = [
+        ("provider", Section::Providers, &["Add provider", "Custom"]),
+        ("acp", Section::Providers, &["Add provider", "ACP agent"]),
+        ("directory", Section::Providers, &["Add provider", "From models.dev"]),
+        ("mcp", Section::Mcp, &["Add server"]),
+    ];
+    for (name, section, clicks) in forms {
+        let mut harness = harness_for(configured());
+        harness.state_mut().1.open(section);
+        settle(&mut harness);
+        for label in clicks {
+            harness.get_by_label(label).click();
+            harness.run();
+        }
+        harness.run();
+        let image = harness.render().expect("the form renders");
+        image
+            .save(format!("/tmp/settings-form-{name}.png"))
+            .expect("the form image saves");
+    }
 }

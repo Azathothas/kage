@@ -9,7 +9,8 @@
 use std::collections::BTreeMap;
 
 use crate::theme::{
-    FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_XS, Palette, R_FULL, R_MD, family,
+    FAMILY_BODY_REGULAR, FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_SM, FS_XS, Palette, R_FULL,
+    R_MD, family,
 };
 
 /// What the snapshot shows in place of a secret value.
@@ -198,8 +199,9 @@ pub fn field(
     }
 }
 
-/// A segmented choice: one segment per `(value, label)`, the current
-/// one filled. Returns the value clicked this frame, if any.
+/// A segmented choice: one segment per `(value, label)`, each as wide
+/// as its label, the current one filled. Returns the value clicked
+/// this frame, if any.
 pub fn segments(
     ui: &mut egui::Ui,
     id: &str,
@@ -207,50 +209,65 @@ pub fn segments(
     current: &str,
     palette: &Palette,
 ) -> Option<&'static str> {
-    let width = choices.len() as f32 * 110.0 + 4.0;
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 28.0), egui::Sense::hover());
-    ui.painter()
-        .rect_filled(rect, egui::CornerRadius::same(R_MD as u8), palette.fill);
+    let font = egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR));
+    let galleys: Vec<_> = choices
+        .iter()
+        .map(|(value, label)| {
+            let ink = if *value == current {
+                palette.ink_strong
+            } else {
+                palette.muted
+            };
+            ui.painter()
+                .layout_no_wrap((*label).to_owned(), font.clone(), ink)
+        })
+        .collect();
+    let width = galleys
+        .iter()
+        .map(|galley| galley.size().x + 20.0)
+        .sum::<f32>()
+        + 2.0 * (choices.len() as f32 + 1.0);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 30.0), egui::Sense::hover());
+    let radius = egui::CornerRadius::same(R_MD as u8);
+    ui.painter().rect_filled(rect, radius, palette.fill);
     ui.painter().rect_stroke(
         rect,
-        egui::CornerRadius::same(R_MD as u8),
+        radius,
         egui::Stroke::new(1.0, palette.line),
         egui::StrokeKind::Inside,
     );
     let mut left = rect.left() + 2.0;
     let mut picked = None;
-    for (value, label) in choices {
+    for ((value, label), galley) in choices.iter().zip(galleys) {
         let on = *value == current;
-        let segment =
-            egui::Rect::from_min_size(egui::pos2(left, rect.top() + 2.0), egui::vec2(106.0, 24.0));
-        let response = ui.interact(
-            segment,
-            ui.make_persistent_id((id, *value)),
-            egui::Sense::click(),
+        let segment = egui::Rect::from_min_size(
+            egui::pos2(left, rect.top() + 3.0),
+            egui::vec2(galley.size().x + 20.0, 24.0),
         );
-        if on {
-            ui.painter().rect_filled(
+        left = segment.right() + 2.0;
+        let response = ui
+            .interact(
                 segment,
-                egui::CornerRadius::same(R_MD as u8),
-                palette.surface,
-            );
-        }
-        ui.scope_builder(egui::UiBuilder::new().max_rect(segment), |ui| {
-            ui.centered_and_justified(|ui| {
-                ui.add(
-                    egui::Label::new(egui::RichText::new(*label).size(FS_XS).color(if on {
-                        palette.ink_strong
-                    } else {
-                        palette.muted
-                    }))
-                    .selectable(false),
-                );
-            });
+                ui.make_persistent_id((id, *value)),
+                egui::Sense::click(),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, on, *label)
         });
+        if on {
+            ui.painter().rect_filled(segment, radius, palette.surface);
+        }
+        let ink = if on {
+            palette.ink_strong
+        } else {
+            palette.muted
+        };
+        ui.painter()
+            .galley(segment.center() - galley.size() / 2.0, galley, ink);
         if response.clicked() {
             picked = Some(*value);
         }
-        left += 108.0;
     }
     picked
 }
@@ -323,31 +340,21 @@ pub fn icon_button(
     response
 }
 
-/// A small text button in one of three tones.
+/// A form's small button: 26px tall, in one of three tones, as the
+/// settings pages draw theirs.
 pub fn button(ui: &mut egui::Ui, label: &str, tone: Tone, palette: &Palette) -> egui::Response {
-    let (fg, fill, border) = match tone {
-        Tone::Primary => (palette.ok_ink, palette.ok, palette.ok),
-        Tone::Danger => (
-            palette.danger,
-            egui::Color32::TRANSPARENT,
-            palette.danger_bd,
-        ),
-        Tone::Plain => (palette.ink, palette.fill, palette.line),
+    let tone = match tone {
+        Tone::Primary => crate::ui::settings_config::BtnTone::Primary,
+        Tone::Danger => crate::ui::settings_config::BtnTone::Danger,
+        Tone::Plain => crate::ui::settings_config::BtnTone::Plain,
     };
-    let width = label.len() as f32 * 7.5 + 24.0;
-    ui.add(
-        egui::Button::new(egui::RichText::new(label).size(FS_XS).color(fg))
-            .fill(fill)
-            .stroke(egui::Stroke::new(1.0, border))
-            .corner_radius(egui::CornerRadius::same(R_MD as u8))
-            .min_size(egui::vec2(width, 26.0)),
-    )
+    crate::ui::settings_config::btn_sm(ui, label, None, tone, palette)
 }
 
 /// The three tones a form's small button carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tone {
-    /// The filled success button.
+    /// The filled accent button, for the main action.
     Primary,
     /// The outlined danger button.
     Danger,
@@ -362,30 +369,31 @@ pub fn add_button(
     icon: crate::icons::Icon,
     palette: &Palette,
 ) -> egui::Response {
-    let width = label.len() as f32 * 7.0 + 34.0;
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, 24.0), egui::Sense::click());
-    ui.painter().rect_filled(
-        rect,
-        egui::CornerRadius::same(R_FULL as u8),
-        egui::Color32::TRANSPARENT,
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR)),
+        palette.muted,
     );
-    ui.painter().rect_stroke(
-        rect,
-        egui::CornerRadius::same(R_FULL as u8),
-        egui::Stroke::new(1.0, palette.line),
-        egui::StrokeKind::Inside,
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(8.0 + 12.0 + 4.0 + galley.size().x + 8.0, 24.0),
+        egui::Sense::click(),
     );
-    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-        ui.horizontal(|ui| {
-            ui.add_space(8.0);
-            ui.spacing_mut().item_spacing.x = 4.0;
-            crate::icons::icon(ui, icon, 12.0, palette.muted);
-            ui.add(
-                egui::Label::new(egui::RichText::new(label).size(FS_XS).color(palette.muted))
-                    .selectable(false),
-            );
-        });
-    });
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    crate::ui::transcript::text_rows::dashed_rect(ui, rect, 12.0, palette.line);
+    crate::icons::themed_image(icon, 12.0, palette.muted).paint_at(
+        ui,
+        egui::Rect::from_min_size(
+            egui::pos2(rect.left() + 8.0, rect.center().y - 6.0),
+            egui::vec2(12.0, 12.0),
+        ),
+    );
+    let h = galley.size().y;
+    ui.painter().galley(
+        egui::pos2(rect.left() + 24.0, rect.center().y - h / 2.0),
+        galley,
+        palette.muted,
+    );
     response
 }
 
@@ -421,7 +429,7 @@ pub fn text_field(
     mono: bool,
     palette: &Palette,
 ) -> egui::Response {
-    let mut font = egui::FontId::new(FS_XS, family(FAMILY_BODY_SEMIBOLD));
+    let mut font = egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR));
     if mono {
         font = egui::FontId::new(FS_XS, family(FAMILY_MONO_REGULAR));
     }
@@ -457,24 +465,30 @@ pub fn lines_field(
     ui.add(field)
 }
 
-/// The header of a form page: a back button and the title. The back
-/// button's response is returned for the caller to read.
+/// The header of a form page: a back button and the title on one line.
+/// The back button's response is returned for the caller to read.
 pub fn form_head(
     ui: &mut egui::Ui,
     title: &str,
     palette: &Palette,
 ) -> (egui::Response, egui::Response) {
-    let back = icon_button(ui, "form-back", crate::icons::Icon::ChevronLeft, palette);
-    ui.add_space(8.0);
-    let title_response = ui.add(
-        egui::Label::new(
-            egui::RichText::new(title)
-                .size(FS_XS + 4.0)
-                .family(family(FAMILY_BODY_SEMIBOLD))
-                .color(palette.ink_strong),
-        )
-        .selectable(false),
-    );
+    let (back, title_response) = ui
+        .horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 8.0;
+            let back = icon_button(ui, "form-back", crate::icons::Icon::ChevronLeft, palette);
+            let title = ui.add(
+                egui::Label::new(
+                    egui::RichText::new(title)
+                        .size(FS_SM + 4.0)
+                        .family(family(FAMILY_BODY_SEMIBOLD))
+                        .color(palette.ink_strong),
+                )
+                .selectable(false),
+            );
+            (back, title)
+        })
+        .inner;
+    ui.add_space(14.0);
     (back, title_response)
 }
 

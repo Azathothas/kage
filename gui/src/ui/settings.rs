@@ -371,15 +371,29 @@ impl Settings {
         events: &mut Vec<SettingsEvent>,
     ) -> FormOutcome {
         self.follow(store);
+        let form_frame = |ui: &mut egui::Ui, add: &mut dyn FnMut(&mut egui::Ui) -> FormOutcome| {
+            page_frame(ui, "form", |ui| {
+                ui.spacing_mut().item_spacing.y = 6.0;
+                add(ui)
+            })
+        };
         match &mut self.form {
-            Some(Form::Provider(form)) => FormOutcome::Done(form.show(ui, store)),
-            Some(Form::Mcp(form)) => FormOutcome::Done(form.show(ui, store)),
-            Some(Form::Acp(form)) => FormOutcome::Done(form.show(ui, store)),
-            Some(Form::Directory(picker)) => match picker.show(ui, store) {
-                Some(picked) if picked.entry.is_null() => FormOutcome::Done(true),
-                Some(picked) => FormOutcome::Picked(picked),
-                None => FormOutcome::Done(false),
-            },
+            Some(Form::Provider(form)) => {
+                form_frame(ui, &mut |ui| FormOutcome::Done(form.show(ui, store)))
+            }
+            Some(Form::Mcp(form)) => {
+                form_frame(ui, &mut |ui| FormOutcome::Done(form.show(ui, store)))
+            }
+            Some(Form::Acp(form)) => {
+                form_frame(ui, &mut |ui| FormOutcome::Done(form.show(ui, store)))
+            }
+            Some(Form::Directory(picker)) => {
+                form_frame(ui, &mut |ui| match picker.show(ui, store) {
+                    Some(picked) if picked.entry.is_null() => FormOutcome::Done(true),
+                    Some(picked) => FormOutcome::Picked(picked),
+                    None => FormOutcome::Done(false),
+                })
+            }
             None => {
                 page(
                     ui,
@@ -737,19 +751,12 @@ fn nav(
     }
 }
 
-/// One page of the dialog, scrolling inside the page column at the
-/// reference's 32px sides, 22px top and 32px foot.
-fn page(
-    ui: &mut egui::Ui,
-    store: &mut Store,
-    section: Section,
-    pages: &mut config::PageState,
-    palette: &Palette,
-    updates: &UpdateState,
-    events: &mut Vec<SettingsEvent>,
-) {
+/// The page column's scroller: the reference's 32px sides, 22px top
+/// and 32px foot around what `add` draws. Pages and the forms over
+/// them share it.
+fn page_frame<R>(ui: &mut egui::Ui, id: &str, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     egui::ScrollArea::vertical()
-        .id_salt(("settings-page", section.label()))
+        .id_salt(("settings-page", id))
         .auto_shrink([false, false])
         .show(ui, |ui| {
             egui::Frame::NONE
@@ -762,23 +769,37 @@ fn page(
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.spacing_mut().item_spacing.y = 0.0;
-                    title(ui, section.label(), palette);
-                    match section {
-                        Section::General => general(ui, store, palette, events),
-                        Section::Agents => agents(ui, store, palette, events),
-                        Section::Providers
-                        | Section::Mcp
-                        | Section::Permissions
-                        | Section::Plugins => {
-                            config_page(ui, store, section, pages, palette, events);
-                        }
-                        Section::Connection => connection(ui, store, palette),
-                        Section::Keyboard => keyboard(ui, store, palette),
-                        Section::Archived => archived(ui, store, palette, events),
-                        Section::About => about(ui, store, palette, updates, events),
-                    }
-                });
-        });
+                    add(ui)
+                })
+                .inner
+        })
+        .inner
+}
+
+/// One page of the dialog, scrolling inside the page column.
+fn page(
+    ui: &mut egui::Ui,
+    store: &mut Store,
+    section: Section,
+    pages: &mut config::PageState,
+    palette: &Palette,
+    updates: &UpdateState,
+    events: &mut Vec<SettingsEvent>,
+) {
+    page_frame(ui, section.label(), |ui| {
+        title(ui, section.label(), palette);
+        match section {
+            Section::General => general(ui, store, palette, events),
+            Section::Agents => agents(ui, store, palette, events),
+            Section::Providers | Section::Mcp | Section::Permissions | Section::Plugins => {
+                config_page(ui, store, section, pages, palette, events);
+            }
+            Section::Connection => connection(ui, store, palette),
+            Section::Keyboard => keyboard(ui, store, palette),
+            Section::Archived => archived(ui, store, palette, events),
+            Section::About => about(ui, store, palette, updates, events),
+        }
+    });
 }
 
 /// The General page: the theme cards and picks, then the input, chat
