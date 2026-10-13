@@ -868,7 +868,7 @@ fn group_with(
 
 /// The tone a small button carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BtnTone {
+pub(crate) enum BtnTone {
     Plain,
     Primary,
     Danger,
@@ -876,7 +876,7 @@ enum BtnTone {
 
 /// The design's small button: 26px tall, an 8px radius, medium 12px
 /// text with an optional leading icon, in one tone.
-fn btn_sm(
+pub(crate) fn btn_sm(
     ui: &mut egui::Ui,
     label: &str,
     icon: Option<crate::icons::Icon>,

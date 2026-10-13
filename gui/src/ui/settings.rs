@@ -10,9 +10,10 @@ use crate::prefs::Prefs;
 use crate::store::Store;
 use crate::theme::{
     FAMILY_BODY_BOLD, FAMILY_BODY_MEDIUM, FAMILY_BODY_REGULAR, FAMILY_BODY_SEMIBOLD,
-    FAMILY_MONO_REGULAR, FS_2XS, FS_SM, FS_XS, Palette, R_FULL, R_LG, R_MD, R_XL, family,
+    FAMILY_MONO_REGULAR, FS_SM, FS_XS, Palette, R_LG, R_MD, R_XL, family,
 };
 use crate::ui::settings_config as config;
+use crate::ui::settings_config::{BtnTone, btn_sm};
 
 /// The nav column's width.
 const NAV_W: f32 = 224.0;
@@ -20,6 +21,8 @@ const NAV_W: f32 = 224.0;
 const THEME_CARD_W: f32 = 150.0;
 /// The theme select's width.
 const PICK_W: f32 = 220.0;
+/// The Updates row's status and buttons column.
+const UPDATES_W: f32 = 360.0;
 /// The theme select menu's height cap.
 const PICK_MENU_H: f32 = 280.0;
 /// The line height the reference sets its text in, as a multiple of
@@ -1427,7 +1430,8 @@ fn config_page(
     }
 }
 
-/// The Connection page: the transport and its status.
+/// The Connection page: the transport, the engine binary or endpoint,
+/// and the link's live status.
 fn connection(ui: &mut egui::Ui, store: &Store, palette: &Palette) {
     let link = store.link();
     let state = store.state();
@@ -1464,45 +1468,83 @@ fn connection(ui: &mut egui::Ui, store: &Store, palette: &Palette) {
             format!(" \u{b7} {}", features.join(", "))
         }
     );
+    let mono = |ui: &mut egui::Ui, text: String| {
+        ui.label(
+            egui::RichText::new(text)
+                .size(FS_XS)
+                .family(family(FAMILY_MONO_REGULAR))
+                .color(palette.ink),
+        );
+    };
     group(ui, "Transport", palette);
     boxed(ui, palette, |ui| {
         row(
             ui,
             "Connect with",
-            "",
-            |ui| {
-                badge(ui, link.name, palette);
-            },
+            "Chosen when the client starts: the desktop app spawns kage rpc or dials a server, the browser attaches to the kage serve it came from",
+            |ui| badge(ui, link.name, palette),
             palette,
         );
+        if link.name == "kage rpc" {
+            let binary = store
+                .prefs()
+                .kage_path
+                .clone()
+                .unwrap_or_else(|| "kage from the PATH".to_owned());
+            row(
+                ui,
+                "kage binary",
+                "The engine this app spawns; the setup screen picks another when none runs",
+                |ui| mono(ui, binary),
+                palette,
+            );
+        }
         row(
             ui,
             "Endpoint",
-            "",
-            |ui| {
-                ui.label(
-                    egui::RichText::new(link.detail.clone())
-                        .size(FS_XS)
-                        .family(family(FAMILY_MONO_REGULAR))
-                        .color(palette.ink),
-                );
-            },
+            "The token rides the kage.<token> subprotocol and is never shown",
+            |ui| mono(ui, link.detail.clone()),
             palette,
         );
     });
     group(ui, "Status", palette);
     boxed(ui, palette, |ui| {
-        row(
-            ui,
-            word,
-            &detail,
-            |ui| {
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
-                ui.painter().circle_filled(rect.center(), 4.0, dot);
-            },
-            palette,
-        );
+        status_row(ui, word, dot, &detail, palette);
     });
+}
+
+/// The link's status: the lamp and its word over the link's facts.
+fn status_row(ui: &mut egui::Ui, word: &str, dot: egui::Color32, detail: &str, palette: &Palette) {
+    let word_h = FS_SM * LINE;
+    let detail_h = FS_XS * LINE;
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 58.0), egui::Sense::hover());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, word));
+    let top = rect.center().y - (word_h + detail_h) / 2.0;
+    let x = rect.left() + 16.0;
+    ui.painter()
+        .circle_filled(egui::pos2(x + 4.0, top + word_h / 2.0), 4.0, dot);
+    ui.painter().text(
+        egui::pos2(x + 16.0, top + word_h / 2.0),
+        egui::Align2::LEFT_CENTER,
+        word,
+        egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
+        palette.ink,
+    );
+    let detail = crate::ui::transcript::head::one_line(
+        ui,
+        detail.to_owned(),
+        egui::TextFormat::simple(
+            egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR)),
+            palette.muted,
+        ),
+        rect.width() - 32.0,
+    );
+    ui.painter().galley(
+        egui::pos2(x, top + word_h + (detail_h - detail.size().y) / 2.0),
+        detail,
+        palette.muted,
+    );
 }
 
 /// The Keyboard page: the app bindings and the composer's keys.
@@ -1565,15 +1607,22 @@ fn keyboard(ui: &mut egui::Ui, store: &Store, palette: &Palette) {
     );
 }
 
-/// The Archived Sessions page: the archive, with a restore each.
+/// The Archived Sessions page: the archive, each with its project and
+/// a restore button.
 fn archived(ui: &mut egui::Ui, store: &Store, palette: &Palette, events: &mut Vec<SettingsEvent>) {
     let ids: Vec<String> = store.prefs().archived.iter().cloned().collect();
     if ids.is_empty() {
-        note(
-            ui,
-            "Nothing archived. Archive a session from its \u{2026} menu.",
-            palette,
-        );
+        ui.add_space(48.0);
+        ui.vertical_centered(|ui| {
+            ui.spacing_mut().item_spacing.y = 8.0;
+            crate::icons::icon(ui, crate::icons::Icon::Archive, 18.0, palette.faint);
+            ui.label(
+                egui::RichText::new("Nothing archived. Archive a session from its \u{2026} menu.")
+                    .size(FS_SM)
+                    .color(palette.faint),
+            );
+        });
+        ui.add_space(48.0);
         return;
     }
     note(
@@ -1587,21 +1636,81 @@ fn archived(ui: &mut egui::Ui, store: &Store, palette: &Palette, events: &mut Ve
                 .session_title(&id)
                 .unwrap_or("untitled session")
                 .to_owned();
-            let response = ui.add(
-                egui::Button::new(egui::RichText::new(&title).size(FS_SM).color(palette.ink))
-                    .fill(egui::Color32::TRANSPARENT)
-                    .stroke(egui::Stroke::NONE)
-                    .corner_radius(egui::CornerRadius::ZERO)
-                    .min_size(egui::vec2(ui.available_width(), 44.0)),
-            );
-            if response.clicked() {
+            let project = store
+                .state()
+                .directory
+                .iter()
+                .find(|info| info.session_id == id)
+                .map(|info| crate::ui::sidebar::project_name(Some(&info.cwd)));
+            if archived_row(ui, &title, project.as_deref(), palette) {
                 events.push(SettingsEvent::Restore(id.clone()));
             }
         }
     });
 }
 
-/// The About page: the mark, the versions and the protocol.
+/// One archived session: its icon, its title over its project, and the
+/// restore button. Answers whether the button was clicked.
+fn archived_row(ui: &mut egui::Ui, title: &str, project: Option<&str>, palette: &Palette) -> bool {
+    let title_h = FS_SM * LINE;
+    let project_h = if project.is_some() { FS_XS * LINE } else { 0.0 };
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), 10.0 + title_h + project_h + 10.0),
+        egui::Sense::hover(),
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, title));
+    row_rule(ui, rect, palette);
+    let mid = rect.center().y;
+    crate::icons::themed_image(crate::icons::Icon::Archive, 14.0, palette.faint).paint_at(
+        ui,
+        egui::Rect::from_min_size(
+            egui::pos2(rect.left() + 16.0, mid - 7.0),
+            egui::vec2(14.0, 14.0),
+        ),
+    );
+    let slot = egui::Rect::from_min_max(
+        egui::pos2(rect.right() - 16.0 - 120.0, rect.top()),
+        egui::pos2(rect.right() - 16.0, rect.bottom()),
+    );
+    let restore = ui
+        .scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(slot)
+                .layout(egui::Layout::right_to_left(egui::Align::Center)),
+            |ui| btn_sm(ui, "Restore", None, BtnTone::Plain, palette),
+        )
+        .inner;
+    let x = rect.left() + 16.0 + 14.0 + 12.0;
+    let width = restore.rect.left() - 12.0 - x;
+    let top = mid - (title_h + project_h) / 2.0;
+    let name = crate::ui::transcript::head::one_line(
+        ui,
+        title.to_owned(),
+        egui::TextFormat::simple(
+            egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
+            palette.ink,
+        ),
+        width,
+    );
+    ui.painter().galley(
+        egui::pos2(x, top + (title_h - name.size().y) / 2.0),
+        name,
+        palette.ink,
+    );
+    if let Some(project) = project {
+        ui.painter().text(
+            egui::pos2(x, top + title_h + project_h / 2.0),
+            egui::Align2::LEFT_CENTER,
+            project,
+            egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR)),
+            palette.muted,
+        );
+    }
+    restore.clicked()
+}
+
+/// The About page: the mark and the versions, then the protocol and
+/// the release check in one box.
 fn about(
     ui: &mut egui::Ui,
     store: &Store,
@@ -1618,20 +1727,24 @@ fn about(
     let protocol = state
         .protocol_version
         .map_or_else(|| "unknown".to_owned(), |v| format!("ACP v{v}"));
+    let build = option_env!("KAGE_BUILD_SHA")
+        .map(|sha| format!(" ({})", &sha[..sha.len().min(7)]))
+        .unwrap_or_default();
     ui.add_space(8.0);
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 14.0;
         crate::ui::eclipse::eclipse(ui, 48.0, None);
         ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
             ui.label(
                 egui::RichText::new("kage")
                     .size(18.0)
-                    .family(family(FAMILY_BODY_SEMIBOLD))
+                    .family(family(FAMILY_BODY_BOLD))
                     .color(palette.ink_strong),
             );
             ui.label(
                 egui::RichText::new(format!(
-                    "desktop {} \u{b7} {engine}",
+                    "desktop {}{build} \u{b7} {engine}",
                     env!("CARGO_PKG_VERSION")
                 ))
                 .size(FS_SM)
@@ -1644,14 +1757,15 @@ fn about(
         row(
             ui,
             "Protocol",
-            "",
-            |ui| {
-                badge(ui, &protocol, palette);
-            },
+            "The Agent Client Protocol with the _kage/* extensions",
+            |ui| badge(ui, &protocol, palette),
             palette,
         );
+        #[cfg(not(target_arch = "wasm32"))]
+        updates(ui, store, palette, update_state, events);
     });
-    updates(ui, store, palette, update_state, events);
+    #[cfg(target_arch = "wasm32")]
+    let _ = (update_state, events);
 }
 /// What the release check and the installs in the Updates row are
 /// doing right now. The shell owns it; the page only reads it, so a
@@ -1742,63 +1856,38 @@ fn updates(
         "Updates",
         "The public releases, checked at most once a day",
         |ui| {
-            ui.vertical(|ui| {
-                ui.add(
-                    egui::Label::new(egui::RichText::new(&engine_line).size(FS_XS))
-                        .selectable(false),
-                );
-                ui.add(
-                    egui::Label::new(egui::RichText::new(&desktop_line).size(FS_XS))
-                        .selectable(false),
-                );
-                if let Some(why) = &prefs.check_error {
+            let layout = egui::Layout::top_down(egui::Align::Min);
+            ui.allocate_ui_with_layout(egui::vec2(UPDATES_W, 0.0), layout, |ui| {
+                ui.set_max_width(UPDATES_W);
+                ui.spacing_mut().item_spacing.y = 2.0;
+                let line = |ui: &mut egui::Ui, text: &str, color: egui::Color32| {
                     ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(format!("last check failed: {why}"))
-                                .size(FS_XS)
-                                .color(palette.warn),
-                        )
-                        .selectable(false),
+                        egui::Label::new(egui::RichText::new(text).size(FS_XS).color(color))
+                            .selectable(false)
+                            .wrap(),
                     );
+                };
+                line(ui, &engine_line, palette.ink);
+                line(ui, &desktop_line, palette.muted);
+                if let Some(why) = &prefs.check_error {
+                    line(ui, &format!("last check failed: {why}"), palette.warn);
                 }
-                ui.horizontal(|ui| {
-                    let stable = crate::ui::forms::button(
-                        ui,
-                        "Stable",
-                        if nightly {
-                            crate::ui::forms::Tone::Plain
-                        } else {
-                            crate::ui::forms::Tone::Primary
-                        },
-                        palette,
-                    );
-                    if stable.clicked() {
+                ui.add_space(8.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(8.0, 8.0);
+                    let tone = |on: bool| if on { BtnTone::Primary } else { BtnTone::Plain };
+                    if btn_sm(ui, "Stable", None, tone(!nightly), palette).clicked() {
                         events.push(SettingsEvent::Channel(crate::prefs::Channel::Latest));
                     }
-                    let nightly_button = crate::ui::forms::button(
-                        ui,
-                        "Nightly",
-                        if nightly {
-                            crate::ui::forms::Tone::Primary
-                        } else {
-                            crate::ui::forms::Tone::Plain
-                        },
-                        palette,
-                    );
-                    if nightly_button.clicked() {
+                    if btn_sm(ui, "Nightly", None, tone(nightly), palette).clicked() {
                         events.push(SettingsEvent::Channel(crate::prefs::Channel::Nightly));
                     }
-                    let check = crate::ui::forms::button(
-                        ui,
-                        if update_state.checking {
-                            "Checking\u{2026}"
-                        } else {
-                            "Check now"
-                        },
-                        crate::ui::forms::Tone::Plain,
-                        palette,
-                    );
-                    if check.clicked() {
+                    let check = if update_state.checking {
+                        "Checking\u{2026}"
+                    } else {
+                        "Check now"
+                    };
+                    if btn_sm(ui, check, None, BtnTone::Plain, palette).clicked() {
                         events.push(SettingsEvent::CheckNow);
                     }
                     if engine_behind {
@@ -1807,13 +1896,7 @@ fn updates(
                         } else {
                             "Install engine"
                         };
-                        let install = crate::ui::forms::button(
-                            ui,
-                            label,
-                            crate::ui::forms::Tone::Primary,
-                            palette,
-                        );
-                        if install.clicked() {
+                        if btn_sm(ui, label, None, BtnTone::Primary, palette).clicked() {
                             events.push(SettingsEvent::Install(Install::Engine));
                         }
                     }
@@ -1823,36 +1906,23 @@ fn updates(
                         } else {
                             "Install desktop"
                         };
-                        let install = crate::ui::forms::button(
-                            ui,
-                            label,
-                            crate::ui::forms::Tone::Primary,
-                            palette,
-                        );
-                        if install.clicked() {
+                        if btn_sm(ui, label, None, BtnTone::Primary, palette).clicked() {
                             events.push(SettingsEvent::Install(Install::Desktop));
                         }
                     }
-                    if crate::ui::forms::button(
+                    let releases = btn_sm(
                         ui,
                         "Releases",
-                        crate::ui::forms::Tone::Plain,
+                        Some(crate::icons::Icon::ExternalLink),
+                        BtnTone::Plain,
                         palette,
-                    )
-                    .clicked()
-                    {
+                    );
+                    if releases.clicked() {
                         events.push(SettingsEvent::OpenReleases);
                     }
                 });
                 if let Some((ok, text)) = &update_state.install_note {
-                    ui.add(
-                        egui::Label::new(egui::RichText::new(text).size(FS_XS).color(if *ok {
-                            palette.ok
-                        } else {
-                            palette.warn
-                        }))
-                        .selectable(false),
-                    );
+                    line(ui, text, if *ok { palette.ok } else { palette.warn });
                 }
             });
         },
@@ -2083,67 +2153,71 @@ pub(crate) fn paint_badge(
 fn table(ui: &mut egui::Ui, rows: &[(String, String)], palette: &Palette) {
     boxed(ui, palette, |ui| {
         for (label, keys) in rows {
-            let width = ui.available_width();
-            let (rect, _) =
-                ui.allocate_exact_size(egui::vec2(width.max(1.0), 34.0), egui::Sense::hover());
-            ui.painter().line_segment(
-                [
-                    egui::pos2(rect.left(), rect.top()),
-                    egui::pos2(rect.right(), rect.top()),
-                ],
-                egui::Stroke::new(1.0, palette.subtle),
+            let (rect, response) = ui.allocate_exact_size(
+                egui::vec2(ui.available_width(), 8.0 + FS_SM * LINE + 8.0),
+                egui::Sense::hover(),
             );
-            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-                ui.horizontal(|ui| {
-                    ui.add_space(16.0);
-                    ui.label(egui::RichText::new(label).size(FS_SM).color(palette.ink));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.add_space(16.0);
-                        ui.spacing_mut().item_spacing.x = 4.0;
-                        for cap in keys.split(' ').rev() {
-                            key_cap(ui, cap, palette);
-                        }
-                    });
-                });
-            });
+            response
+                .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label));
+            row_rule(ui, rect, palette);
+            ui.painter().text(
+                egui::pos2(rect.left() + 16.0, rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                label,
+                egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
+                palette.ink,
+            );
+            let mut right = rect.right() - 16.0;
+            for cap in keys.split(' ').rev() {
+                right =
+                    key_cap_at(ui, egui::pos2(right, rect.center().y), cap, palette).left() - 4.0;
+            }
         }
     });
 }
 
-/// One key cap: a hairline box in the mono family.
-fn key_cap(ui: &mut egui::Ui, text: &str, palette: &Palette) {
-    let width = text.len() as f32 * 7.0 + 10.0;
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 18.0), egui::Sense::hover());
-    ui.painter()
-        .rect_filled(rect, egui::CornerRadius::same(4), palette.fill);
+/// One key cap with its right edge at `at.x`, centered on `at.y`: a
+/// hairline box over the soft fill, in the mono family. Gives back
+/// where it landed.
+fn key_cap_at(ui: &egui::Ui, at: egui::Pos2, text: &str, palette: &Palette) -> egui::Rect {
+    let galley = ui.painter().layout_no_wrap(
+        text.to_owned(),
+        egui::FontId::new(10.5, family(FAMILY_MONO_REGULAR)),
+        palette.muted,
+    );
+    let size = egui::vec2(galley.size().x + 12.0, galley.size().y + 4.0);
+    let rect = egui::Rect::from_min_size(egui::pos2(at.x - size.x, at.y - size.y / 2.0), size);
+    let id = ui
+        .id()
+        .with(("key-cap", text, rect.min.x.to_bits(), rect.min.y.to_bits()));
+    ui.interact(rect, id, egui::Sense::hover())
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
+    let radius = egui::CornerRadius::same(4);
+    ui.painter().rect_filled(rect, radius, palette.fill);
     ui.painter().rect_stroke(
         rect,
-        egui::CornerRadius::same(4),
+        radius,
         egui::Stroke::new(1.0, palette.line),
         egui::StrokeKind::Inside,
     );
-    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-        ui.centered_and_justified(|ui| {
-            ui.label(
-                egui::RichText::new(text)
-                    .size(10.5)
-                    .family(family(FAMILY_MONO_REGULAR))
-                    .color(palette.muted),
-            );
-        });
-    });
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, palette.muted);
+    rect
 }
 
-/// One outlined badge.
+/// One outlined badge drawn at the cursor.
 fn badge(ui: &mut egui::Ui, text: &str, palette: &Palette) {
-    egui::Frame::NONE
-        .fill(palette.fill)
-        .stroke(egui::Stroke::new(1.0, palette.line))
-        .corner_radius(egui::CornerRadius::same(R_FULL as u8))
-        .inner_margin(egui::Margin::symmetric(7, 1))
-        .show(ui, |ui| {
-            ui.label(egui::RichText::new(text).size(FS_2XS).color(palette.muted));
-        });
+    let galley = ui.painter().layout_no_wrap(
+        text.to_owned(),
+        egui::FontId::new(10.5, family(FAMILY_BODY_MEDIUM)),
+        palette.muted,
+    );
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(galley.size().x + 16.0, 18.0),
+        egui::Sense::hover(),
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
+    paint_badge(ui, rect.left_center(), text, 10.5, palette.muted, palette);
 }
 
 #[cfg(test)]
