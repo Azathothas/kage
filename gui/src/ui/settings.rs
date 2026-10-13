@@ -802,6 +802,10 @@ fn page(
     });
 }
 
+/// One toggle row of the General page: its label, hint, the setting it
+/// writes, and whether it is on.
+type Flip<'a> = (&'a str, &'a str, &'a str, bool);
+
 /// The General page: the theme cards and picks, then the input, chat
 /// and session toggles, in the reference's order.
 fn general(ui: &mut egui::Ui, store: &Store, palette: &Palette, events: &mut Vec<SettingsEvent>) {
@@ -826,7 +830,7 @@ fn general(ui: &mut egui::Ui, store: &Store, palette: &Palette, events: &mut Vec
         system_pick_row(ui, true, &catalog, palette, events);
         system_pick_row(ui, false, &catalog, palette, events);
     });
-    let flips: [(&str, &[(&str, &str, &str, bool)]); 3] = [
+    let flips: [(&str, &[Flip]); 3] = [
         (
             "Input",
             &[

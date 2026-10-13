@@ -335,7 +335,6 @@ pub fn mode_rows(
     let needle = picker_query(query);
     options
         .iter()
-        .cloned()
         .filter(|mode| mode.value != PLAN_MODE)
         .filter(|mode| {
             needle.is_empty()
@@ -347,6 +346,7 @@ pub fn mode_rows(
                 .to_lowercase()
                 .contains(&needle)
         })
+        .cloned()
         .collect()
 }
 
