@@ -672,6 +672,13 @@ pub struct ShellApp {
     last_update_check: i64,
     /// The finished release check's inbox, while one is in flight.
     update_rx: Option<std::sync::mpsc::Receiver<Option<crate::update::CheckOutcome>>>,
+    /// Whether the engine runs on another machine, where the local
+    /// folder picker would name paths the engine cannot open.
+    pub remote: bool,
+    /// The system folder picker's answer, while it is open. Native
+    /// only: the browser has no local folders.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    folder_rx: Option<std::sync::mpsc::Receiver<Option<String>>>,
     /// Whether the check in flight is the daily one, whose answer
     /// raises the update toast. The settings page's own check reports
     /// in place instead.
@@ -719,6 +726,7 @@ impl eframe::App for ShellApp {
             self.pump_update_check();
             self.apply_update();
             self.apply_install();
+            self.apply_folder();
         }
         self.route_keys(&ctx);
         self.vim_keys(&ctx);
@@ -798,6 +806,8 @@ impl ShellApp {
             stream_tick: crate::frame_times::Ticker::hz30(web_time::Instant::now()),
             last_update_check: crate::clock::unix_seconds(),
             update_rx: None,
+            remote: false,
+            folder_rx: None,
             announce_update: false,
             install_rx: None,
             installing: None,
@@ -1049,9 +1059,15 @@ impl ShellApp {
                                 });
                             }
                             crate::ui::welcome::WelcomeEvent::OpenFolder => {
-                                self.shell
-                                    .dialogs
-                                    .show_dialog(crate::ui::dialog::DialogKind::OpenFolder, store);
+                                // The system picker when the engine is
+                                // local, as the reference opens it; the
+                                // engine's own listing otherwise.
+                                if !self.open_system_folder_picker() {
+                                    self.shell.dialogs.show_dialog(
+                                        crate::ui::dialog::DialogKind::OpenFolder,
+                                        store,
+                                    );
+                                }
                             }
                         }
                     }
@@ -2401,6 +2417,64 @@ impl ShellApp {
         self.announce_update = true;
     }
 
+    /// Opens the system folder picker on its own thread, when the engine
+    /// is local and no picker is open yet. Answers whether it did; the
+    /// caller shows the engine's folder listing otherwise.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn open_system_folder_picker(&mut self) -> bool {
+        if self.remote {
+            return false;
+        }
+        if self.folder_rx.is_some() {
+            return true;
+        }
+        let start = self.shell.store.session_dir().map(str::to_owned);
+        let ctx = self.ctx.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("kage-folder-picker".to_owned())
+            .spawn(move || {
+                let mut dialog = rfd::FileDialog::new().set_title("Open folder");
+                if let Some(start) = start {
+                    dialog = dialog.set_directory(start);
+                }
+                let picked = dialog
+                    .pick_folder()
+                    .map(|path| path.to_string_lossy().into_owned());
+                let _ = tx.send(picked);
+                ctx.request_repaint();
+            })
+            .expect("the folder picker thread starts");
+        self.folder_rx = Some(rx);
+        true
+    }
+
+    /// The browser has no local folders to pick from.
+    #[cfg(target_arch = "wasm32")]
+    fn open_system_folder_picker(&mut self) -> bool {
+        false
+    }
+
+    /// Takes the folder the system picker answered with, if it has, as
+    /// the project the next session opens in. A cancelled picker
+    /// leaves the project as it was.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn apply_folder(&mut self) {
+        let Some(rx) = &self.folder_rx else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(picked) => {
+                self.folder_rx = None;
+                if let Some(path) = picked {
+                    self.shell.store.set_project(Some(path));
+                }
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => self.folder_rx = None,
+        }
+    }
+
     /// Runs a release check on its own thread when the daily throttle
     /// allows it, or past it when `force` is set, and applies the
     /// answer on the UI thread.
@@ -2633,6 +2707,7 @@ pub fn run() {
     let smoke_millis = launch.smoke_millis;
     let stream = launch.stream;
     let replay = launch.wire == Wire::Replay;
+    let remote = matches!(launch.wire, Wire::WebSocket { .. });
     let prefs = crate::prefs::load();
     let cwd = std::env::current_dir()
         .map(|dir| dir.to_string_lossy().into_owned())
@@ -2656,6 +2731,7 @@ pub fn run() {
         Box::new(move |cc| {
             let mut app = ShellApp::new(cwd, replay, transport, &cc.egui_ctx);
             app.stream = stream;
+            app.remote = remote;
             app.prefs_theme = prefs.theme.clone();
             crate::theme::apply_choice(&prefs.theme, &cc.egui_ctx);
             if let Some(millis) = smoke_millis {

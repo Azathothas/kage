@@ -227,7 +227,7 @@ fn session_menu(
     } else {
         ("Pin", Icon::Pin)
     };
-    let items: [Option<(Icon, &str, bool, Option<SessionAction>)>; 9] = [
+    let items: [Option<MenuItem>; 9] = [
         Some((Icon::Pencil, "Rename", true, None)),
         Some((pin_icon, pin_label, true, Some(SessionAction::Pin))),
         Some((
@@ -301,6 +301,11 @@ fn session_menu(
     }
     ui.data_mut(|data| data.insert_temp(open_id, open));
 }
+
+/// One session menu row: its icon, label, whether it is enabled, and
+/// the action it asks for, or `None` for rename, which the bar does
+/// itself.
+type MenuItem<'a> = (Icon, &'a str, bool, Option<SessionAction>);
 
 /// The rename field's width, the reference's 260px floor.
 const RENAME_W: f32 = 260.0;
