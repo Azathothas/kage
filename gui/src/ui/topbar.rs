@@ -117,11 +117,9 @@ fn rename_or_title(
     let Some(mut draft) = ui.data(|data| data.get_temp::<String>(draft_id)) else {
         let response = ui
             .add(
-                egui::Label::new(
-                    egui::RichText::new(&title).size(FS_SM).color(palette.ink),
-                )
-                .truncate()
-                .sense(egui::Sense::click()),
+                egui::Label::new(egui::RichText::new(&title).size(FS_SM).color(palette.ink))
+                    .truncate()
+                    .sense(egui::Sense::click()),
             )
             .on_hover_text("Double-click to rename");
         if response.double_clicked() {
@@ -133,7 +131,10 @@ fn rename_or_title(
         egui::TextEdit::singleline(&mut draft)
             .id(egui::Id::new(RENAME_INPUT))
             .desired_width(240.0)
-            .font(egui::FontId::new(FS_SM, crate::theme::family(crate::theme::FAMILY_BODY_REGULAR))),
+            .font(egui::FontId::new(
+                FS_SM,
+                crate::theme::family(crate::theme::FAMILY_BODY_REGULAR),
+            )),
     );
     let (enter, escape) = ui.input(|input| {
         (

@@ -604,6 +604,7 @@ fn nav_row(
         chip_text,
         palette.faint,
     );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
     response.clicked()
 }
 

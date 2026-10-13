@@ -1730,7 +1730,7 @@ mod tests {
             assert!(!section.label().is_empty(), "{section:?} has a label");
             let _ = section.icon();
         }
-        assert_eq!(Section::ALL.len(), 11);
+        assert_eq!(Section::ALL.len(), 12);
     }
 
     #[test]

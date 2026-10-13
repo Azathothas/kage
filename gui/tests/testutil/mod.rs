@@ -58,6 +58,7 @@ pub fn install_theme(ctx: &egui::Context, theme: &str) {
         &kage_desktop::theme::ThemeChoice::Named(theme.to_owned()),
         ctx,
     );
+    ctx.global_style_mut(|style| style.visuals.text_cursor.blink = false);
 }
 
 /// The state a [`harness`] carries: the caller's state, the draw
