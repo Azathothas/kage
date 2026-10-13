@@ -140,7 +140,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libfontconfig-dev libxkbcommon-dev \
-            libxkbcommon-x11-dev libwayland-dev libxcb1-dev
+            libxkbcommon-x11-dev libwayland-dev libxcb1-dev xvfb
       - name: fmt
         if: runner.os == 'Linux'
         run: cargo fmt --check
@@ -165,12 +165,14 @@ jobs:
       # gui suite on all three platforms.
       - name: Probe run
         run: cargo test --locked --all-targets --no-fail-fast
-      # The headless platform needs no display and no GPU, so this
-      # exercises the real event loop, window, list, composer, markdown
-      # and the 30 Hz stream on every Linux CI run.
+      # The smoke run drives the real event loop, window, list,
+      # composer, markdown and the 30 Hz stream on every Linux CI run.
+      # winit needs a display, so it opens under Xvfb; --replay feeds
+      # it the recorded transcript, since a runner has no engine to
+      # attach to.
       - name: Smoke run
         if: runner.os == 'Linux'
-        run: ZED_HEADLESS=1 timeout 60 ./target/debug/kage-desktop --smoke 5000 --stream
+        run: xvfb-run -a ./target/debug/kage-desktop --replay --smoke 5000 --stream
       # The web target compiles on the pinned stable toolchain, and the
       # wasm-bindgen CLI turns the cdylib into the bundle gui/web/
       # ships. No nightly anywhere: the old GPUI web build needed
