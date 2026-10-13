@@ -14,8 +14,10 @@ use kage_client::{Session, TranscriptItem, unquote_and_trim};
 
 use crate::store::{FoldersRead, Store};
 use crate::theme::{
-    FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_SM, FS_XS, Palette, R_FULL, R_MD, R_XL, family,
+    FAMILY_BODY_REGULAR, FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_SM, FS_XS, LINE, Palette,
+    R_FULL, R_MD, R_SM, R_XL, family,
 };
+use crate::ui::settings_config::{BtnTone, btn_sm_at};
 use crate::ui::workbench::{ChangeEntry, change_entries, session_changes};
 
 /// The dialogs the shell can show.
@@ -159,6 +161,9 @@ pub struct Dialogs {
     /// The answer to the listing ask: the folders of the listed
     /// folder, or why they could not be listed.
     listing: Option<FoldersRead>,
+    /// Whether the open dialog's field still owes the focus its
+    /// opening asked for.
+    focus: bool,
 }
 
 impl Dialogs {
@@ -188,6 +193,7 @@ impl Dialogs {
             return vec![DialogEvent::EnableSwarm(None)];
         }
         self.open = Some(kind);
+        self.focus = true;
         match kind {
             DialogKind::Goal => {
                 let current = store.active_session().and_then(|session| {
@@ -272,65 +278,101 @@ impl Dialogs {
                     DialogKind::ConfirmSwarm => 460.0,
                     DialogKind::Rewind(_) => 560.0,
                 };
+                // The card centers in the window, at the height it drew
+                // last frame.
+                let height_id = egui::Id::new("kage-dialog-height");
+                let last = ui
+                    .data(|data| data.get_temp::<f32>(height_id))
+                    .unwrap_or(200.0);
                 let card = egui::Rect::from_min_size(
-                    egui::pos2((screen.width() - width) / 2.0, screen.height() * 0.12),
+                    egui::pos2(
+                        (screen.width() - width) / 2.0,
+                        ((screen.height() - last) / 2.0).max(8.0),
+                    ),
                     egui::vec2(width, 0.0),
                 );
-                ui.scope_builder(egui::UiBuilder::new().max_rect(card), |ui| {
-                    let (fg, bg) = match kind {
-                        DialogKind::Goal | DialogKind::Rewind(_) | DialogKind::OpenFolder => {
-                            (palette.accent, palette.accent_soft)
-                        }
-                        DialogKind::ConfirmSwarm => (palette.done, palette.done_soft),
-                    };
+                let (fg, bg) = match kind {
+                    DialogKind::Goal | DialogKind::Rewind(_) | DialogKind::OpenFolder => {
+                        (palette.accent, palette.accent_soft)
+                    }
+                    DialogKind::ConfirmSwarm => (palette.done, palette.done_soft),
+                };
+                let (title, icon) = match kind {
+                    DialogKind::Goal => ("Set a goal", crate::icons::Icon::Target),
+                    DialogKind::ConfirmSwarm => {
+                        ("Enable swarm mode?", crate::icons::Icon::Waypoints)
+                    }
+                    DialogKind::Rewind(_) => ("Rewind to this message?", crate::icons::Icon::Undo2),
+                    DialogKind::OpenFolder => ("Open folder", crate::icons::Icon::FolderOpen),
+                };
+                // The card takes its own clicks before its contents draw
+                // over it, so only the scrim around it closes the dialog.
+                let _ = ui.interact(
+                    egui::Rect::from_min_size(card.min, egui::vec2(width, last)),
+                    egui::Id::new("kage-dialog-card"),
+                    egui::Sense::click(),
+                );
+                let drawn = ui.scope_builder(egui::UiBuilder::new().max_rect(card), |ui| {
                     egui::Frame::NONE
                         .fill(palette.bg)
                         .stroke(egui::Stroke::new(1.0, palette.line))
                         .corner_radius(egui::CornerRadius::same(R_XL as u8))
                         .shadow(palette.shadow_2)
                         .show(ui, |ui| {
-                            ui.set_max_width(width);
-                            let (title, icon) = match kind {
-                                DialogKind::Goal => ("Set a goal", crate::icons::Icon::Target),
-                                DialogKind::ConfirmSwarm => {
-                                    ("Enable swarm mode?", crate::icons::Icon::Waypoints)
-                                }
-                                DialogKind::Rewind(_) => {
-                                    ("Rewind to this message?", crate::icons::Icon::Undo2)
-                                }
-                                DialogKind::OpenFolder => {
-                                    ("Open a folder", crate::icons::Icon::Folder)
-                                }
-                            };
-                            ui.horizontal(|ui| {
-                                ui.add_space(18.0);
-                                ui.add_space(6.0);
-                                egui::Frame::NONE
-                                    .fill(bg)
-                                    .corner_radius(egui::CornerRadius::same(R_MD as u8))
-                                    .inner_margin(egui::Margin::same(7))
-                                    .show(ui, |ui| {
-                                        crate::icons::icon(ui, icon, 14.0, fg);
-                                    });
-                                ui.add_space(10.0);
-                                ui.label(
-                                    egui::RichText::new(title)
-                                        .size(16.0)
-                                        .family(family(FAMILY_BODY_SEMIBOLD))
-                                        .color(palette.ink_strong),
-                                );
+                            ui.set_width(width - 2.0);
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            let (head, _) = ui.allocate_exact_size(
+                                egui::vec2(ui.available_width(), 16.0 + 28.0 + 8.0),
+                                egui::Sense::hover(),
+                            );
+                            let badge = egui::Rect::from_min_size(
+                                head.min + egui::vec2(18.0, 16.0),
+                                egui::vec2(28.0, 28.0),
+                            );
+                            ui.painter().rect_filled(
+                                badge,
+                                egui::CornerRadius::same(R_MD as u8),
+                                bg,
+                            );
+                            crate::icons::themed_image(icon, 14.0, fg).paint_at(
+                                ui,
+                                egui::Rect::from_center_size(
+                                    badge.center(),
+                                    egui::vec2(14.0, 14.0),
+                                ),
+                            );
+                            ui.interact(
+                                head,
+                                egui::Id::new("kage-dialog-title"),
+                                egui::Sense::hover(),
+                            )
+                            .widget_info(|| {
+                                egui::WidgetInfo::labeled(egui::WidgetType::Label, true, title)
                             });
-                            ui.add_space(8.0);
-                            ui.horizontal(|ui| {
-                                ui.add_space(18.0);
-                                ui.vertical(|ui| {
-                                    ui.set_max_width(width - 36.0);
+                            ui.painter().text(
+                                egui::pos2(badge.right() + 10.0, badge.center().y),
+                                egui::Align2::LEFT_CENTER,
+                                title,
+                                egui::FontId::new(16.0, family(FAMILY_BODY_SEMIBOLD)),
+                                palette.ink_strong,
+                            );
+                            egui::Frame::NONE
+                                .inner_margin(egui::Margin {
+                                    left: 18,
+                                    right: 18,
+                                    top: 8,
+                                    bottom: 16,
+                                })
+                                .show(ui, |ui| {
+                                    ui.set_width(ui.available_width());
+                                    ui.spacing_mut().item_spacing.y = 0.0;
                                     self.draw_body(ui, kind, store, palette, &mut ask);
                                 });
-                            });
-                            ui.add_space(12.0);
-                        });
+                        })
+                        .response
+                        .rect
                 });
+                ui.data_mut(|data| data.insert_temp(height_id, drawn.inner.height()));
                 let _ = born;
             });
         for event in ask.events.drain(..) {
@@ -373,20 +415,24 @@ impl Dialogs {
                 "The agent keeps working until the goal is met, checking it after each turn.",
             )
             .size(FS_SM)
+            .line_height(Some(FS_SM * LINE))
             .color(palette.muted),
         );
         ui.add_space(10.0);
-        let field = egui::TextEdit::singleline(&mut text)
-            .hint_text("e.g. all retry tests pass three runs in a row")
-            .desired_width(f32::INFINITY)
-            .font(egui::FontId::new(FS_SM, family(FAMILY_BODY_SEMIBOLD)))
-            .margin(egui::Margin::symmetric(10, 8));
-        let response = ui.add(field);
+        let focus = std::mem::take(&mut self.focus);
+        let response = field(
+            ui,
+            &mut text,
+            "e.g. all retry tests pass three runs in a row",
+            false,
+            focus,
+            palette,
+        );
         if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
             ask.events.push(DialogEvent::SaveGoal(text.clone()));
             ask.close = true;
         }
-        ui.add_space(12.0);
+        ui.add_space(FOOT_GAP);
         footer(
             ui,
             palette,
@@ -401,73 +447,72 @@ impl Dialogs {
         self.goal = text;
     }
 
-    /// The swarm confirmation: what turning it on does and the
-    /// permission mode it holds.
+    /// The swarm confirmation: what turning it on does, and under the
+    /// mode that asks for every edit, the offer to turn it on with the
+    /// default mode instead.
     fn swarm_body(&mut self, ui: &mut egui::Ui, store: &Store, palette: &Palette, ask: &mut Ask) {
-        let mode = store
-            .active_session()
-            .and_then(|session| {
-                session
-                    .config_options
-                    .iter()
-                    .find(|option| option.id == "mode")
-                    .map(|option| option.current_value.clone())
-            })
-            .unwrap_or_else(|| "default".to_owned());
-        let name = store
-            .active_session()
-            .and_then(|session| {
-                session
-                    .config_options
-                    .iter()
-                    .find(|option| option.id == "mode")?
-                    .options
-                    .iter()
-                    .find(|choice| choice.value == mode)
-                    .map(|choice| choice.name.clone())
-            })
-            .unwrap_or_else(|| mode.clone());
-        ui.label(
-            egui::RichText::new(
-                "The agent can run several workers at once. Each one asks before it edits or runs a command.",
+        let mode_name = |value: &str| {
+            store
+                .active_session()
+                .and_then(|session| {
+                    session
+                        .config_options
+                        .iter()
+                        .find(|option| option.id == "mode")?
+                        .options
+                        .iter()
+                        .find(|choice| choice.value == value)
+                        .map(|choice| choice.name.clone())
+                })
+                .unwrap_or_else(|| value.to_owned())
+        };
+        let asks_always = store.permission_mode().as_deref() == Some("ask");
+        let default_name = mode_name("default");
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(
+                    "The agent will split work into many parallel sub-agents, one per item, and merge their results.",
+                )
+                .size(FS_SM)
+                    .line_height(Some(FS_SM * LINE))
+                .color(palette.ink),
             )
-            .size(FS_SM)
-            .color(palette.muted),
+            .wrap(),
         );
-        ui.add_space(10.0);
-        egui::Frame::NONE
-            .fill(palette.surface)
-            .stroke(egui::Stroke::new(1.0, palette.line))
-            .corner_radius(egui::CornerRadius::same(R_MD as u8))
-            .inner_margin(egui::Margin::same(12))
-            .show(ui, |ui| {
-                ui.set_min_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new("Permission mode")
-                            .size(FS_XS)
-                            .color(palette.faint),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(
-                            egui::RichText::new(&name)
-                                .size(FS_SM)
-                                .color(palette.ink_strong),
-                        );
-                    });
-                });
-            });
-        ui.add_space(12.0);
-        footer(
-            ui,
-            palette,
-            &[("Cancel", false), ("Enable swarm", true)],
-            &mut ask.saved,
-            &mut ask.cancelled,
-        );
-        if ask.saved {
-            ask.events.push(DialogEvent::EnableSwarm(Some(mode)));
-            ask.close = true;
+        if asks_always {
+            ui.add_space(10.0);
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(format!(
+                        "You are in {}. Every worker edit would stop for approval, so swarms work best with {default_name}.",
+                        mode_name("ask")
+                    ))
+                    .size(13.0)
+                    .line_height(Some(13.0 * LINE))
+                    .color(palette.muted),
+                )
+                .wrap(),
+            );
+        }
+        ui.add_space(FOOT_GAP);
+        let relax = format!("Enable with {default_name}");
+        let mut buttons: Vec<(&str, BtnTone)> = vec![("Cancel", BtnTone::Plain)];
+        if asks_always {
+            buttons.push((&relax, BtnTone::Plain));
+        }
+        buttons.push(("Enable swarm", BtnTone::Primary));
+        match footer_buttons(ui, palette, &buttons) {
+            Some(0) => ask.cancelled = true,
+            Some(n) if n + 1 == buttons.len() => {
+                ask.events.push(DialogEvent::EnableSwarm(None));
+                ask.close = true;
+            }
+            Some(_) => {
+                ask.events
+                    .push(DialogEvent::EnableSwarm(Some("default".to_owned())));
+                ask.close = true;
+            }
+            None => {}
         }
     }
 
@@ -487,20 +532,44 @@ impl Dialogs {
             .and_then(|session| session.title.clone())
             .unwrap_or_else(|| "untitled session".to_owned());
         if let Some(preview) = &preview {
-            egui::Frame::NONE
+            let quote = egui::Frame::NONE
                 .fill(palette.surface)
-                .stroke(egui::Stroke::new(3.0, palette.accent))
-                .corner_radius(egui::CornerRadius::same(R_MD as u8))
-                .inner_margin(egui::Margin::symmetric(12, 10))
+                .corner_radius(egui::CornerRadius {
+                    nw: 0,
+                    sw: 0,
+                    ne: R_MD as u8,
+                    se: R_MD as u8,
+                })
+                .inner_margin(egui::Margin {
+                    left: 15,
+                    right: 12,
+                    top: 10,
+                    bottom: 10,
+                })
                 .show(ui, |ui| {
-                    ui.set_max_width(ui.available_width());
-                    ui.label(
-                        egui::RichText::new(&preview.prompt)
-                            .size(FS_SM)
-                            .color(palette.ink_strong),
-                    );
-                });
-            ui.add_space(8.0);
+                    ui.set_width(ui.available_width());
+                    egui::ScrollArea::vertical()
+                        .max_height(96.0 - 20.0)
+                        .show(ui, |ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(&preview.prompt)
+                                        .size(FS_SM)
+                                        .line_height(Some(FS_SM * LINE))
+                                        .color(palette.ink_strong),
+                                )
+                                .wrap(),
+                            );
+                        });
+                })
+                .response
+                .rect;
+            ui.painter().rect_filled(
+                egui::Rect::from_min_size(quote.min, egui::vec2(3.0, quote.height())),
+                egui::CornerRadius::ZERO,
+                palette.accent,
+            );
+            ui.add_space(12.0);
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
                 count_chip(
@@ -541,7 +610,7 @@ impl Dialogs {
                 }
             });
             if !preview.files.is_empty() {
-                ui.add_space(8.0);
+                ui.add_space(12.0);
                 egui::Frame::NONE
                     .stroke(egui::Stroke::new(1.0, palette.subtle))
                     .corner_radius(egui::CornerRadius::same(12))
@@ -604,15 +673,21 @@ impl Dialogs {
                     });
             }
         }
-        ui.add_space(8.0);
-        ui.label(
-            egui::RichText::new(format!(
-                "The current state stays as \"{title} (before rewind)\", and this message goes back in the composer."
-            ))
-            .size(13.0)
-            .color(palette.muted),
+        if preview.is_some() {
+            ui.add_space(12.0);
+        }
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(format!(
+                    "The current state stays as \"{title} (before rewind)\", and this message goes back in the composer."
+                ))
+                .size(13.0)
+                    .line_height(Some(13.0 * LINE))
+                .color(palette.muted),
+            )
+            .wrap(),
         );
-        ui.add_space(12.0);
+        ui.add_space(FOOT_GAP);
         footer(
             ui,
             palette,
@@ -626,93 +701,106 @@ impl Dialogs {
         }
     }
 
-    /// The folder dialog: the path field, the listing's navigation and
-    /// its folders.
+    /// The folder dialog: the path field with the up and home
+    /// buttons, and the folders inside the folder on show.
     fn folder_body(&mut self, ui: &mut egui::Ui, palette: &Palette, ask: &mut Ask) {
         let listed = self.listing.as_ref().and_then(|read| read.as_ref().ok());
         let parent = listed.and_then(|listing| listing.parent.clone());
         let home = listed.and_then(|listing| listing.home.clone());
         let mut text = std::mem::take(&mut self.folder);
-        ui.label(
-            egui::RichText::new(
-                "A folder on the machine kage runs on. The next session opens there.",
+        ui.add(
+            egui::Label::new(
+                egui::RichText::new(
+                    "A folder on the machine kage runs on. The next session opens there.",
+                )
+                .size(FS_SM)
+                .line_height(Some(FS_SM * LINE))
+                .color(palette.muted),
             )
-            .size(FS_SM)
-            .color(palette.muted),
+            .wrap(),
         );
         ui.add_space(10.0);
-        ui.horizontal(|ui| {
-            let field = egui::TextEdit::singleline(&mut text)
-                .hint_text("/path/to/project")
-                .desired_width(f32::INFINITY)
-                .font(egui::FontId::new(FS_SM, family(FAMILY_MONO_REGULAR)))
-                .margin(egui::Margin::symmetric(10, 8));
-            let response = ui.add(field);
-            if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                ask.browse = Some(Some(unquote_and_trim(&text).to_owned()));
-            }
-            if ui
-                .add(dialog_button("Browse", palette.accent, palette.bg))
-                .clicked()
-            {
-                ask.browse = Some(Some(unquote_and_trim(&text).to_owned()));
-            }
-        });
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            if ui
-                .add(dialog_button("Up", egui::Color32::TRANSPARENT, palette.ink))
-                .clicked()
-            {
-                ask.browse = Some(parent.clone());
-            }
-            if ui
-                .add(dialog_button(
-                    "Home",
-                    egui::Color32::TRANSPARENT,
-                    palette.ink,
-                ))
-                .clicked()
-            {
-                ask.browse = Some(home.clone());
-            }
-        });
-        if let Some(listed) = listed {
-            if let Some(read) = self.listing.as_ref().and_then(|read| read.as_ref().err()) {
-                ui.label(
-                    egui::RichText::new(read.clone())
-                        .size(FS_XS)
-                        .color(palette.danger),
-                );
-            }
-            ui.add_space(4.0);
-            egui::ScrollArea::vertical()
-                .max_height(200.0)
-                .show(ui, |ui| {
-                    ui.set_min_width(ui.available_width());
-                    for name in &listed.folders {
-                        let row = ui.add(
-                            egui::Button::new(
-                                egui::RichText::new(format!("{name}/"))
-                                    .size(FS_SM)
-                                    .family(family(FAMILY_MONO_REGULAR))
-                                    .color(palette.ink),
-                            )
-                            .fill(egui::Color32::TRANSPARENT)
-                            .corner_radius(egui::CornerRadius::same(R_MD as u8))
-                            .min_size(egui::vec2(0.0, 26.0)),
-                        );
-                        if row.clicked() {
-                            ask.browse = Some(Some(join_folder(&listed.path, name)));
-                        }
-                    }
-                });
+        let focus = std::mem::take(&mut self.focus);
+        let (row, _) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), FIELD_H),
+            egui::Sense::hover(),
+        );
+        let nav = |ui: &mut egui::Ui, right: f32, icon, tip: &str, to: &Option<String>| {
+            let rect = egui::Rect::from_min_size(
+                egui::pos2(right - 28.0, row.center().y - 13.0),
+                egui::vec2(28.0, 26.0),
+            );
+            let enabled = to.is_some();
+            let response = ui
+                .interact(
+                    rect,
+                    ui.id().with(("folder-nav", tip)),
+                    egui::Sense::click(),
+                )
+                .on_hover_text(tip);
+            let hovered = enabled && response.hovered();
+            let radius = egui::CornerRadius::same(R_MD as u8);
+            let fill = if hovered {
+                palette.fill_hover
+            } else {
+                palette.fill
+            };
+            let line = if hovered {
+                palette.line_strong
+            } else {
+                palette.line
+            };
+            let alpha = if enabled { 1.0 } else { 0.4 };
+            ui.painter()
+                .rect_filled(rect, radius, fill.gamma_multiply(alpha));
+            ui.painter().rect_stroke(
+                rect,
+                radius,
+                egui::Stroke::new(1.0, line.gamma_multiply(alpha)),
+                egui::StrokeKind::Inside,
+            );
+            crate::icons::themed_image(icon, 14.0, palette.ink.gamma_multiply(alpha)).paint_at(
+                ui,
+                egui::Rect::from_center_size(rect.center(), egui::vec2(14.0, 14.0)),
+            );
+            (rect.left(), enabled && response.clicked())
+        };
+        let (left, home_click) = nav(
+            ui,
+            row.right(),
+            crate::icons::Icon::House,
+            "Home folder",
+            &home,
+        );
+        let (left, up_click) = nav(
+            ui,
+            left - 6.0,
+            crate::icons::Icon::FolderUp,
+            "Up one folder",
+            &parent,
+        );
+        if home_click {
+            ask.browse = Some(home.clone());
         }
-        ui.add_space(12.0);
+        if up_click {
+            ask.browse = Some(parent.clone());
+        }
+        let field_rect = egui::Rect::from_min_max(row.min, egui::pos2(left - 6.0, row.max.y));
+        let response = ui
+            .scope_builder(egui::UiBuilder::new().max_rect(field_rect), |ui| {
+                field(ui, &mut text, "/path/to/project", true, focus, palette)
+            })
+            .inner;
+        if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            ask.browse = Some(Some(unquote_and_trim(&text).to_owned()));
+        }
+        ui.add_space(10.0);
+        self.folder_list(ui, palette, ask);
+        ui.add_space(FOOT_GAP);
         footer(
             ui,
             palette,
-            &[("Cancel", false), ("Open here", true)],
+            &[("Cancel", false), ("Open", true)],
             &mut ask.saved,
             &mut ask.cancelled,
         );
@@ -723,6 +811,91 @@ impl Dialogs {
         }
         self.folder = text;
     }
+
+    /// The folders inside the folder on show, each opening on a click,
+    /// or why they could not be listed.
+    fn folder_list(&self, ui: &mut egui::Ui, palette: &Palette, ask: &mut Ask) {
+        egui::Frame::NONE
+            .fill(palette.surface)
+            .stroke(egui::Stroke::new(1.0, palette.line))
+            .corner_radius(egui::CornerRadius::same(R_MD as u8))
+            .inner_margin(egui::Margin::same(4))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.set_height(260.0 - 8.0);
+                let note = |ui: &mut egui::Ui, text: &str| {
+                    egui::Frame::NONE
+                        .inner_margin(egui::Margin::symmetric(10, 8))
+                        .show(ui, |ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(text).size(FS_SM).color(palette.muted),
+                                )
+                                .wrap(),
+                            );
+                        });
+                };
+                let listing = match &self.listing {
+                    None => return note(ui, "Listing\u{2026}"),
+                    Some(Err(why)) => return note(ui, why),
+                    Some(Ok(listing)) => listing,
+                };
+                if listing.folders.is_empty() {
+                    return note(ui, "No folders inside.");
+                }
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        for name in &listing.folders {
+                            if folder_row(ui, name, palette).clicked() {
+                                ask.browse = Some(Some(join_folder(&listing.path, name)));
+                            }
+                        }
+                        if listing.truncated {
+                            note(ui, "More folders than shown; type a path to go further.");
+                        }
+                    });
+            });
+    }
+}
+
+/// One folder of the listing: the folder icon and its name.
+fn folder_row(ui: &mut egui::Ui, name: &str, palette: &Palette) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), 5.0 + FS_SM * 1.618 + 5.0),
+        egui::Sense::click(),
+    );
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name));
+    if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::same(R_SM as u8), palette.hover);
+    }
+    let mid = rect.center().y;
+    crate::icons::themed_image(crate::icons::Icon::Folder, 14.0, palette.muted).paint_at(
+        ui,
+        egui::Rect::from_min_size(
+            egui::pos2(rect.left() + 8.0, mid - 7.0),
+            egui::vec2(14.0, 14.0),
+        ),
+    );
+    let x = rect.left() + 8.0 + 14.0 + 8.0;
+    let galley = crate::ui::transcript::head::one_line(
+        ui,
+        name.to_owned(),
+        egui::TextFormat::simple(
+            egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
+            palette.ink,
+        ),
+        rect.right() - 8.0 - x,
+    );
+    ui.painter().galley(
+        egui::pos2(x, mid - galley.size().y / 2.0),
+        galley,
+        palette.ink,
+    );
+    response
 }
 
 /// What one frame's dialogs asked for, gathered while they drew.
@@ -740,7 +913,7 @@ struct Ask {
     close: bool,
 }
 
-/// The footer row: `buttons` drawn right to left, the last one primary.
+/// The footer row: `buttons` right aligned, the last one primary.
 /// `picked` records the primary's press and `cancelled` the plain one's.
 fn footer(
     ui: &mut egui::Ui,
@@ -749,38 +922,114 @@ fn footer(
     picked: &mut bool,
     cancelled: &mut bool,
 ) {
-    ui.horizontal(|ui| {
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            for (label, primary) in buttons.iter().rev() {
-                let fill = if *primary {
-                    palette.accent
-                } else {
-                    egui::Color32::TRANSPARENT
-                };
-                let ink = if *primary { palette.bg } else { palette.ink };
-                if ui.add(dialog_button(label, fill, ink)).clicked() {
-                    if *primary {
-                        *picked = true;
-                    } else {
-                        *cancelled = true;
-                    }
-                }
-            }
-        });
-    });
+    let toned: Vec<(&str, BtnTone)> = buttons
+        .iter()
+        .map(|(label, primary)| {
+            let tone = if *primary {
+                BtnTone::Primary
+            } else {
+                BtnTone::Plain
+            };
+            (*label, tone)
+        })
+        .collect();
+    if let Some(n) = footer_buttons(ui, palette, &toned) {
+        if buttons[n].1 {
+            *picked = true;
+        } else {
+            *cancelled = true;
+        }
+    }
 }
 
-/// A dialog footer button: the label on `fill` in `ink`.
-fn dialog_button(label: &str, fill: egui::Color32, ink: egui::Color32) -> egui::Button<'_> {
-    egui::Button::new(
-        egui::RichText::new(label)
-            .size(FS_SM)
-            .family(family(FAMILY_BODY_SEMIBOLD))
-            .color(ink),
-    )
-    .fill(fill)
-    .corner_radius(egui::CornerRadius::same(R_MD as u8))
-    .min_size(egui::vec2(0.0, 30.0))
+/// The reference's footer: small buttons 8px apart at the right edge.
+/// Answers which one was pressed, by index.
+fn footer_buttons(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    buttons: &[(&str, BtnTone)],
+) -> Option<usize> {
+    let (row, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 26.0), egui::Sense::hover());
+    let mut right = row.right();
+    let mut pressed = None;
+    for (n, (label, tone)) in buttons.iter().enumerate().rev() {
+        let button = btn_sm_at(
+            ui,
+            egui::pos2(right, row.center().y),
+            egui::Align2::RIGHT_CENTER,
+            ui.id().with(("dialog-button", n)),
+            label,
+            None,
+            *tone,
+            palette,
+        );
+        if button.clicked() {
+            pressed = Some(n);
+        }
+        right = button.rect.left() - 8.0;
+    }
+    pressed
+}
+
+/// The space above a dialog's footer: the body's bottom padding and
+/// the footer's top, as the reference stacks them.
+const FOOT_GAP: f32 = 20.0;
+
+/// The height of a dialog's field: the reference's input.
+const FIELD_H: f32 = 27.0;
+
+/// A dialog's text field: the hairline box that takes the accent ring
+/// while it holds the focus. `focus` asks for the focus this frame.
+fn field(
+    ui: &mut egui::Ui,
+    text: &mut String,
+    hint: &str,
+    mono: bool,
+    focus: bool,
+    palette: &Palette,
+) -> egui::Response {
+    let face = if mono {
+        FAMILY_MONO_REGULAR
+    } else {
+        FAMILY_BODY_REGULAR
+    };
+    let response = ui.add(
+        egui::TextEdit::singleline(text)
+            .hint_text(hint)
+            .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(10, 0)))
+            .min_size(egui::vec2(ui.available_width(), FIELD_H))
+            .desired_width(f32::INFINITY)
+            .vertical_align(egui::Align::Center)
+            .text_color(palette.ink)
+            .font(egui::FontId::new(FS_SM, family(face))),
+    );
+    if focus {
+        response.request_focus();
+    }
+    let radius = egui::CornerRadius::same(R_MD as u8);
+    if response.has_focus() {
+        // The reference's focus ring: the accent at half strength just
+        // outside the focused border, taking no room of its own.
+        ui.painter().rect_stroke(
+            response.rect,
+            radius,
+            egui::Stroke::new(3.0, palette.accent.gamma_multiply(0.5)),
+            egui::StrokeKind::Outside,
+        );
+    }
+    let line = if response.has_focus() {
+        palette.composer_focus_line
+    } else {
+        palette.line
+    };
+    ui.painter().rect_stroke(
+        response.rect,
+        radius,
+        egui::Stroke::new(1.0, line),
+        egui::StrokeKind::Inside,
+    );
+    response
 }
 
 /// The folder names a listing carries, sorted, hidden ones left out.

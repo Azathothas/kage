@@ -915,6 +915,10 @@ pub(crate) fn btn_sm_at(
     paint_btn_sm(ui, rect, response, galley, label, icon, tone, palette)
 }
 
+/// A small button's side padding: the reference's 9px inside its
+/// one pixel border.
+const BTN_PAD: f32 = 10.0;
+
 fn btn_sm_galley(ui: &egui::Ui, label: &str) -> std::sync::Arc<egui::Galley> {
     ui.painter().layout_no_wrap(
         label.to_owned(),
@@ -925,7 +929,7 @@ fn btn_sm_galley(ui: &egui::Ui, label: &str) -> std::sync::Arc<egui::Galley> {
 
 fn btn_sm_size(galley: &egui::Galley, icon: Option<crate::icons::Icon>) -> egui::Vec2 {
     let icon_w = if icon.is_some() { 12.0 + 6.0 } else { 0.0 };
-    egui::vec2(9.0 + icon_w + galley.size().x + 9.0, 26.0)
+    egui::vec2(BTN_PAD + icon_w + galley.size().x + BTN_PAD, 26.0)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -966,7 +970,7 @@ fn paint_btn_sm(
         egui::Stroke::new(1.0, line),
         egui::StrokeKind::Inside,
     );
-    let mut x = rect.left() + 9.0;
+    let mut x = rect.left() + BTN_PAD;
     if let Some(icon) = icon {
         crate::icons::themed_image(icon, 12.0, ink).paint_at(
             ui,

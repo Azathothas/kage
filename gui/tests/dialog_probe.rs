@@ -88,7 +88,7 @@ fn the_goal_button_writes_the_option_through_the_store() {
 }
 
 #[test]
-fn the_swarm_dialog_reports_the_permission_mode_it_holds() {
+fn the_swarm_dialog_offers_the_default_mode_under_ask() {
     let mut store = booted();
     store.absorb(kage_client::Frame::Notification {
         method: "session/update".to_owned(),
@@ -98,7 +98,7 @@ fn the_swarm_dialog_reports_the_permission_mode_it_holds() {
                 "sessionUpdate": "config_option_update",
                 "configOptions": [{
                     "id": "mode", "name": "Mode", "category": "mode",
-                    "type": "select", "currentValue": "default",
+                    "type": "select", "currentValue": "ask",
                     "options": [
                         {"value": "default", "name": "Default"},
                         {"value": "ask", "name": "Ask first"}
@@ -117,20 +117,40 @@ fn the_swarm_dialog_reports_the_permission_mode_it_holds() {
         harness.query_by_label("Enable swarm mode?").is_some(),
         "the dialog names itself"
     );
-    assert!(
-        harness.query_by_label("Permission mode").is_some(),
-        "the dialog names the mode it holds"
-    );
-    harness.get_by_label("Enable swarm").click();
+    harness.get_by_label("Enable with Default").click();
     harness.run();
     let (_, dialogs, events, _) = harness.state();
     assert!(
-        events
-            .iter()
-            .any(|event| matches!(event, DialogEvent::EnableSwarm(Some(_)))),
-        "the button asks for swarm mode with the mode held"
+        events.iter().any(
+            |event| matches!(event, DialogEvent::EnableSwarm(Some(mode)) if mode == "default")
+        ),
+        "the offer turns swarm on under the default mode"
     );
     assert!(!dialogs.is_open());
+}
+
+#[test]
+fn the_swarm_button_keeps_the_mode() {
+    let mut store = booted();
+    let mut dialogs = Dialogs::new();
+    dialogs.show_dialog(DialogKind::ConfirmSwarm, &mut store);
+    let mut harness = harness_for(store);
+    harness.state_mut().1 = dialogs;
+    harness.run();
+    harness.run();
+    assert!(
+        harness.query_by_label("Enable with Default").is_none(),
+        "the offer only shows under the mode that asks"
+    );
+    harness.get_by_label("Enable swarm").click();
+    harness.run();
+    let (_, _, events, _) = harness.state();
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, DialogEvent::EnableSwarm(None))),
+        "the button turns swarm on without touching the mode"
+    );
 }
 
 #[test]
