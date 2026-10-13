@@ -625,7 +625,8 @@ fn show_suggestion_menu(
     draft: &mut Draft,
 ) {
     let width = SUGGEST_W;
-    let height = (rows.len() as f32 * 44.0 + 10.0).min(SUGGEST_MAX_H);
+    let content: f32 = rows.iter().map(MenuRow::height).sum();
+    let height = (content + 2.0 * SUGGEST_PAD + 2.0).min(SUGGEST_MAX_H);
     // The menu opens above the composer, and a composer near the top
     // of a short window would push it off screen, so the position is
     // clamped to the viewport.
@@ -644,89 +645,140 @@ fn show_suggestion_menu(
                 .fill(palette.menu)
                 .stroke(egui::Stroke::new(1.0, palette.line))
                 .corner_radius(egui::CornerRadius::same(crate::theme::R_LG as u8))
-                .inner_margin(egui::Margin::same(5))
+                .inner_margin(egui::Margin::same(SUGGEST_PAD as i8))
                 .shadow(palette.shadow_menu)
                 .show(ui, |ui| {
-                    ui.set_width(width);
-                    ui.set_max_height(SUGGEST_MAX_H);
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        ui.set_width(width - 10.0);
-                        for row in &rows {
-                            let response = egui::Frame::NONE
-                                .fill(egui::Color32::TRANSPARENT)
-                                .corner_radius(egui::CornerRadius::same(crate::theme::R_MD as u8))
-                                .inner_margin(egui::Margin::symmetric(9, 7))
-                                .show(ui, |ui| {
-                                    ui.horizontal(|ui| {
-                                        ui.spacing_mut().item_spacing.x = 10.0;
-                                        crate::icons::icon(ui, row.icon, 16.0, palette.muted);
-                                        ui.vertical(|ui| {
-                                            ui.horizontal(|ui| {
-                                                ui.spacing_mut().item_spacing.x = 6.0;
-                                                ui.label(
-                                                    egui::RichText::new(row.title.clone())
-                                                        .size(12.5)
-                                                        .family(crate::theme::family(
-                                                            crate::theme::FAMILY_MONO_REGULAR,
-                                                        ))
-                                                        .color(palette.ink),
-                                                );
-                                                if !row.detail.is_empty() {
-                                                    ui.label(
-                                                        egui::RichText::new(row.detail.clone())
-                                                            .size(11.0)
-                                                            .family(crate::theme::family(
-                                                                crate::theme::FAMILY_MONO_REGULAR,
-                                                            ))
-                                                            .color(palette.faint),
-                                                    );
-                                                }
-                                            });
-                                            if !row.description.is_empty() {
-                                                ui.label(
-                                                    egui::RichText::new(row.description.clone())
-                                                        .size(crate::theme::FS_XS)
-                                                        .color(palette.muted),
-                                                );
-                                            }
-                                        });
-                                        if let Some(badge) = &row.badge {
-                                            ui.with_layout(
-                                                egui::Layout::right_to_left(egui::Align::Center),
-                                                |ui| {
-                                                    ui.label(
-                                                        egui::RichText::new(badge.clone())
-                                                            .size(crate::theme::FS_2XS)
-                                                            .color(palette.faint),
-                                                    );
-                                                },
-                                            );
+                    ui.set_width(width - 2.0 * SUGGEST_PAD - 2.0);
+                    egui::ScrollArea::vertical()
+                        .max_height(SUGGEST_MAX_H - 2.0 * SUGGEST_PAD - 2.0)
+                        .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            for row in &rows {
+                                if suggest_row(ui, row, palette).clicked() {
+                                    match &row.pick {
+                                        MenuPick::Slash(name) => draft.pick_slash(name),
+                                        MenuPick::Mention { at, path } => {
+                                            draft.pick_mention(*at, path);
                                         }
-                                    });
-                                })
-                                .response;
-                            if response.hovered() {
-                                let rect = response.rect;
-                                ui.painter().rect_filled(
-                                    rect,
-                                    egui::CornerRadius::same(crate::theme::R_MD as u8),
-                                    palette.selected,
-                                );
-                            }
-                            if response.clicked() {
-                                match &row.pick {
-                                    MenuPick::Slash(name) => draft.pick_slash(name),
-                                    MenuPick::Mention { at, path } => {
-                                        draft.pick_mention(*at, path);
+                                        MenuPick::None => {}
                                     }
-                                    MenuPick::None => {}
                                 }
                             }
-                        }
-                    });
+                        });
                 });
         });
 }
+
+impl MenuRow {
+    /// The row's height: the padding around its title line, and the
+    /// description line under it when it has one.
+    fn height(&self) -> f32 {
+        let description = if self.description.is_empty() {
+            0.0
+        } else {
+            crate::theme::FS_XS * SUGGEST_LINE
+        };
+        2.0 * 7.0 + 12.5 * SUGGEST_LINE + description
+    }
+}
+
+/// One suggestion row, painted at its fixed height: the icon centered
+/// on the text, the mono title with its hint, the description under
+/// them, and the badge at the right.
+fn suggest_row(
+    ui: &mut egui::Ui,
+    row: &MenuRow,
+    palette: &crate::theme::Palette,
+) -> egui::Response {
+    use crate::theme::{FAMILY_BODY_REGULAR, FAMILY_MONO_REGULAR, family};
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), row.height()),
+        egui::Sense::click(),
+    );
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &row.title));
+    if response.hovered() {
+        ui.painter().rect_filled(
+            rect,
+            egui::CornerRadius::same(crate::theme::R_MD as u8),
+            palette.selected,
+        );
+    }
+    let mid = rect.center().y;
+    crate::icons::themed_image(row.icon, 16.0, palette.muted).paint_at(
+        ui,
+        egui::Rect::from_min_size(
+            egui::pos2(rect.left() + 9.0, mid - 8.0),
+            egui::vec2(16.0, 16.0),
+        ),
+    );
+    let x = rect.left() + 9.0 + 16.0 + 10.0;
+    let mut right = rect.right() - 9.0;
+    if let Some(badge) = &row.badge {
+        let font = egui::FontId::new(10.5, family(crate::theme::FAMILY_BODY_MEDIUM));
+        let galley = ui
+            .painter()
+            .layout_no_wrap(badge.clone(), font, palette.muted);
+        let width = galley.size().x + 16.0;
+        let at = egui::pos2(right - width, mid);
+        right = crate::ui::settings::paint_badge(ui, at, badge, 10.5, palette.muted, palette)
+            .left()
+            - 10.0;
+    }
+    let title_h = 12.5 * SUGGEST_LINE;
+    let top = rect.top() + 7.0;
+    let mono = |size: f32| egui::FontId::new(size, family(FAMILY_MONO_REGULAR));
+    let title = crate::ui::transcript::head::one_line(
+        ui,
+        row.title.clone(),
+        egui::TextFormat::simple(mono(12.5), palette.ink),
+        right - x,
+    );
+    let title_w = title.size().x;
+    ui.painter().galley(
+        egui::pos2(x, top + (title_h - title.size().y) / 2.0),
+        title,
+        palette.ink,
+    );
+    if !row.detail.is_empty() {
+        let hint_x = x + title_w + 6.0;
+        let hint = crate::ui::transcript::head::one_line(
+            ui,
+            row.detail.clone(),
+            egui::TextFormat::simple(mono(11.0), palette.faint),
+            right - hint_x,
+        );
+        ui.painter().galley(
+            egui::pos2(hint_x, top + (title_h - hint.size().y) / 2.0),
+            hint,
+            palette.faint,
+        );
+    }
+    if !row.description.is_empty() {
+        let line_h = crate::theme::FS_XS * SUGGEST_LINE;
+        let description = crate::ui::transcript::head::one_line(
+            ui,
+            row.description.clone(),
+            egui::TextFormat::simple(
+                egui::FontId::new(crate::theme::FS_XS, family(FAMILY_BODY_REGULAR)),
+                palette.muted,
+            ),
+            right - x,
+        );
+        ui.painter().galley(
+            egui::pos2(x, top + title_h + (line_h - description.size().y) / 2.0),
+            description,
+            palette.muted,
+        );
+    }
+    response
+}
+
+/// The suggestion surface's inner padding.
+const SUGGEST_PAD: f32 = 5.0;
+
+/// The design's line height over its font size.
+const SUGGEST_LINE: f32 = 1.618;
 
 /// The suggestion surface's width.
 const SUGGEST_W: f32 = 460.0;
