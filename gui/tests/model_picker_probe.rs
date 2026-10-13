@@ -272,3 +272,4 @@ fn the_mode_picker_toggles_open_from_its_pill_state() {
         "the mode picker is open"
     );
 }
+
