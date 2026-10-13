@@ -2598,12 +2598,7 @@ fn key_name(key: &egui::Key) -> &'static str {
         egui::Key::ArrowDown => "ArrowDown",
         egui::Key::ArrowLeft => "ArrowLeft",
         egui::Key::ArrowRight => "ArrowRight",
-        other => {
-            let name = other.name();
-            // The router's table spells the letter keys uppercase, and
-            // the punctuation by its own character.
-            name
-        }
+        other => other.symbol_or_name(),
     }
 }
 
@@ -2682,6 +2677,31 @@ mod tests {
         assert_eq!(
             away_toast(Some(RowState::Running), RowState::Idle),
             Some((NoticeTone::Success, "turn finished"))
+        );
+    }
+
+    #[test]
+    fn punctuation_keys_reach_their_bindings() {
+        use crate::ui::keys::{Action, Context, Mods, Press, dispatch};
+        let ctrl = |key: egui::Key| Press {
+            key: super::key_name(&key),
+            mods: Mods {
+                ctrl: true,
+                ..Mods::default()
+            },
+            repeat: false,
+        };
+        assert_eq!(
+            dispatch(Context::Shell, &ctrl(egui::Key::Comma)),
+            Some(Action::OpenSettings)
+        );
+        assert_eq!(
+            dispatch(Context::Shell, &ctrl(egui::Key::Backslash)),
+            Some(Action::ToggleSidebar)
+        );
+        assert_eq!(
+            dispatch(Context::Shell, &ctrl(egui::Key::K)),
+            Some(Action::OpenPalette)
         );
     }
 
