@@ -717,6 +717,7 @@ fn project_row(
     let dir = members.iter().find_map(|item| item.dir.clone());
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 9.0;
+        ui.spacing_mut().icon_spacing = 9.0;
         let plus_width = if dir.is_some() { 28.0 + 9.0 } else { 0.0 };
         let response = ui.add(
             egui::Button::new((
@@ -726,7 +727,7 @@ fn project_row(
                     } else {
                         crate::icons::Icon::Folder
                     },
-                    FS_SM,
+                    15.0,
                     palette.muted,
                 ),
                 egui::RichText::new(project)
@@ -740,7 +741,7 @@ fn project_row(
             .fill(egui::Color32::TRANSPARENT)
             .stroke(egui::Stroke::NONE)
             .corner_radius(egui::CornerRadius::same(R_MD as u8))
-            .min_size(egui::vec2(ui.available_width() - plus_width, 32.0)),
+            .min_size(egui::vec2(ui.available_width() - plus_width, 24.0)),
         );
         if response.clicked() {
             sidebar.toggle_project(project);

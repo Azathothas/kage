@@ -265,7 +265,7 @@ fn pill(
         .show(ui, |ui| {
             ui.set_min_height(PILL_H);
             ui.style_mut().interaction.selectable_labels = false;
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
                 body(ui);
             })
@@ -992,13 +992,13 @@ fn model_button(
         palette.muted
     };
     let response = pill(ui, open, palette, |ui| {
+        crate::icons::icon(ui, Icon::ChevronDown, 12.0, palette.faint);
         ui.label(
             egui::RichText::new(text)
                 .size(FS_XS + 1.0)
                 .family(family(FAMILY_BODY_MEDIUM))
                 .color(ink),
         );
-        crate::icons::icon(ui, Icon::ChevronDown, 12.0, palette.faint);
     });
     let response = response.on_hover_text("Model and thinking");
     if response.clicked() {
