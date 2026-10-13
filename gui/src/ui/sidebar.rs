@@ -18,10 +18,13 @@ use crate::clock::unix_seconds;
 use crate::store::Store;
 use crate::theme::{
     FAMILY_BODY_EXTRABOLD, FAMILY_BODY_REGULAR, FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_2XS,
-    FS_BASE, FS_SM, FS_XS, PANEL_HEAD_H, Palette, R_MD, family,
+    FS_BASE, FS_SM, FS_XS, Palette, R_MD, family,
 };
 
 const FOOTER_H: f32 = 52.0;
+
+/// The brand row: the mark, the wordmark and the version.
+const BRAND_H: f32 = 32.0;
 
 /// The days from 1970-01-01 to a civil date.
 #[must_use]
@@ -464,6 +467,7 @@ pub fn show_rows(
     ui.vertical(|ui| {
         ui.set_width(ui.available_width());
         brand_row(ui, version, &mut events);
+        ui.add_space(6.0);
         nav_rows(ui, &mut events);
         list_header(ui, grouped, &mut events);
         list_body(ui, sidebar, rows, grouped, now, &mut events);
@@ -477,7 +481,7 @@ pub fn show_rows(
 fn brand_row(ui: &mut egui::Ui, version: Option<&str>, events: &mut Vec<SidebarEvent>) {
     let palette = Palette::active_of(ui.ctx());
     let (rect, _) = ui.allocate_at_least(
-        egui::vec2(ui.available_width(), PANEL_HEAD_H),
+        egui::vec2(ui.available_width(), BRAND_H),
         egui::Sense::hover(),
     );
     let painter = ui.painter();
@@ -547,6 +551,7 @@ fn orb(center: egui::Pos2, radius: f32, from: egui::Color32, to: egui::Color32) 
 /// The New session and Search nav rows.
 fn nav_rows(ui: &mut egui::Ui, events: &mut Vec<SidebarEvent>) {
     let palette = Palette::active_of(ui.ctx());
+    ui.spacing_mut().item_spacing.y = 1.0;
     if nav_row(
         ui,
         palette,
@@ -583,7 +588,7 @@ fn nav_row(
     crate::icons::themed_image(icon, 16.0, palette.ink).paint_at(ui, icon_rect);
     let painter = ui.painter();
     painter.text(
-        egui::pos2(rect.left() + 32.0, rect.center().y),
+        egui::pos2(rect.left() + 35.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         label,
         egui::FontId::new(FS_BASE, family(FAMILY_BODY_REGULAR)),
