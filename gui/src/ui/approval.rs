@@ -164,6 +164,10 @@ pub struct Approval {
     picks: HashMap<RequestId, BTreeSet<usize>>,
     /// Which ask holds the keys for the digit answers.
     focused: Option<RequestId>,
+    /// The card's height last frame, so the shell's chat column can
+    /// reserve the band the card drew into and keep the composer on
+    /// the column's bottom edge.
+    band: f32,
 }
 
 impl Approval {
@@ -176,6 +180,12 @@ impl Approval {
     /// Takes the keys for ask `request_id`, so its digits answer it.
     pub fn focus(&mut self, request_id: &RequestId) {
         self.focused = Some(request_id.clone());
+    }
+
+    /// The height the card drew last frame, for the shell's chat
+    /// column to reserve.
+    pub fn band(&self) -> f32 {
+        self.band
     }
 
     /// Hands the keys back, so a digit reaches the shell again.
@@ -244,6 +254,7 @@ impl Approval {
             .next()
             .map(|(session_id, ask)| (session_id.to_owned(), ask.clone()))
         else {
+            self.band = 0.0;
             return events;
         };
         let palette = Palette::active_of(ui.ctx());
@@ -261,7 +272,7 @@ impl Approval {
             None => (palette.ok_bd, palette.surface),
         };
         let mut answer: Option<PermissionDecision> = None;
-        egui::Frame::NONE
+        let card = egui::Frame::NONE
             .fill(fill)
             .stroke(egui::Stroke::new(1.0, border))
             .corner_radius(egui::CornerRadius::same(R_XL as u8))
@@ -324,6 +335,7 @@ impl Approval {
                     self.ask_body(ui, &ask, palette, &mut answer);
                 }
             });
+        self.band = card.response.rect.height();
         if let Some(decision) = answer {
             events.push(ApprovalEvent::Reply(
                 session_id,

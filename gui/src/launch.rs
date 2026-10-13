@@ -1338,7 +1338,6 @@ impl ShellApp {
     /// the digit keys while it holds them.
     fn show_approval(&mut self, ui: &mut egui::Ui, store: &mut crate::store::Store) {
         let open = store.active_asks().len();
-        eprintln!("DBG show_approval open={open}");
         let events = self.shell.approval.show(ui, store);
         self.carry_approval(store, events);
         // A first ask takes the digit keys; the last one closing hands
