@@ -700,41 +700,46 @@ fn project_row(
 ) {
     let open = !sidebar.collapsed(project);
     let dir = members.iter().find_map(|item| item.dir.clone());
-    let response = ui.add(
-        egui::Button::image_and_text(
-            crate::icons::themed_image(
-                if open {
-                    crate::icons::Icon::FolderOpen
-                } else {
-                    crate::icons::Icon::Folder
-                },
-                FS_SM,
-                palette.muted,
-            ),
-            egui::RichText::new(format!("{project} ({})", members.len()))
-                .size(FS_SM)
-                .color(palette.muted),
-        )
-        .fill(egui::Color32::TRANSPARENT)
-        .stroke(egui::Stroke::NONE)
-        .corner_radius(egui::CornerRadius::same(R_MD as u8))
-        .min_size(egui::vec2(0.0, 32.0)),
-    );
-    if response.clicked() {
-        sidebar.toggle_project(project);
-    }
-    if let Some(dir) = dir
-        && ui
-            .add(
-                egui::Button::new(egui::RichText::new("+").size(FS_XS).color(palette.faint))
-                    .fill(egui::Color32::TRANSPARENT)
-                    .corner_radius(egui::CornerRadius::same(R_MD as u8)),
-            )
-            .on_hover_text("New session")
-            .clicked()
-    {
-        events.push(SidebarEvent::NewSession(Some(dir)));
-    }
+    ui.horizontal(|ui| {
+        let plus_width = if dir.is_some() { 28.0 } else { 0.0 };
+        let response = ui.add(
+            egui::Button::new((
+                crate::icons::themed_image(
+                    if open {
+                        crate::icons::Icon::FolderOpen
+                    } else {
+                        crate::icons::Icon::Folder
+                    },
+                    FS_SM,
+                    palette.muted,
+                ),
+                egui::RichText::new(format!("{project} ({})", members.len()))
+                    .size(FS_SM)
+                    .color(palette.muted),
+                egui::Atom::grow(),
+            ))
+            .fill(egui::Color32::TRANSPARENT)
+            .stroke(egui::Stroke::NONE)
+            .corner_radius(egui::CornerRadius::same(R_MD as u8))
+            .min_size(egui::vec2(ui.available_width() - plus_width, 32.0)),
+        );
+        if response.clicked() {
+            sidebar.toggle_project(project);
+        }
+        if let Some(dir) = dir
+            && ui
+                .add(
+                    egui::Button::new(egui::RichText::new("+").size(FS_XS).color(palette.faint))
+                        .fill(egui::Color32::TRANSPARENT)
+                        .stroke(egui::Stroke::NONE)
+                        .corner_radius(egui::CornerRadius::same(R_MD as u8)),
+                )
+                .on_hover_text("New session")
+                .clicked()
+        {
+            events.push(SidebarEvent::NewSession(Some(dir)));
+        }
+    });
 }
 
 /// One session row: title, then the attention badge, the working
