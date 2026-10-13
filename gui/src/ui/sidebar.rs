@@ -469,6 +469,7 @@ pub fn show_rows(
         brand_row(ui, version, &mut events);
         ui.add_space(6.0);
         nav_rows(ui, &mut events);
+        ui.add_space(16.0);
         list_header(ui, grouped, &mut events);
         list_body(ui, sidebar, rows, grouped, now, &mut events);
         connect_footer(ui, palette, name, status, dot, halo, &mut events);
@@ -626,7 +627,7 @@ fn nav_row(
 fn list_header(ui: &mut egui::Ui, grouped: bool, events: &mut Vec<SidebarEvent>) {
     let palette = Palette::active_of(ui.ctx());
     ui.horizontal(|ui| {
-        ui.add_space(16.0);
+        ui.add_space(8.0);
         ui.label(
             egui::RichText::new("SESSIONS")
                 .size(FS_XS)
@@ -715,7 +716,8 @@ fn project_row(
     let open = !sidebar.collapsed(project);
     let dir = members.iter().find_map(|item| item.dir.clone());
     ui.horizontal(|ui| {
-        let plus_width = if dir.is_some() { 28.0 } else { 0.0 };
+        ui.spacing_mut().item_spacing.x = 9.0;
+        let plus_width = if dir.is_some() { 28.0 + 9.0 } else { 0.0 };
         let response = ui.add(
             egui::Button::new((
                 crate::icons::themed_image(
