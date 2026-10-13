@@ -274,6 +274,12 @@ impl Mode {
     }
 }
 
+/// The mode's label, for the modeline outside the module.
+#[must_use]
+pub fn mode_label(mode: Mode) -> &'static str {
+    mode.label()
+}
+
 /// What the modeline shows.
 #[derive(Debug, Clone, Default)]
 pub struct Modeline {

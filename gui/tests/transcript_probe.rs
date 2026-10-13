@@ -132,3 +132,71 @@ fn the_find_marks_tint_the_matched_rows() {
     let (view, store, _) = harness.state();
     assert_eq!(view.searchable_rows(store).len(), count);
 }
+
+#[test]
+fn the_timeline_rail_seeks_the_rows() {
+    let mut harness = harness_for(900.0);
+    harness.run();
+    harness.run();
+    let (view, _, _) = harness.state();
+    let fresh = view.scroll_offset();
+
+    // The rail hangs 6px off the pane's right edge, 16px wide. A press
+    // at its bottom seeks the last rows.
+    let bottom = egui::Pos2::new(900.0 - 6.0 - 8.0, 686.0);
+    harness.drag_at(bottom);
+    harness.run();
+    harness.drop_at(bottom);
+    harness.run();
+    harness.run();
+    let (view, _, _) = harness.state();
+    let at_tail = view.scroll_offset();
+    assert!(
+        at_tail > fresh,
+        "the bottom of the rail seeks the last rows: {at_tail} > {fresh}"
+    );
+
+    // A press at its very top seeks the first rows again.
+    let top = egui::Pos2::new(900.0 - 6.0 - 8.0, 14.0);
+    harness.drag_at(top);
+    harness.run();
+    harness.drop_at(top);
+    harness.run();
+    harness.run();
+    let (view, _, _) = harness.state();
+    let at_top = view.scroll_offset();
+    assert!(
+        at_top < at_tail,
+        "the top of the rail seeks the first rows: {at_top} < {at_tail}"
+    );
+}
+
+#[test]
+fn the_lab_toggle_turns_the_timeline_rail_off() {
+    let mut harness = harness_for(900.0);
+    harness.run();
+    harness.run();
+    harness.run();
+    let (_, store, _) = harness.state_mut();
+    store.update_prefs(|prefs| prefs.rail = false);
+    harness.run();
+    harness.run();
+    harness.run();
+    let (view, _, _) = harness.state();
+    let settled = view.scroll_offset();
+
+    // The follow holds the tail; only a rail seek could pull the view
+    // away from it. With the toggle off, a click where the rail would
+    // hang leaves the offset alone.
+    let top = egui::Pos2::new(900.0 - 6.0 - 8.0, 14.0);
+    harness.drag_at(top);
+    harness.drop_at(top);
+    harness.run();
+    harness.run();
+    let (view, _, _) = harness.state();
+    assert_eq!(
+        view.scroll_offset(),
+        settled,
+        "no rail, no seek from the edge"
+    );
+}

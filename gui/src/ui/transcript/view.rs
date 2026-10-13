@@ -20,7 +20,8 @@ use kage_client::{Session, TranscriptItem};
 use super::list::List;
 use super::markdown::Pipeline;
 use super::model::{
-    FindMarks, Row, RowKey, UiState, gap, margins, row_model, row_search_text, signatures,
+    FindMarks, Row, RowKey, Tick, UiState, gap, margins, rail_tick, row_model, row_search_text,
+    signatures,
 };
 use super::text_rows::{self, UserAction};
 use super::tool_rows::{self, PlanRevise, RowAction};
@@ -186,7 +187,7 @@ impl TranscriptView {
         self.swap_session(self.target(store));
         let model = row_model(session, &self.ui);
         self.rows = model.rows;
-        self.pace(session, ui);
+        self.pace(session, store, ui);
         let rows = self.rows.as_slice();
         let times = store.timings(&session.id);
         let signatures = signatures(session, rows, &self.ui, &self.revealed);
@@ -296,6 +297,17 @@ impl TranscriptView {
             list.user_scrolled();
         }
         list.on_scroll(offset, content, viewport);
+
+        // The turn timeline rail, while the lab toggle keeps it: a
+        // tick per marked row, the viewport's thumb, and drag to
+        // seek. The seek rides the same path a jump button takes, so
+        // it detaches the follow the same way.
+        if store.prefs().rail && self.pinned.is_none() {
+            let seek = draw_rail(ui, session, rows, offset, content, viewport);
+            if let Some(key) = seek {
+                self.scroll_to = Some(key);
+            }
+        }
     }
 
     /// Swaps the expansion state when the session on screen changes:
@@ -321,9 +333,9 @@ impl TranscriptView {
     /// Advances the pace of the streamed text this frame: a live reply
     /// or thinking starts being paced, and while any paced text trails
     /// what arrived, another frame is asked for.
-    fn pace(&mut self, session: &Session, ui: &egui::Ui) {
+    fn pace(&mut self, session: &Session, store: &Store, ui: &egui::Ui) {
         self.revealed.clear();
-        if !self.smooth() {
+        if !self.smooth(store) {
             self.reveal.clear();
             return;
         }
@@ -358,9 +370,11 @@ impl TranscriptView {
         }
     }
 
-    /// Whether the preferences ask for the paced reveal.
-    fn smooth(&self) -> bool {
-        self.pinned.is_none()
+    /// Whether the preferences ask for the paced reveal: the lab
+    /// toggle off shows a reply whole, and a pinned session has no
+    /// live tail to pace.
+    fn smooth(&self, store: &Store) -> bool {
+        store.prefs().smooth_stream && self.pinned.is_none()
     }
 
     /// The searchable text of every model row, in row order: what the
@@ -400,6 +414,13 @@ impl TranscriptView {
         self.vim_cursor
     }
 
+    /// The scroll offset the last frame left, for the probes that
+    /// watch a seek land.
+    #[must_use]
+    pub fn scroll_offset(&self) -> f32 {
+        self.list.offset()
+    }
+
     /// Puts the vim cursor on row `ix`, clamped to the rows. `None`
     /// removes it.
     pub fn set_vim_cursor(&mut self, ix: Option<usize>) {
@@ -421,11 +442,153 @@ impl TranscriptView {
             self.ui.expanded.insert(key);
         }
     }
+
+    /// Opens or closes every row, as the `zR` and `zM` motions do.
+    pub fn fold_all(&mut self, open: bool) {
+        if open {
+            let keys = self.rows.iter().map(Row::key);
+            self.ui.expanded.extend(keys);
+        } else {
+            self.ui.expanded.clear();
+        }
+    }
+
+    /// Moves the vim cursor by `delta` rows, clamped, and brings it
+    /// into view.
+    pub fn move_cursor(&mut self, delta: isize) {
+        let to = crate::vim::step(self.vim_cursor, self.rows.len(), delta);
+        self.set_vim_cursor(to);
+        self.scroll_cursor_into_view();
+    }
+
+    /// Puts the vim cursor on the first or the last row and brings it
+    /// into view.
+    pub fn jump_cursor(&mut self, last: bool) {
+        let to = if last {
+            self.rows.len().checked_sub(1)
+        } else if self.rows.is_empty() {
+            None
+        } else {
+            Some(0)
+        };
+        self.set_vim_cursor(to);
+        self.scroll_cursor_into_view();
+    }
+
+    /// Scrolls so the cursor's row comes into view, the way the old
+    /// shell's cursor moves did. No cursor, no move.
+    fn scroll_cursor_into_view(&mut self) {
+        if let Some(ix) = self.vim_cursor
+            && let Some(row) = self.rows.get(ix)
+        {
+            self.scroll_to = Some(row.key());
+        }
+    }
 }
 
 /// The part of item `ix`'s `text` that shows this frame under the
 /// paced reveal: the whole text until the reveal is behind it, then
 /// its first `chars` characters.
+/// The rail's width and the pane margins it hangs by, as the old
+/// shell's rail sat: 16px wide, 6px off the pane's right edge, 10px
+/// off the top and the bottom.
+const RAIL_W: f32 = 16.0;
+/// The thumb's smallest height, so a tall transcript keeps it grabbable.
+const RAIL_THUMB_MIN: f32 = 18.0;
+
+/// Draws the turn timeline rail over the pane's right edge and
+/// returns the row a click or drag asked to see. The rail paints a
+/// subtle track, the viewport's thumb, and a tick per marked row:
+/// hovering a tick names it, a click scrolls to it, and a press or
+/// drag anywhere on the rail scrolls there.
+fn draw_rail(
+    ui: &mut egui::Ui,
+    session: &Session,
+    rows: &[Row],
+    offset: f32,
+    content: f32,
+    viewport: f32,
+) -> Option<RowKey> {
+    if rows.is_empty() || content <= 0.0 {
+        return None;
+    }
+    let palette = Palette::active_of(ui.ctx());
+    let pane = ui.max_rect();
+    let rail = egui::Rect::from_min_max(
+        egui::pos2(pane.right() - RAIL_W - 6.0, pane.top() + 10.0),
+        egui::pos2(pane.right() - 6.0, pane.bottom() - 10.0),
+    );
+    if !rail.is_positive() {
+        return None;
+    }
+    let painter = ui.painter();
+    let track = egui::Rect::from_min_max(
+        egui::pos2(rail.left() + 7.0, rail.top()),
+        egui::pos2(rail.left() + 9.0, rail.bottom()),
+    );
+    painter.rect_filled(track, egui::CornerRadius::same(1), palette.subtle);
+
+    let (thumb_top, thumb_h) = if content > 0.0 {
+        (offset / content, viewport / content)
+    } else {
+        (0.0, 1.0)
+    };
+    let height = (thumb_h * rail.height()).clamp(RAIL_THUMB_MIN, rail.height());
+    let top = rail.top() + thumb_top.clamp(0.0, 1.0) * (rail.height() - height);
+    let thumb = egui::Rect::from_min_max(
+        egui::pos2(rail.left() + 1.0, top),
+        egui::pos2(rail.right() - 1.0, top + height),
+    );
+    painter.rect_filled(thumb, egui::CornerRadius::same(5), palette.fill_hover);
+    painter.rect_stroke(
+        thumb,
+        egui::CornerRadius::same(5),
+        egui::Stroke::new(1.0, palette.line),
+        egui::StrokeKind::Inside,
+    );
+
+    let count = rows.len();
+    let rail_id = egui::Id::new("transcript-rail");
+    let response = ui.interact(rail, rail_id, egui::Sense::click_and_drag());
+    let mut seek = None;
+    if (response.clicked() || response.dragged())
+        && let Some(at) = response.interact_pointer_pos()
+    {
+        let fraction = ((at.y - rail.top()) / rail.height()).clamp(0.0, 1.0);
+        let ix = ((fraction * count as f32) as usize).min(count - 1);
+        seek = rows.get(ix).map(Row::key);
+    }
+
+    for (ix, row) in rows.iter().enumerate() {
+        let Some((tick, label)) = rail_tick(session, row) else {
+            continue;
+        };
+        let at = (ix as f32 + 0.5) / count as f32;
+        let (left, w, h, color, round) = match tick {
+            Tick::Turn => (2.0, 12.0, 2.0, palette.muted, 2),
+            Tick::Edit => (3.0, 10.0, 3.0, palette.ok, 2),
+            Tick::Fail => (3.0, 10.0, 4.0, palette.danger, 2),
+            Tick::Approval => (5.0, 6.0, 6.0, palette.ok, 3),
+            Tick::Swarm => (4.0, 8.0, 8.0, palette.done, 4),
+            Tick::Agent => (5.0, 6.0, 6.0, palette.info, 2),
+            Tick::Plan => (3.0, 10.0, 4.0, palette.accent, 2),
+        };
+        let center = rail.top() + at * rail.height();
+        let rect = egui::Rect::from_min_size(
+            egui::pos2(rail.left() + left, center - h / 2.0),
+            egui::vec2(w, h),
+        );
+        let tick_id = egui::Id::new(("transcript-rail-tick", ix));
+        let response = ui.interact(rect, tick_id, egui::Sense::click());
+        if response.clicked() {
+            seek = Some(row.key());
+        }
+        response.on_hover_text(label);
+        painter.rect_filled(rect, egui::CornerRadius::same(round), color);
+    }
+    seek
+}
+
 fn shown<'a>(revealed: &HashMap<usize, usize>, ix: usize, text: &'a str) -> &'a str {
     match revealed.get(&ix) {
         Some(chars) => reveal::prefix(text, *chars),
@@ -778,6 +941,15 @@ mod tests {
             view.searchable_rows(&store).len() > 5,
             "the pinned view reads the recording's rows"
         );
+    }
+
+    #[test]
+    fn the_lab_toggle_turns_the_paced_reveal_off() {
+        let mut store = replayed_store();
+        let view = TranscriptView::new();
+        assert!(view.smooth(&store), "the default pace is on");
+        store.update_prefs(|prefs| prefs.smooth_stream = false);
+        assert!(!view.smooth(&store), "the toggle shows a reply whole");
     }
 
     #[test]

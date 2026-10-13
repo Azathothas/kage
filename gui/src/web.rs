@@ -100,16 +100,33 @@ pub async fn start(canvas: web_sys::HtmlCanvasElement) {
 /// id and starts the shell on it.
 #[wasm_bindgen::prelude::wasm_bindgen(start)]
 pub fn boot() {
-    let canvas: Option<web_sys::HtmlCanvasElement> = web_sys::window()
-        .and_then(|window| window.document())
-        .and_then(|document| document.get_element_by_id("kage-canvas"))
-        .map(|element| element.dyn_into::<web_sys::HtmlCanvasElement>().ok())
-        .flatten();
-    let Some(canvas) = canvas else {
-        crate::warn("boot.js did not put a canvas in the page");
+    let Some(canvas) = canvas() else {
+        crate::warn("the page has no canvas and none could be created");
         return;
     };
     wasm_bindgen_futures::spawn_local(async move {
         start(canvas).await;
     });
+}
+
+/// The canvas the shell draws on: the one `boot.js` left in the page,
+/// or one this module creates. The form script clears the body before
+/// it loads the bundle, so the bundle owns the canvas it needs. It
+/// fills the window, and the runner sizes its buffer to the element.
+fn canvas() -> Option<web_sys::HtmlCanvasElement> {
+    let document = web_sys::window()?.document()?;
+    if let Some(found) = document.get_element_by_id("kage-canvas") {
+        return found.dyn_into().ok();
+    }
+    let element = document.create_element("canvas").ok()?;
+    element.set_id("kage-canvas");
+    let canvas: web_sys::HtmlCanvasElement = element.dyn_into().ok()?;
+    let style = canvas.style();
+    let _ = style.set_property("position", "absolute");
+    let _ = style.set_property("inset", "0");
+    let _ = style.set_property("width", "100%");
+    let _ = style.set_property("height", "100%");
+    let body = document.body()?;
+    let _ = body.append_child(&canvas);
+    Some(canvas)
 }

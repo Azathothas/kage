@@ -955,6 +955,16 @@ impl Composer {
                 self.draft.insert("\n");
             }
         }
+        // In vim mode Escape leaves the composer for normal mode,
+        // where a second Escape interrupts a running turn. A
+        // suggestion menu takes the key first, as it does a click.
+        if event == ComposerEvent::None
+            && store.prefs().vim
+            && ui.input(|i| i.key_pressed(egui::Key::Escape))
+            && self.draft.suggest().is_none()
+        {
+            event = ComposerEvent::LeaveInsert;
+        }
         event
     }
 
@@ -1011,6 +1021,9 @@ pub enum ComposerEvent {
     OpenGoal,
     /// Confirm swarm mode before it turns on.
     ConfirmSwarm,
+    /// Leave the composer for vim normal mode: vim mode's Escape in
+    /// the field.
+    LeaveInsert,
 }
 
 #[cfg(test)]

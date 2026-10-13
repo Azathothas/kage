@@ -209,6 +209,70 @@ fn tone_look(tone: NoticeTone, palette: &Palette) -> (crate::icons::Icon, egui::
     }
 }
 
+/// The toasts the frame's store changes raise, the way the old shell
+/// mapped them: an ask answered elsewhere points at its session, and
+/// a failed request toasts its error.
+#[must_use]
+pub fn drafts_for_changes(changes: &[kage_client::Change]) -> Vec<ToastDraft> {
+    changes
+        .iter()
+        .filter_map(|change| match change {
+            kage_client::Change::AnsweredElsewhere { id, .. } => Some(ToastDraft {
+                tone: NoticeTone::Info,
+                text: "an approval was answered in another session".to_owned(),
+                action: ToastAction::ActivateSession(id.clone()),
+            }),
+            kage_client::Change::Failed { error, .. } => Some(ToastDraft {
+                tone: NoticeTone::Error,
+                text: error.message.clone(),
+                action: ToastAction::None,
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Tracks how many notice items each session held at the last scan,
+/// so a frame that adds notices raises its toast once. A session's
+/// existing notices are history at first sight and stay quiet, and so
+/// are the ones a load replays before the session opens.
+#[derive(Debug, Default)]
+pub struct NoticeWatch {
+    seen: std::collections::HashMap<String, usize>,
+}
+
+impl NoticeWatch {
+    /// The notices `state` holds beyond the last scan, as toasts.
+    pub fn scan(&mut self, state: &kage_client::State) -> Vec<ToastDraft> {
+        let mut drafts = Vec::new();
+        for (id, session) in &state.sessions {
+            let notices: Vec<&kage_client::TranscriptItem> = session
+                .items
+                .iter()
+                .filter(|item| matches!(item, kage_client::TranscriptItem::Notice { .. }))
+                .collect();
+            let entry = self.seen.entry(id.clone()).or_insert(notices.len());
+            if !session.opened {
+                *entry = notices.len();
+                continue;
+            }
+            if notices.len() > *entry {
+                for item in notices[(*entry)..].iter() {
+                    if let kage_client::TranscriptItem::Notice { tone, text } = item {
+                        drafts.push(ToastDraft {
+                            tone: *tone,
+                            text: text.clone(),
+                            action: ToastAction::None,
+                        });
+                    }
+                }
+                *entry = notices.len();
+            }
+        }
+        drafts
+    }
+}
+
 /// Whether the toast raised at `at` has expired by `now`. The TTL runs
 /// from the raise, the way the old stack's per-toast timer did, and a
 /// toast that has been up exactly [`TOAST_TTL`] is gone.
@@ -354,5 +418,105 @@ mod tests {
         toasts.click(0);
         assert_eq!(toasts.take_actions(), [ToastAction::None]);
         assert!(toasts.items().is_empty(), "the click dismissed it");
+    }
+
+    #[test]
+    fn the_changes_bridge_maps_answered_elsewhere_and_failures() {
+        use kage_client::{Change, RequestId};
+        let changes = [
+            Change::AnsweredElsewhere {
+                id: "s1".to_owned(),
+                request_id: RequestId::Number(7),
+            },
+            Change::Failed {
+                request: 9,
+                error: kage_client::RpcError {
+                    code: -32000,
+                    message: "the provider refused".to_owned(),
+                    data: None,
+                },
+            },
+            Change::Directory,
+        ];
+        let drafts = super::drafts_for_changes(&changes);
+        assert_eq!(drafts.len(), 2, "only the two toast-worthy changes");
+        assert_eq!(drafts[0].tone, NoticeTone::Info);
+        assert_eq!(
+            drafts[0].text,
+            "an approval was answered in another session"
+        );
+        assert_eq!(
+            drafts[0].action,
+            ToastAction::ActivateSession("s1".to_owned())
+        );
+        assert_eq!(drafts[1].tone, NoticeTone::Error);
+        assert_eq!(drafts[1].text, "the provider refused");
+        assert_eq!(drafts[1].action, ToastAction::None);
+    }
+
+    #[test]
+    fn a_new_notice_toasts_once_and_history_stays_quiet() {
+        use kage_client::{Session, State, TranscriptItem};
+
+        let session_with = |notices: usize| Session {
+            items: (0..notices)
+                .map(|ix| TranscriptItem::Notice {
+                    tone: NoticeTone::Warn,
+                    text: format!("notice {ix}"),
+                })
+                .collect(),
+            ..Session::default()
+        };
+        let mut state = State::default();
+        state.sessions.insert("s1".to_owned(), session_with(1));
+        let mut watch = super::NoticeWatch::default();
+
+        assert!(
+            watch.scan(&state).is_empty(),
+            "the first sight of a session is history"
+        );
+        state.sessions.insert("s1".to_owned(), session_with(1));
+        assert!(watch.scan(&state).is_empty(), "no growth, no toast");
+
+        let mut grown = session_with(1);
+        grown.opened = true;
+        grown.items.push(TranscriptItem::Notice {
+            tone: NoticeTone::Warn,
+            text: "notice 1".to_owned(),
+        });
+        state.sessions.insert("s1".to_owned(), grown);
+        let drafts = watch.scan(&state);
+        assert_eq!(drafts.len(), 1, "the notice beyond the last scan toasts");
+        assert_eq!(drafts[0].text, "notice 1");
+        assert!(watch.scan(&state).is_empty(), "it toasts once");
+    }
+
+    #[test]
+    fn notices_a_session_receives_before_it_opens_stay_quiet() {
+        use kage_client::{Session, State, TranscriptItem};
+
+        let mut state = State::default();
+        state.sessions.insert("s1".to_owned(), Session::default());
+        let mut watch = super::NoticeWatch::default();
+        assert!(watch.scan(&state).is_empty());
+
+        let mut loaded = Session {
+            opened: false,
+            ..Session::default()
+        };
+        loaded.items.push(TranscriptItem::Notice {
+            tone: NoticeTone::Error,
+            text: "replayed from the load".to_owned(),
+        });
+        state.sessions.insert("s1".to_owned(), loaded.clone());
+        assert!(
+            watch.scan(&state).is_empty(),
+            "a load's replays are not news"
+        );
+
+        let mut opened = loaded.clone();
+        opened.opened = true;
+        state.sessions.insert("s1".to_owned(), opened);
+        assert!(watch.scan(&state).is_empty(), "already counted");
     }
 }

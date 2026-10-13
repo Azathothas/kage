@@ -32,4 +32,5 @@ pub mod status;
 pub mod toasts;
 pub mod toolbar;
 pub mod transcript;
+pub mod welcome;
 pub mod workbench;

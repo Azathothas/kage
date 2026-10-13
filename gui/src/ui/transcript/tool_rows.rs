@@ -2108,19 +2108,18 @@ fn swarm_card(
                                     .truncate(),
                                 );
                                 crate::ui::transcript::tool_rows::trailing(ui, |ui| {
-                                        ui.add_sized(
-                                            egui::vec2(44.0, 16.0),
-                                            egui::Label::new(
-                                                egui::RichText::new(
-                                                    member.tokens.map(tokens).unwrap_or_default(),
-                                                )
-                                                .font(mono(11.0))
-                                                .color(palette.faint),
-                                            ),
-                                        );
-                                        state_chip(ui, member, palette);
-                                    },
-                                );
+                                    ui.add_sized(
+                                        egui::vec2(44.0, 16.0),
+                                        egui::Label::new(
+                                            egui::RichText::new(
+                                                member.tokens.map(tokens).unwrap_or_default(),
+                                            )
+                                            .font(mono(11.0))
+                                            .color(palette.faint),
+                                        ),
+                                    );
+                                    state_chip(ui, member, palette);
+                                });
                             });
                             if clicked.clicked() {
                                 open_member = Some(id);

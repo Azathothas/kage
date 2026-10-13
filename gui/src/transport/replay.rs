@@ -189,8 +189,8 @@ mod tests {
     use kage_client::wire::{ClientCapabilities, ContentBlock, StopReason};
     use kage_client::{Client, Frame, PromptOutcome, RequestId, TranscriptItem};
 
-    use super::transcript;
     use super::ReplayTransport;
+    use super::transcript;
     use crate::transport::{Event, Transport};
 
     /// The replay holds an answer back until the shell's request with

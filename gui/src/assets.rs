@@ -11,3 +11,6 @@ pub(crate) static GLYPH_FACE_DAWN_PNG: &[u8] =
     include_bytes!("../assets/brand/kage-glyph-dawn.png");
 /// The welcome screen's glow backdrop, dark palette.
 pub(crate) static WELCOME_GLOW_PNG: &[u8] = include_bytes!("../assets/brand/welcome-glow.png");
+/// The welcome screen's glow backdrop, light palette.
+pub(crate) static WELCOME_GLOW_DAWN_PNG: &[u8] =
+    include_bytes!("../assets/brand/welcome-glow-dawn.png");

@@ -246,6 +246,28 @@ pub struct Shell {
     themes_asked: bool,
     /// Synthetic chunks appended, for the 30 Hz stream measurement.
     streamed: usize,
+    /// The store changes the frame's absorbed frames produced, raised
+    /// as toasts once the drain ends.
+    changes: Vec<kage_client::Change>,
+    /// The transcript a finished export left, for the UI thread's
+    /// clipboard.
+    exported: Option<String>,
+    /// The notice items each session held at the last scan, so a new
+    /// notice toasts once.
+    notices: crate::ui::toasts::NoticeWatch,
+    /// The state each session's row held at the last frame, for the
+    /// away-session toasts.
+    statuses: std::collections::HashMap<String, crate::ui::sidebar::RowState>,
+    /// The vim two-key prefix in flight (`g`, `z`), when the press
+    /// before it started a sequence.
+    vim_prefix: Option<char>,
+    /// The `:` line's buffer, while the line is open.
+    vim_line: Option<String>,
+    /// The `:` line the last frame asked to run, drained after the
+    /// draw.
+    vim_submit: Option<String>,
+    /// Whether the `:` line's field takes the focus this frame.
+    vim_line_focus: bool,
     /// The keepalive handle of the pump thread, dropped with the
     /// shell. The browser has no pump thread: its transport calls back
     /// on the UI thread, so this stays `None` there.
@@ -269,6 +291,9 @@ pub struct Shell {
     /// The composer under the chat column: the field, its toolbar and
     /// its suggestion menus.
     composer: crate::ui::composer::Composer,
+    /// The welcome pane, shown in the chat column while no session is
+    /// open.
+    welcome: crate::ui::welcome::Welcome,
     /// The sidebar's search query and collapsed projects.
     sidebar: crate::ui::sidebar::Sidebar,
     /// The right panel's tabs, filters and selections.
@@ -311,6 +336,14 @@ impl Shell {
             smoke_deadline: None,
             streamed: 0,
             themes_asked: false,
+            changes: Vec::new(),
+            exported: None,
+            notices: crate::ui::toasts::NoticeWatch::default(),
+            statuses: std::collections::HashMap::new(),
+            vim_prefix: None,
+            vim_line: None,
+            vim_submit: None,
+            vim_line_focus: false,
             _pump: pump,
             panels: crate::ui::shell::Panels::default(),
             gate_banner: crate::ui::status::Banner::default(),
@@ -321,6 +354,7 @@ impl Shell {
             transcript: crate::ui::transcript::view::TranscriptView::new(),
             find: crate::ui::find::FindBar::new(),
             composer: crate::ui::composer::Composer::new(),
+            welcome: crate::ui::welcome::Welcome::new(),
             sidebar: crate::ui::sidebar::Sidebar::new(),
             workbench: crate::ui::workbench::Workbench::new(),
             dialogs: crate::ui::dialog::Dialogs::new(),
@@ -409,14 +443,46 @@ impl Shell {
         &self.store
     }
 
+    /// The transcript, for the probes that watch the vim cursor move.
+    #[must_use]
+    pub fn transcript(&self) -> &crate::ui::transcript::view::TranscriptView {
+        &self.transcript
+    }
+
+    /// Whether the workbench panel takes its column, for the probes
+    /// that watch `:q` land.
+    #[must_use]
+    pub fn workbench_visible(&self) -> bool {
+        self.panels.workbench_visible
+    }
+
+    /// Whether the `:` command line is open, for the probes.
+    #[must_use]
+    pub fn vim_line_open(&self) -> bool {
+        self.vim_line.is_some()
+    }
+
+    /// The `:` command line's buffer, for the probes.
+    #[must_use]
+    pub fn vim_line_text(&self) -> Option<&str> {
+        self.vim_line.as_deref()
+    }
+
+    /// Turns vim mode on or off, as the `:vim` command and the
+    /// settings row do.
+    pub fn set_vim(&mut self, on: bool) {
+        self.store.update_prefs(|prefs| prefs.vim = on);
+    }
+
     /// Drains the pump's events into the store and carries out the
     /// commands it produced.
     fn on_events(&mut self) {
         let mut reconnecting = false;
+        self.changes.clear();
         while let Some(event) = self.inbox.try_next() {
             match event {
                 Event::Frame(frame) => {
-                    self.store.absorb(frame);
+                    self.changes.extend(self.store.absorb(frame));
                 }
                 Event::State(state) => {
                     if matches!(state, crate::transport::State::Reconnecting { .. }) {
@@ -439,6 +505,8 @@ impl Shell {
         for note in self.store.take_notes() {
             self.toasts.push_note(&note, now);
         }
+        self.raise_change_toasts(now);
+        self.watch_away(now);
         let commands = self.store.take_commands();
         for command in commands {
             match command {
@@ -446,12 +514,69 @@ impl Shell {
                     self.store.handshake(replay_sessions);
                 }
                 Command::NewSession => {
-                    self.store.new_session();
+                    // The boot command races the recording's own
+                    // session: when the answer already settled, the
+                    // shell follows it and no second session asks.
+                    if self.store.active_id().is_none() {
+                        self.store.new_session();
+                    }
                 }
                 Command::ReplayPrompt => {
                     self.store.prompt(REPLAY_PROMPT);
                 }
             }
+        }
+    }
+
+    /// Raises the toasts the frame's changes ask for: an ask answered
+    /// elsewhere, a failed request, a finished export, and the notice
+    /// items the opened sessions gained. The export's markdown waits
+    /// in [`Shell::exported`] for the UI thread's clipboard.
+    fn raise_change_toasts(&mut self, now: web_time::Instant) {
+        let mut drafts = crate::ui::toasts::drafts_for_changes(&self.changes);
+        drafts.extend(self.notices.scan(self.store.state()));
+        for change in &self.changes {
+            if let kage_client::Change::Exported { markdown, .. } = change {
+                self.exported = Some(markdown.clone());
+                drafts.push(crate::ui::toasts::ToastDraft {
+                    tone: kage_client::wire::NoticeTone::Success,
+                    text: "Copied the session as Markdown".to_owned(),
+                    action: crate::ui::toasts::ToastAction::None,
+                });
+            }
+        }
+        for draft in drafts {
+            self.toasts.push(draft, now);
+        }
+    }
+
+    /// Toasts the background sessions whose row state moved under the
+    /// last frame: an ask, a plan, a failure or a finish away from the
+    /// active one. A click follows the session.
+    fn watch_away(&mut self, now: web_time::Instant) {
+        let active = self.store.active_id().map(str::to_owned);
+        let mut drafts = Vec::new();
+        for (id, session) in &self.store.state().sessions {
+            if !session.opened || session.parent.is_some() {
+                continue;
+            }
+            let state = crate::ui::sidebar::row_state(session);
+            let was = self.statuses.insert(id.clone(), state);
+            if active.as_deref() == Some(id.as_str()) {
+                continue;
+            }
+            let Some((tone, what)) = away_toast(was, state) else {
+                continue;
+            };
+            let title = self.store.display_title(id);
+            drafts.push(crate::ui::toasts::ToastDraft {
+                tone,
+                text: format!("{title}: {what}"),
+                action: crate::ui::toasts::ToastAction::ActivateSession(id.clone()),
+            });
+        }
+        for draft in drafts {
+            self.toasts.push(draft, now);
         }
     }
 
@@ -540,6 +665,10 @@ pub struct ShellApp {
     last_update_check: i64,
     /// The finished release check's inbox, while one is in flight.
     update_rx: Option<std::sync::mpsc::Receiver<Option<crate::update::CheckOutcome>>>,
+    /// Whether the check in flight is the daily one, whose answer
+    /// raises the update toast. The settings page's own check reports
+    /// in place instead.
+    announce_update: bool,
     /// The finished install's inbox, while one is in flight. The
     /// browser never installs anything.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
@@ -574,6 +703,9 @@ impl eframe::App for ShellApp {
         // an idle window reports one-second frames.
         self.frame_times.begin_frame(web_time::Instant::now());
         self.shell.on_events();
+        if let Some(markdown) = self.shell.exported.take() {
+            ctx.copy_text(markdown);
+        }
         self.shell.flush_outgoing();
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -582,6 +714,7 @@ impl eframe::App for ShellApp {
             self.apply_install();
         }
         self.route_keys(&ctx);
+        self.vim_keys(&ctx);
         if self.stream {
             // The ticker advances its clock by one period per tick
             // rather than to the current time: resetting to `now`
@@ -621,6 +754,9 @@ impl eframe::App for ShellApp {
         }
         let draw_started = web_time::Instant::now();
         self.draw(ui);
+        if let Some(line) = self.shell.vim_submit.take() {
+            self.run_vim(crate::vim::parse(&line), &ctx);
+        }
         let now = web_time::Instant::now();
         self.frame_times
             .end_frame(now, now.saturating_duration_since(draw_started));
@@ -655,6 +791,7 @@ impl ShellApp {
             stream_tick: crate::frame_times::Ticker::hz30(web_time::Instant::now()),
             last_update_check: crate::clock::unix_seconds(),
             update_rx: None,
+            announce_update: false,
             install_rx: None,
             installing: None,
             install_note: None,
@@ -780,6 +917,19 @@ impl ShellApp {
             // over a live transcript forever.
             let store = &mut store.borrow_mut();
             ui.vertical(|ui| {
+                // The vim bar sits under the composer, so the column
+                // reserves its height the way the old shell hung the
+                // bar below the bottom band.
+                let vim_h = if store.prefs().vim {
+                    VIM_MODEL_H
+                        + if self.shell.vim_line.is_some() {
+                            VIM_LINE_H
+                        } else {
+                            0.0
+                        }
+                } else {
+                    0.0
+                };
                 if store.active_id().is_some() {
                     // The transcript takes what is left of the column;
                     // the dock and the composer keep their own height
@@ -787,7 +937,7 @@ impl ShellApp {
                     // bottom edge the way the old shell pinned it.
                     let composer_h = COMPOSER_H;
                     let dock_h = DOCK_H;
-                    let top_h = (ui.available_height() - composer_h - dock_h).max(0.0);
+                    let top_h = (ui.available_height() - composer_h - dock_h - vim_h).max(0.0);
                     let (top_rect, _) = ui.allocate_at_least(
                         egui::vec2(ui.available_width(), top_h),
                         egui::Sense::hover(),
@@ -801,37 +951,50 @@ impl ShellApp {
                     self.shell.transcript.show(&mut top, store, &mut events);
                     self.row_actions.extend(events);
                 } else {
-                    // The welcome column: the brand mark, the eclipse
-                    // while a turn runs, and the connection line.
-                    let palette = crate::theme::Palette::active_of(ui.ctx());
-                    let running = store
-                        .active_session()
-                        .is_some_and(|session| session.in_turn || session.running);
-                    if running && self.shell.orbit.is_none() {
-                        self.shell.orbit = Some(web_time::Instant::now());
-                    } else if !running {
-                        self.shell.orbit = None;
+                    // The welcome pane: the wordmark over the glow,
+                    // the project pill, the cards and the hint. The
+                    // dock and the approval row only concern a live
+                    // session, so they stay in the session branch;
+                    // the composer below stays mounted, so a draft
+                    // survives the move. The pane reserves the
+                    // composer's band, so the field sits on the
+                    // column's bottom edge as it does over a
+                    // transcript.
+                    let pane_h = (ui.available_height() - COMPOSER_H - vim_h).max(0.0);
+                    let (rect, _) = ui.allocate_at_least(
+                        egui::vec2(ui.available_width(), pane_h),
+                        egui::Sense::hover(),
+                    );
+                    let mut pane = ui.new_child(
+                        egui::UiBuilder::new()
+                            .max_rect(rect)
+                            .layout(egui::Layout::top_down(egui::Align::Min)),
+                    );
+                    for event in self.shell.welcome.show(&mut pane, store) {
+                        match event {
+                            crate::ui::welcome::WelcomeEvent::Fill { text, option } => {
+                                if let Some((id, value)) = option {
+                                    store.hold_option(id, value);
+                                }
+                                self.shell.composer.set_draft(text.to_owned());
+                                ui.ctx().memory_mut(|memory| {
+                                    memory.request_focus(egui::Id::new("composer-input"));
+                                });
+                            }
+                            crate::ui::welcome::WelcomeEvent::OpenFolder => {
+                                self.shell
+                                    .dialogs
+                                    .show_dialog(crate::ui::dialog::DialogKind::OpenFolder, store);
+                            }
+                        }
                     }
-                    ui.vertical_centered(|ui| {
-                        ui.add_space(ui.available_height() / 2.0 - 60.0);
-                        crate::ui::eclipse::eclipse(ui, 44.0, self.shell.orbit);
-                        ui.add_space(14.0);
-                        ui.label(
-                            egui::RichText::new("kage")
-                                .size(40.0)
-                                .color(palette.ink_strong)
-                                .family(crate::theme::family(crate::theme::FAMILY_BODY_EXTRABOLD)),
-                        );
-                        ui.label(
-                            egui::RichText::new(self.welcome_line(store))
-                                .size(crate::theme::FS_SM)
-                                .color(palette.muted),
-                        );
-                    });
                 }
-                self.show_dock(ui, store);
-                self.show_approval(ui, store);
+                if store.active_id().is_some() {
+                    self.show_dock(ui, store);
+                    self.show_approval(ui, store);
+                }
                 self.show_composer(ui, store);
+                self.show_vim_bar(ui, store);
             });
         };
         crate::ui::shell::show(ui, &mut panels, sidebar_draw, chat, workbench);
@@ -889,6 +1052,29 @@ impl ShellApp {
         self.shell.panels = panels;
         self.shell.palette = palette;
         self.shell.toasts = toasts;
+        self.carry_toast_actions();
+    }
+
+    /// Carries out what clicks on toasts asked for. A click already
+    /// dismissed its toast; only the action is left.
+    fn carry_toast_actions(&mut self) {
+        for action in self.shell.toasts.take_actions() {
+            match action {
+                crate::ui::toasts::ToastAction::ActivateSession(id) => {
+                    self.shell.store.set_active(id);
+                }
+                crate::ui::toasts::ToastAction::Restore(id) => {
+                    self.shell.store.restore(&id);
+                }
+                crate::ui::toasts::ToastAction::OpenUpdates => {
+                    crate::update::open_releases();
+                    self.shell
+                        .store
+                        .update_prefs(|prefs| prefs.update_badge = false);
+                }
+                crate::ui::toasts::ToastAction::None => {}
+            }
+        }
     }
 
     /// Carries out what the sidebar's controls asked for.
@@ -935,7 +1121,25 @@ impl ShellApp {
                     let _ = self.shell.store.set_option("swarm", "on");
                 }
                 crate::ui::dialog::DialogEvent::Rewind(prompt) => {
-                    let _ = self.shell.store.rewind(prompt);
+                    // The rewind rewrites history a running turn is
+                    // still appending to, so it waits.
+                    let running = self
+                        .shell
+                        .store
+                        .active_session()
+                        .is_some_and(|session| session.running || session.in_turn);
+                    if running {
+                        self.shell.toasts.push(
+                            crate::ui::toasts::ToastDraft {
+                                tone: kage_client::wire::NoticeTone::Warn,
+                                text: "Interrupt the running turn before rewinding".to_owned(),
+                                action: crate::ui::toasts::ToastAction::None,
+                            },
+                            web_time::Instant::now(),
+                        );
+                    } else {
+                        let _ = self.shell.store.rewind(prompt);
+                    }
                 }
                 crate::ui::dialog::DialogEvent::SetProject(path) => {
                     self.shell.store.set_project(Some(path));
@@ -1136,7 +1340,175 @@ impl ShellApp {
 
     /// Draws the composer: the field, its toolbar and the dock row's
     /// goal popover. A send takes the draft out to the store.
+    /// The `:` line and the modeline, while vim mode is on. The
+    /// command line runs one `crate::vim` command on Enter and closes
+    /// on Escape, on a blur, or on a backspace over an empty line; the
+    /// modeline names the mode, the model, the marks and the cursor
+    /// the old shell's bar showed. Normal mode's keys answer while the
+    /// bar holds no field, so no motion loses a letter to it.
+    fn show_vim_bar(&mut self, ui: &mut egui::Ui, store: &mut crate::store::Store) {
+        if !store.prefs().vim {
+            return;
+        }
+        let palette = crate::theme::Palette::active_of(ui.ctx());
+        let ctx = ui.ctx().clone();
+        if self.shell.vim_line.is_some() {
+            let mut buffer = self.shell.vim_line.take().unwrap_or_default();
+            let mut submitted = None;
+            let mut closed = false;
+            ui.horizontal(|ui| {
+                ui.set_height(VIM_LINE_H);
+                ui.separator();
+                ui.label(
+                    egui::RichText::new(":")
+                        .family(crate::theme::family(crate::theme::FAMILY_MONO_REGULAR))
+                        .color(palette.muted),
+                );
+                let field = egui::TextEdit::singleline(&mut buffer)
+                    .id(egui::Id::new("vim-line"))
+                    .frame(egui::Frame::NONE)
+                    .desired_width(ui.available_width())
+                    .font(egui::FontId::new(
+                        12.5,
+                        crate::theme::family(crate::theme::FAMILY_MONO_REGULAR),
+                    ));
+                let response = ui.add(field);
+                if std::mem::take(&mut self.shell.vim_line_focus) {
+                    response.request_focus();
+                }
+                let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let backspace_out = buffer.is_empty()
+                    && response.has_focus()
+                    && ui.input(|i| i.key_pressed(egui::Key::Backspace));
+                if response.lost_focus() && enter {
+                    submitted = Some(std::mem::take(&mut buffer));
+                } else if response.lost_focus() || backspace_out {
+                    closed = true;
+                }
+            });
+            if let Some(line) = submitted {
+                self.shell.vim_submit = Some(line);
+            } else if !closed {
+                self.shell.vim_line = Some(buffer);
+            }
+            if closed {
+                // No widget owns normal mode's focus; the line's field
+                // just lets it go.
+                ctx.memory_mut(|memory| {
+                    memory.surrender_focus(egui::Id::new("vim-line"));
+                });
+            }
+        }
+        let mode = if !store.active_asks().is_empty() {
+            crate::vim::Mode::Approval
+        } else {
+            let composer_focused =
+                ctx.memory(|memory| memory.focused()) == Some(egui::Id::new("composer-input"));
+            if composer_focused {
+                crate::vim::Mode::Insert
+            } else {
+                crate::vim::Mode::Normal
+            }
+        };
+        let option = |id: &str| store.composer_option(id).map(|o| o.current_value);
+        let model = option("model").map(|model| match option("thinking") {
+            Some(level) => format!("{model}@{level}"),
+            None => model,
+        });
+        let session = store.active_session();
+        let todos = session.and_then(crate::ui::dock::todos_state);
+        let usage = session.filter(|s| s.usage.size > 0).map(|session| {
+            let usage = &session.usage;
+            format!(
+                "{}% ({}/{})",
+                (usage.fill() * 100.0).round() as i64,
+                crate::ui::pickers::tokens(usage.used),
+                crate::ui::pickers::tokens(usage.size)
+            )
+        });
+        let cost = store
+            .active_id()
+            .and_then(|id| store.tree_cost(id))
+            .map(|cost| format!("{} {:.2}", cost.currency, cost.amount));
+        let connect = self.shell.store.connect();
+        let link = if connect.is_connected() {
+            self.shell.transport.link().name.to_owned()
+        } else {
+            connect.label()
+        };
+        let cursor = self
+            .shell
+            .transcript
+            .cursor_row()
+            .map(|row| (row + 1, self.shell.transcript.row_count()));
+        let line = crate::vim::Modeline {
+            mode: Some(mode),
+            model,
+            swarm: option("swarm").as_deref() == Some("on"),
+            plan: store.plan_on(),
+            todos: todos.map(|todos| (todos.done, todos.total)),
+            path: session.and_then(|session| session.cwd.clone()),
+            cursor,
+            usage,
+            cost,
+            link,
+        };
+        ui.horizontal(|ui| {
+            ui.set_height(VIM_MODEL_H);
+            ui.separator();
+            let ink = |text: String| {
+                egui::RichText::new(text)
+                    .family(crate::theme::family(crate::theme::FAMILY_MONO_REGULAR))
+                    .size(crate::theme::FS_XS)
+                    .color(palette.muted)
+            };
+            if let Some(mode) = line.mode {
+                ui.label(
+                    egui::RichText::new(crate::vim::mode_label(mode))
+                        .family(crate::theme::family(crate::theme::FAMILY_MONO_REGULAR))
+                        .size(crate::theme::FS_XS)
+                        .color(palette.accent),
+                );
+            }
+            if let Some(model) = line.model {
+                ui.label(ink(model));
+            }
+            if line.swarm {
+                ui.label(ink("swarm".to_owned()));
+            }
+            if line.plan {
+                ui.label(ink("plan".to_owned()));
+            }
+            if let Some((done, total)) = line.todos {
+                ui.label(ink(format!("todos {done}/{total}")));
+            }
+            if let Some(cursor) = line.cursor {
+                ui.label(ink(format!("{}/{}", cursor.0, cursor.1)));
+            }
+            if let Some(usage) = line.usage {
+                ui.label(ink(usage));
+            }
+            if let Some(cost) = line.cost {
+                ui.label(ink(cost));
+            }
+            if let Some(path) = line.path {
+                ui.label(ink(path));
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(ink(line.link));
+            });
+        });
+    }
+
     fn show_composer(&mut self, ui: &mut egui::Ui, store: &mut crate::store::Store) {
+        // A welcome prompt whose session failed to open comes back
+        // here, into an empty field, so the text is not lost with the
+        // session it never rode.
+        if let Some(text) = store.take_returned_prompt()
+            && self.shell.composer.prompt().is_none()
+        {
+            self.shell.composer.set_draft(text);
+        }
         let running = store
             .active_session()
             .is_some_and(|session| session.running);
@@ -1148,7 +1520,10 @@ impl ShellApp {
             .cloned();
         self.shell.composer.set_listing(listing);
         let steer_available = store.state().steer_available();
-        let event = self.shell.composer.show(ui, store, &commands, running, enter_sends);
+        let event = self
+            .shell
+            .composer
+            .show(ui, store, &commands, running, enter_sends);
         match event {
             crate::ui::composer::ComposerEvent::OpenGoal => {
                 self.shell
@@ -1160,60 +1535,98 @@ impl ShellApp {
                     .dialogs
                     .show_dialog(crate::ui::dialog::DialogKind::ConfirmSwarm, store);
             }
+            crate::ui::composer::ComposerEvent::LeaveInsert => {
+                ui.ctx().memory_mut(|memory| {
+                    memory.surrender_focus(egui::Id::new("composer-input"));
+                });
+            }
             _ => {}
         }
         if let crate::ui::composer::ComposerEvent::Send { steer } = event
             && let Some(text) = self.shell.composer.take_prompt()
         {
-            let builtin = crate::ui::composer::builtin(&text);
-            let handled =
-                builtin.is_some_and(|command| self.run_builtin(store, command.name, command.args));
-            if !handled {
-                // Ctrl+Enter steers a running turn; the engine
-                // advertises the capability, so a steer that cannot go
-                // out falls back to a plain submit.
-                if steer && running && steer_available {
-                    let _ = store.steer(&text);
-                } else {
-                    let _ = store.submit(&text);
+            let builtin = crate::ui::composer::builtin(text.trim());
+            let name = builtin.as_ref().map(|command| command.name);
+            let ran = match builtin {
+                Some(command) => self.run_builtin(store, command.name, command.args),
+                None => BuiltinRun::NotMine,
+            };
+            match ran {
+                BuiltinRun::Ran => {}
+                BuiltinRun::NeedsSession => {
+                    // A built-in that needs a session keeps its text,
+                    // and the field says why it stayed.
+                    self.shell.composer.set_draft(text.clone());
+                    store.note(
+                        kage_client::wire::NoticeTone::Info,
+                        format!("/{} needs a session; open one first", name.unwrap_or("")),
+                    );
+                }
+                BuiltinRun::NotMine => {
+                    // With no session, the send opens the one the
+                    // text rides on: the prompt goes out the moment
+                    // the session is live. Ctrl+Enter steers a
+                    // running turn; the engine advertises the
+                    // capability, so a steer that cannot go out falls
+                    // back to a plain submit.
+                    if store.active_id().is_none() && !store.pending_prompt() {
+                        store.open_with_prompt(&text);
+                    } else if steer && running && steer_available {
+                        let _ = store.steer(&text);
+                    } else {
+                        let _ = store.submit(&text);
+                    }
                 }
             }
         }
     }
 
-    /// Runs a built-in composer command. Returns whether the client
-    /// ran it, so an unhandled one goes to the agent as plain text.
-    fn run_builtin(&mut self, store: &mut crate::store::Store, name: &str, args: &str) -> bool {
+    /// What became of a built-in composer command: the client ran
+    /// it, it needs a session the shell does not have, or it is not
+    /// one of the client's own and the text goes to the agent as
+    /// plain text.
+    fn run_builtin(
+        &mut self,
+        store: &mut crate::store::Store,
+        name: &str,
+        args: &str,
+    ) -> BuiltinRun {
         match (name, args) {
             ("new", _) => {
                 store.show_welcome();
-                true
+                BuiltinRun::Ran
             }
-            ("plan", "on") => store.enter_plan(),
-            ("plan", "off") => store.exit_plan(),
+            (_, _) if store.active_session().is_none() => BuiltinRun::NeedsSession,
+            ("plan", "on") => {
+                store.enter_plan();
+                BuiltinRun::Ran
+            }
+            ("plan", "off") => {
+                store.exit_plan();
+                BuiltinRun::Ran
+            }
             ("plan", _) => {
                 if store.plan_on() {
-                    store.exit_plan()
+                    store.exit_plan();
                 } else {
-                    store.enter_plan()
+                    store.enter_plan();
                 }
+                BuiltinRun::Ran
             }
-            ("goal", "clear") => crate::ui::dock::save_goal(store, ""),
-            ("goal", text) => crate::ui::dock::save_goal(store, text),
-            ("swarm", "off") => store.set_option("swarm", "off"),
-            ("swarm", "on") => true,
-            _ => false,
-        }
-    }
-
-    /// The line the welcome column shows under the wordmark. The
-    /// connect problems name themselves; once the link is up the line
-    /// is the design's static hint, as the old welcome drew it.
-    fn welcome_line(&self, store: &crate::store::Store) -> String {
-        match store.connect() {
-            crate::transport::State::Connecting => "connecting".to_owned(),
-            crate::transport::State::Refused(why) => format!("refused: {why}"),
-            _ => "Ctrl K commands and sessions".to_owned(),
+            ("goal", "clear") => {
+                crate::ui::dock::save_goal(store, "");
+                BuiltinRun::Ran
+            }
+            ("goal", text) => {
+                crate::ui::dock::save_goal(store, text);
+                BuiltinRun::Ran
+            }
+            ("swarm", "off") => {
+                store.set_option("swarm", "off");
+                BuiltinRun::Ran
+            }
+            ("swarm", "on") => BuiltinRun::Ran,
+            _ => BuiltinRun::NotMine,
         }
     }
 
@@ -1232,7 +1645,16 @@ impl ShellApp {
             return crate::ui::keys::Context::Find;
         }
         if self.shell.store.prefs().vim {
-            return crate::ui::keys::Context::VimNormal;
+            // Vim normal mode owns the keys only while no field does:
+            // the composer focused is insert mode, and the `:` line
+            // holds its own keys.
+            let focus = self.ctx.memory(|memory| memory.focused());
+            let field = focus.is_some_and(|id| {
+                id == egui::Id::new("composer-input") || id == egui::Id::new("vim-line")
+            });
+            if !field {
+                return crate::ui::keys::Context::VimNormal;
+            }
         }
         crate::ui::keys::Context::Shell
     }
@@ -1274,6 +1696,283 @@ impl ShellApp {
                 continue;
             };
             self.carry(action);
+        }
+    }
+
+    /// Reads the frame's key presses in vim normal mode and resolves
+    /// them through the vim bindings, carrying the two-key prefixes
+    /// across presses. The characters ride the text events, so a
+    /// frame that carries any does not also read the key events for
+    /// the same letters.
+    fn vim_keys(&mut self, ctx: &egui::Context) {
+        if self.context() != crate::ui::keys::Context::VimNormal {
+            return;
+        }
+        let events: Vec<egui::Event> = ctx.input(|i| i.events.clone());
+        let typed = events
+            .iter()
+            .any(|event| matches!(event, egui::Event::Text(_)));
+        for event in events {
+            let step = match event {
+                egui::Event::Text(text) => {
+                    // A multi-character text event is an IME commit,
+                    // not a motion.
+                    if text.chars().count() != 1 {
+                        continue;
+                    }
+                    let c = text.chars().next().unwrap_or(' ');
+                    if c == ':' {
+                        self.shell.vim_prefix = None;
+                        crate::ui::keys::VimStep::Action(crate::vim::Action::Command)
+                    } else {
+                        let key: &'static str = match c.to_ascii_lowercase() {
+                            'j' => "j",
+                            'k' => "k",
+                            'g' => "g",
+                            'z' => "z",
+                            'i' => "i",
+                            'a' => "a",
+                            'n' => "n",
+                            '/' => "/",
+                            _ => {
+                                self.shell.vim_prefix = None;
+                                continue;
+                            }
+                        };
+                        crate::ui::keys::dispatch_vim(
+                            self.shell.vim_prefix,
+                            &crate::ui::keys::Press {
+                                key,
+                                mods: crate::ui::keys::Mods {
+                                    ctrl: false,
+                                    shift: c.is_uppercase(),
+                                    alt: false,
+                                },
+                                repeat: false,
+                            },
+                        )
+                    }
+                }
+                egui::Event::Key {
+                    key,
+                    modifiers,
+                    pressed: true,
+                    ..
+                } => {
+                    let named = matches!(
+                        key,
+                        egui::Key::Escape
+                            | egui::Key::Enter
+                            | egui::Key::ArrowUp
+                            | egui::Key::ArrowDown
+                    );
+                    if typed && !named && !modifiers.ctrl {
+                        // The text events already carried the letter.
+                        continue;
+                    }
+                    let key: &'static str = match key {
+                        egui::Key::ArrowDown => "down",
+                        egui::Key::ArrowUp => "up",
+                        other => key_name(&other),
+                    };
+                    crate::ui::keys::dispatch_vim(
+                        self.shell.vim_prefix,
+                        &crate::ui::keys::Press {
+                            key,
+                            mods: crate::ui::keys::Mods {
+                                ctrl: modifiers.ctrl || modifiers.command,
+                                shift: modifiers.shift,
+                                alt: modifiers.alt,
+                            },
+                            repeat: false,
+                        },
+                    )
+                }
+                _ => continue,
+            };
+            match step {
+                crate::ui::keys::VimStep::Action(action) => {
+                    self.shell.vim_prefix = None;
+                    self.carry_vim(action, ctx);
+                }
+                crate::ui::keys::VimStep::Pending(prefix) => {
+                    self.shell.vim_prefix = Some(prefix);
+                }
+                crate::ui::keys::VimStep::Nothing => {
+                    self.shell.vim_prefix = None;
+                }
+            }
+        }
+    }
+
+    /// Carries out one vim motion or mode key.
+    fn carry_vim(&mut self, action: crate::vim::Action, ctx: &egui::Context) {
+        use crate::vim::Action;
+        match action {
+            Action::Down => self.shell.transcript.move_cursor(1),
+            Action::Up => self.shell.transcript.move_cursor(-1),
+            Action::PageDown => self.shell.transcript.move_cursor(crate::vim::PAGE as isize),
+            Action::PageUp => self
+                .shell
+                .transcript
+                .move_cursor(-(crate::vim::PAGE as isize)),
+            Action::Top => self.shell.transcript.jump_cursor(false),
+            Action::Bottom => self.shell.transcript.jump_cursor(true),
+            Action::Toggle => self.shell.transcript.toggle_vim_row(),
+            Action::OpenAll => self.shell.transcript.fold_all(true),
+            Action::CloseAll => self.shell.transcript.fold_all(false),
+            Action::Insert => ctx.memory_mut(|memory| {
+                memory.request_focus(egui::Id::new("composer-input"));
+            }),
+            Action::Find => self.shell.find.open(),
+            Action::Next => {
+                if let Some(key) = self.shell.find.step(false) {
+                    self.shell.transcript.scroll_to_row(key);
+                }
+            }
+            Action::Prev => {
+                if let Some(key) = self.shell.find.step(true) {
+                    self.shell.transcript.scroll_to_row(key);
+                }
+            }
+            Action::Command => {
+                self.shell.vim_line = Some(String::new());
+                self.shell.vim_line_focus = true;
+            }
+            Action::Escape => {
+                let running = self
+                    .shell
+                    .store
+                    .active_session()
+                    .is_some_and(|session| session.running || session.in_turn);
+                if running {
+                    let _ = self.shell.store.cancel();
+                }
+            }
+            Action::LeaveInsert => ctx.memory_mut(|memory| {
+                memory.surrender_focus(egui::Id::new("composer-input"));
+            }),
+        }
+    }
+
+    /// Runs one `:` command through the action its palette entry or
+    /// control uses.
+    fn run_vim(&mut self, command: crate::vim::Command, ctx: &egui::Context) {
+        use crate::vim::Command;
+        let warn = |shell: &mut Self, text: String| {
+            shell.shell.toasts.push(
+                crate::ui::toasts::ToastDraft {
+                    tone: kage_client::wire::NoticeTone::Warn,
+                    text,
+                    action: crate::ui::toasts::ToastAction::None,
+                },
+                web_time::Instant::now(),
+            );
+        };
+        match command {
+            Command::Theme(Some(choice)) => {
+                let known = match &choice {
+                    crate::theme::ThemeChoice::System => true,
+                    crate::theme::ThemeChoice::Named(name) => {
+                        crate::themes::BUILTIN.contains(&name.as_str())
+                            || self
+                                .shell
+                                .store
+                                .themes()
+                                .iter()
+                                .any(|theme| &theme.name == name)
+                    }
+                };
+                if !known {
+                    warn(self, format!("Unknown theme: {}", choice.label()));
+                    return;
+                }
+                self.prefs_theme = choice.clone();
+                self.shell
+                    .store
+                    .update_prefs(|prefs| prefs.theme = choice.clone());
+                crate::theme::apply_choice(&choice, ctx);
+            }
+            Command::Theme(None) => {
+                warn(
+                    self,
+                    "Name a theme: system, or one from Settings".to_owned(),
+                );
+            }
+            Command::Model(name) => {
+                let wanted = name.to_lowercase();
+                let choice = self
+                    .shell
+                    .store
+                    .composer_option("model")
+                    .and_then(|option| {
+                        option.options.into_iter().find(|choice| {
+                            choice.value.to_lowercase() == wanted
+                                || choice.name.to_lowercase().contains(&wanted)
+                        })
+                    })
+                    .filter(|_| !wanted.is_empty());
+                match choice {
+                    Some(choice) => {
+                        let _ = self.shell.store.set_option("model", &choice.value);
+                    }
+                    None => warn(self, format!("No model matches \"{name}\"")),
+                }
+            }
+            Command::Swarm(on) => {
+                let current = self
+                    .shell
+                    .store
+                    .composer_option("swarm")
+                    .is_some_and(|option| option.current_value == "on");
+                if on == current {
+                    return;
+                }
+                if on {
+                    if self.shell.store.prefs().confirm_swarm {
+                        self.shell.dialogs.show_dialog(
+                            crate::ui::dialog::DialogKind::ConfirmSwarm,
+                            &mut self.shell.store,
+                        );
+                    } else {
+                        let _ = self.shell.store.set_option("swarm", "on");
+                    }
+                } else {
+                    let _ = self.shell.store.set_option("swarm", "off");
+                }
+            }
+            Command::Plan(on) => {
+                let _ = if on {
+                    self.shell.store.enter_plan()
+                } else {
+                    self.shell.store.exit_plan()
+                };
+            }
+            Command::Goal(goal) => {
+                let _ = self
+                    .shell
+                    .store
+                    .set_option("goal", &goal.unwrap_or_default());
+            }
+            Command::New => self.shell.store.show_welcome(),
+            Command::Settings => self
+                .shell
+                .settings
+                .open(crate::ui::settings::Section::General),
+            Command::Help => self
+                .shell
+                .settings
+                .open(crate::ui::settings::Section::Keyboard),
+            Command::Compact => {
+                let _ = self.shell.store.compact();
+            }
+            Command::NoHighlight => self.shell.find.close(),
+            Command::Quit => self.shell.panels.workbench_visible = false,
+            Command::Vim(on) => {
+                self.shell.store.update_prefs(|prefs| prefs.vim = on);
+            }
+            Command::Nothing => {}
+            Command::Unknown(word) => warn(self, format!("Not an editor command: {word}")),
         }
     }
 
@@ -1407,6 +2106,7 @@ impl ShellApp {
             })
             .expect("the check thread starts");
         self.update_rx = Some(rx);
+        self.announce_update = true;
     }
 
     /// Runs a release check on its own thread when the daily throttle
@@ -1431,6 +2131,7 @@ impl ShellApp {
             })
             .expect("the check thread starts");
         self.update_rx = Some(rx);
+        self.announce_update = false;
     }
 
     /// Downloads the newest release of `which` on its own thread: the
@@ -1525,7 +2226,51 @@ impl ShellApp {
         let prefs = self.shell.store.prefs().clone();
         let mut prefs = prefs;
         crate::update::apply_outcome(&mut prefs, outcome, engine.as_deref());
-        self.shell.store.update_prefs(|current| *current = prefs);
+        self.shell
+            .store
+            .update_prefs(|current| *current = prefs.clone());
+        if !std::mem::take(&mut self.announce_update) {
+            return;
+        }
+        let Some(text) = crate::update::pending_update(&prefs, engine.as_deref()) else {
+            return;
+        };
+        self.shell.toasts.push(
+            crate::ui::toasts::ToastDraft {
+                tone: kage_client::wire::NoticeTone::Info,
+                text,
+                action: crate::ui::toasts::ToastAction::OpenUpdates,
+            },
+            web_time::Instant::now(),
+        );
+    }
+}
+
+/// What a session's row-state move raises, when it raises: the first
+/// sight of a session and an unchanged state stay quiet, an ask, a
+/// plan and a failure speak from any prior state, and only a running
+/// turn that finished says so.
+#[must_use]
+fn away_toast(
+    was: Option<crate::ui::sidebar::RowState>,
+    state: crate::ui::sidebar::RowState,
+) -> Option<(kage_client::wire::NoticeTone, &'static str)> {
+    use crate::ui::sidebar::RowState;
+    if was.is_none() || was == Some(state) {
+        return None;
+    }
+    match (was, state) {
+        (_, RowState::Approve) => {
+            Some((kage_client::wire::NoticeTone::Info, "needs your approval"))
+        }
+        (_, RowState::Review) => {
+            Some((kage_client::wire::NoticeTone::Info, "has a plan to review"))
+        }
+        (_, RowState::Failed) => Some((kage_client::wire::NoticeTone::Error, "turn failed")),
+        (Some(RowState::Running), RowState::Idle) => {
+            Some((kage_client::wire::NoticeTone::Success, "turn finished"))
+        }
+        _ => None,
     }
 }
 
@@ -1534,7 +2279,24 @@ const REPLAY_PROMPT: &str = "fix the null check";
 
 /// The composer column's height: the field's minimum, its toolbar and
 /// the hint line under it.
+/// What became of a built-in composer command: the client ran it, it
+/// needs a session the shell does not have, or it is not one of the
+/// client's own and the text goes to the agent as plain text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BuiltinRun {
+    /// The client carried the command out.
+    Ran,
+    /// The command needs a session and none is open.
+    NeedsSession,
+    /// Not one of the client's own commands.
+    NotMine,
+}
+
 const COMPOSER_H: f32 = 132.0;
+
+/// The vim modeline's height, and the `:` line's above it.
+const VIM_MODEL_H: f32 = 26.0;
+const VIM_LINE_H: f32 = 28.0;
 
 /// The dock row's height: the pills, with their wrap room.
 const DOCK_H: f32 = 72.0;
@@ -1608,10 +2370,45 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{Launch, Wire};
+    use super::{Launch, Wire, away_toast};
+    use crate::ui::sidebar::RowState;
 
     fn parse(args: &[&str]) -> Launch {
         Launch::parse(args.iter().map(|arg| arg.to_string()))
+    }
+
+    #[test]
+    fn an_away_session_speaks_from_any_prior_state_but_the_first() {
+        use kage_client::wire::NoticeTone;
+        assert_eq!(away_toast(None, RowState::Approve), None, "first sight");
+        assert_eq!(
+            away_toast(Some(RowState::Running), RowState::Approve),
+            Some((NoticeTone::Info, "needs your approval"))
+        );
+        assert_eq!(
+            away_toast(Some(RowState::Idle), RowState::Review),
+            Some((NoticeTone::Info, "has a plan to review"))
+        );
+        assert_eq!(
+            away_toast(Some(RowState::Review), RowState::Failed),
+            Some((NoticeTone::Error, "turn failed"))
+        );
+        assert_eq!(
+            away_toast(Some(RowState::Running), RowState::Idle),
+            Some((NoticeTone::Success, "turn finished"))
+        );
+    }
+
+    #[test]
+    fn quiet_moves_raise_nothing() {
+        assert_eq!(away_toast(Some(RowState::Idle), RowState::Idle), None);
+        assert_eq!(away_toast(Some(RowState::Idle), RowState::Running), None);
+        assert_eq!(
+            away_toast(Some(RowState::Failed), RowState::Idle),
+            None,
+            "a finish only follows a run"
+        );
+        assert_eq!(away_toast(None, RowState::Idle), None);
     }
 
     #[test]

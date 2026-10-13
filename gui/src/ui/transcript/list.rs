@@ -120,6 +120,13 @@ impl List {
         self.measured.iter().map(|m| m.height).sum()
     }
 
+    /// The scroll offset the last frame left, as `on_scroll` recorded
+    /// it. The probes read this to watch a seek land.
+    #[must_use]
+    pub fn offset(&self) -> f32 {
+        self.last_offset
+    }
+
     /// The y offset of row `ix`, for scrolling it into view.
     #[must_use]
     pub fn offset_of(&self, ix: usize) -> f32 {

@@ -613,7 +613,7 @@ fn action_icon(action: Action) -> crate::icons::Icon {
 }
 
 /// The bordered keyboard hint chip of the design.
-fn kbd_chip(ui: &mut egui::Ui, label: &str, palette: &Theme) -> egui::Response {
+pub(crate) fn kbd_chip(ui: &mut egui::Ui, label: &str, palette: &Theme) -> egui::Response {
     egui::Frame::NONE
         .fill(palette.fill)
         .stroke(egui::Stroke::new(1.0, palette.line))

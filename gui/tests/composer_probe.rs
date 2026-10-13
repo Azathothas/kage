@@ -233,3 +233,34 @@ fn the_dock_pills_answer_a_click() {
     pill.click();
     harness.run();
 }
+
+#[test]
+fn the_lab_toggle_gates_the_context_gauge() {
+    use egui_kittest::kittest::Queryable;
+    let mut store = booted();
+    store.update_prefs(|prefs| prefs.fuel = false);
+    let mut harness = harness(store);
+    harness.run();
+    harness
+        .query_by_label("0%")
+        .expect("the context ring shows its percent")
+        .click();
+    harness.run();
+    assert!(
+        harness.query_by_label("Context").is_none(),
+        "the gauge stays shut while the lab toggle is off"
+    );
+
+    let (store, _, _) = harness.state_mut();
+    store.update_prefs(|prefs| prefs.fuel = true);
+    harness.run();
+    harness
+        .query_by_label("0%")
+        .expect("the ring is back the next frame")
+        .click();
+    harness.run();
+    assert!(
+        harness.query_by_label("Context").is_some(),
+        "the gauge opens while the lab toggle is on"
+    );
+}

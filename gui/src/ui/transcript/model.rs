@@ -884,6 +884,101 @@ pub fn run_changes(session: &Session, end: usize) -> Vec<ChangeEntry> {
         .collect()
 }
 
+/// What a rail tick is: the kind of moment a marked row holds. The
+/// colors are the palette's, so only the kind travels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tick {
+    /// A user turn: the model's runs answer these.
+    Turn,
+    /// A file the agent edited, alone or in a run.
+    Edit,
+    /// A failed call, refusal or error notice.
+    Fail,
+    /// A permission ask was approved.
+    Approval,
+    /// A swarm run started.
+    Swarm,
+    /// A subagent ran.
+    Agent,
+    /// A plan the agent proposed.
+    Plan,
+}
+
+/// One tick of the turn timeline rail for `row`, with the label its
+/// hover names, or `None` for a row the rail does not mark. The
+/// mapping matches the old shell's rail.
+#[must_use]
+pub fn rail_tick(session: &Session, row: &Row) -> Option<(Tick, String)> {
+    let item = |ix: usize| session.items.get(ix);
+    let short = |text: &str| text.chars().take(60).collect::<String>();
+    match row {
+        Row::User { text, .. } if kage_client::agent_text::compaction_summary(text).is_some() => {
+            None
+        }
+        Row::User { text, .. } => Some((Tick::Turn, format!("You: {}", short(text)))),
+        Row::Tool { ix, .. } => {
+            let Some(TranscriptItem::ToolCall(call)) = item(*ix) else {
+                return None;
+            };
+            if call.status == ToolCallStatus::Failed {
+                return Some((Tick::Fail, format!("Failed: {}", short(&call.title))));
+            }
+            match call.title.as_str() {
+                "swarm" => return Some((Tick::Swarm, "Swarm".to_owned())),
+                "agent" => {
+                    let task = {
+                        let task = input_str(call.input.as_ref(), "description");
+                        if task.is_empty() { "subagent" } else { task }
+                    };
+                    return Some((Tick::Agent, format!("Agent: {}", short(task))));
+                }
+                _ => {}
+            }
+            let (add, del) = diff_lines(call)?
+                .iter()
+                .fold((0, 0), |(a, d), line| match line {
+                    DiffLine::Add(_) => (a + 1, d),
+                    DiffLine::Del(_) => (a, d + 1),
+                    _ => (a, d),
+                });
+            let path = input_str(call.input.as_ref(), "path");
+            Some((
+                Tick::Edit,
+                format!("Edited {}  +{add} -{del}", basename(path)),
+            ))
+        }
+        Row::Group {
+            failed, members, ..
+        } if *failed > 0 => Some((
+            Tick::Fail,
+            format!("{failed} of {} calls failed", members.len()),
+        )),
+        Row::Changes { end } => {
+            let count = run_changes(session, *end).len();
+            Some((Tick::Edit, format!("{count} files changed")))
+        }
+        Row::Decision { ix } => match item(*ix) {
+            Some(TranscriptItem::Decision {
+                subject, allowed, ..
+            }) => Some(if *allowed {
+                (Tick::Approval, format!("Approved: {}", short(subject)))
+            } else {
+                (Tick::Fail, format!("Rejected: {}", short(subject)))
+            }),
+            _ => None,
+        },
+        Row::Plan { .. } => Some((Tick::Plan, "Plan".to_owned())),
+        Row::Notice { ix } => match item(*ix) {
+            Some(TranscriptItem::Notice {
+                tone: kage_client::wire::NoticeTone::Error,
+                text,
+            }) => Some((Tick::Fail, short(text))),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// What the reviewer answered to the plan the `exit_plan` call at `ix`
 /// presented: the first review decision this client recorded after it.
 #[must_use]
@@ -1208,8 +1303,8 @@ mod tests {
     use crate::transport::State;
     use crate::transport::replay;
     use kage_client::wire::{
-        ContentBlock, DiffContent, MessageChunk, ToolCallContent, ToolCallStatus, ToolKind,
-        TurnReason,
+        ContentBlock, DiffContent, MessageChunk, TextContent, ToolCallContent, ToolCallStatus,
+        ToolKind, TurnReason,
     };
     use kage_client::{Session, ToolCallItem, TranscriptItem};
 
@@ -1991,5 +2086,116 @@ mod tests {
                 .any(|row| matches!(row, Row::Thinking { live: false, .. })),
             "the recorded thinking is done"
         );
+    }
+
+    #[test]
+    fn the_rail_marks_user_turns_and_skips_the_rest_of_the_prose() {
+        let session = session_with(vec![
+            TranscriptItem::User {
+                content: vec![ContentBlock::Text(TextContent {
+                    text: "fix the null check in the parser".to_owned(),
+                })],
+                steered: false,
+            },
+            TranscriptItem::Assistant {
+                text: "Done. The check moved behind the borrow.".to_owned(),
+            },
+        ]);
+        let model = row_model(&session, &UiState::default());
+        let ticks: Vec<_> = model
+            .rows
+            .iter()
+            .filter_map(|row| super::rail_tick(&session, row))
+            .collect();
+        assert_eq!(
+            ticks,
+            vec![(
+                super::Tick::Turn,
+                "You: fix the null check in the parser".to_owned()
+            )],
+            "the user turn marks; the assistant prose does not"
+        );
+    }
+
+    #[test]
+    fn the_rail_names_failed_calls_and_swarm_and_plans() {
+        let session = session_with(vec![
+            call(
+                "t1",
+                "edit_file",
+                ToolKind::Other,
+                ToolCallStatus::Failed,
+                vec![],
+                None,
+                Some(serde_json::json!({"path": "/w/src/main.rs"})),
+            ),
+            call(
+                "t2",
+                "swarm",
+                ToolKind::Other,
+                ToolCallStatus::Completed,
+                vec![],
+                None,
+                None,
+            ),
+            TranscriptItem::Plan {
+                entries: vec![serde_json::json!({"content": "step one"})],
+            },
+            TranscriptItem::Notice {
+                tone: kage_client::wire::NoticeTone::Error,
+                text: "the provider timed out".to_owned(),
+            },
+            TranscriptItem::Notice {
+                tone: kage_client::wire::NoticeTone::Info,
+                text: "nothing broke".to_owned(),
+            },
+        ]);
+        let model = row_model(&session, &UiState::default());
+        let ticks: Vec<_> = model
+            .rows
+            .iter()
+            .filter_map(|row| super::rail_tick(&session, row))
+            .collect();
+        let kinds: Vec<_> = ticks.iter().map(|(tick, _)| *tick).collect();
+        assert_eq!(
+            kinds,
+            vec![
+                super::Tick::Fail,
+                super::Tick::Swarm,
+                super::Tick::Plan,
+                super::Tick::Fail,
+            ],
+            "the failed call, the swarm, the plan and the error notice mark; the info notice does not"
+        );
+        assert_eq!(ticks[0].1, "Failed: edit_file");
+        assert_eq!(ticks[1].1, "Swarm");
+        assert_eq!(ticks[2].1, "Plan");
+        assert_eq!(ticks[3].1, "the provider timed out");
+    }
+
+    #[test]
+    fn an_edit_tick_names_the_file_and_its_diff_weight() {
+        let diff = ToolCallContent::Diff(DiffContent {
+            path: "/w/src/parse.rs".to_owned(),
+            old_text: Some("a\nb\n".to_owned()),
+            new_text: "a\nc\nd\n".to_owned(),
+        });
+        let session = session_with(vec![call(
+            "t1",
+            "edit_file",
+            ToolKind::Other,
+            ToolCallStatus::Completed,
+            vec![diff],
+            None,
+            Some(serde_json::json!({"path": "/w/src/parse.rs"})),
+        )]);
+        let model = row_model(&session, &UiState::default());
+        let tick = model
+            .rows
+            .iter()
+            .find_map(|row| super::rail_tick(&session, row))
+            .expect("an edit marks the rail");
+        assert_eq!(tick.0, super::Tick::Edit);
+        assert_eq!(tick.1, "Edited parse.rs  +2 -1");
     }
 }

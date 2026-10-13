@@ -318,9 +318,61 @@ pub fn dispatch(context: Context, press: &Press) -> Option<Action> {
         .map(|binding| binding.action)
 }
 
+/// What one key press does in vim normal mode: an action runs now, a
+/// prefix waits for the sequence's second key, and nothing falls
+/// through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VimStep {
+    /// The press completed a binding.
+    Action(crate::vim::Action),
+    /// The press started a two-key sequence (`g`, `z`).
+    Pending(char),
+    /// The press is not a vim binding.
+    Nothing,
+}
+
+/// The vim binding table's name for a press: the modifiers spelled
+/// into the key, the way `crate::vim` lists its bindings.
+#[must_use]
+fn vim_name(key: &str, mods: Mods) -> String {
+    let mut name = String::new();
+    if mods.ctrl {
+        name.push_str("ctrl-");
+    } else if mods.shift {
+        name.push_str("shift-");
+    }
+    name.push_str(key);
+    name
+}
+
+/// Resolves a vim normal-mode press against [`crate::vim::bindings`],
+/// carrying the two-key prefixes across presses. A press that follows
+/// a prefix either completes a sequence or ends the wait.
+#[must_use]
+pub fn dispatch_vim(pending: Option<char>, press: &Press) -> VimStep {
+    if press.mods.alt {
+        return VimStep::Nothing;
+    }
+    if let Some(prefix) = pending {
+        let sequence = format!("{prefix} {}", vim_name(press.key, press.mods));
+        return crate::vim::bindings()
+            .into_iter()
+            .find(|binding| binding.key == sequence)
+            .map_or(VimStep::Nothing, |binding| VimStep::Action(binding.action));
+    }
+    if !press.mods.ctrl && !press.mods.shift && (press.key == "g" || press.key == "z") {
+        return VimStep::Pending(press.key.chars().next().unwrap_or('g'));
+    }
+    let name = vim_name(press.key, press.mods);
+    crate::vim::bindings()
+        .into_iter()
+        .find(|binding| binding.key == name)
+        .map_or(VimStep::Nothing, |binding| VimStep::Action(binding.action))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Action, Binding, Context, Mods, Press, bindings, dispatch};
+    use super::{Action, Binding, Context, Mods, Press, VimStep, bindings, dispatch, dispatch_vim};
 
     fn press(key: &'static str, mods: Mods) -> Press {
         Press {
@@ -450,12 +502,102 @@ mod tests {
         let mut seen: Vec<Binding> = Vec::new();
         for binding in bindings() {
             let clash = seen.iter().any(|other| {
-                other.context == binding.context
-                    && other.key == binding.key
-                    && other.mods == binding.mods
+                binding.context == other.context
+                    && binding.key == other.key
+                    && binding.mods == other.mods
             });
             assert!(!clash, "{binding:?} answers twice");
             seen.push(binding);
         }
+    }
+
+    fn vim(key: &'static str, mods: Mods) -> Press {
+        Press {
+            key,
+            mods,
+            repeat: false,
+        }
+    }
+
+    #[test]
+    fn the_vim_motions_resolve_through_the_bindings() {
+        use crate::vim::Action;
+        let none = Mods::default();
+        let shift = Mods {
+            shift: true,
+            ..Mods::default()
+        };
+        let ctrl = Mods {
+            ctrl: true,
+            ..Mods::default()
+        };
+        assert_eq!(
+            dispatch_vim(None, &vim("j", none)),
+            VimStep::Action(Action::Down)
+        );
+        assert_eq!(
+            dispatch_vim(None, &vim("down", none)),
+            VimStep::Action(Action::Down)
+        );
+        assert_eq!(
+            dispatch_vim(None, &vim("g", shift)),
+            VimStep::Action(Action::Bottom)
+        );
+        assert_eq!(
+            dispatch_vim(None, &vim("d", ctrl)),
+            VimStep::Action(Action::PageDown)
+        );
+        assert_eq!(
+            dispatch_vim(None, &vim(":", none)),
+            VimStep::Action(Action::Command)
+        );
+        assert_eq!(
+            dispatch_vim(None, &vim("/", none)),
+            VimStep::Action(Action::Find)
+        );
+    }
+
+    #[test]
+    fn a_two_key_sequence_waits_for_its_second_press() {
+        use crate::vim::Action;
+        let none = Mods::default();
+        let shift = Mods {
+            shift: true,
+            ..Mods::default()
+        };
+        assert_eq!(dispatch_vim(None, &vim("g", none)), VimStep::Pending('g'));
+        assert_eq!(
+            dispatch_vim(Some('g'), &vim("g", none)),
+            VimStep::Action(Action::Top)
+        );
+        assert_eq!(dispatch_vim(None, &vim("z", none)), VimStep::Pending('z'));
+        assert_eq!(
+            dispatch_vim(Some('z'), &vim("r", shift)),
+            VimStep::Action(Action::OpenAll)
+        );
+        assert_eq!(
+            dispatch_vim(Some('z'), &vim("m", shift)),
+            VimStep::Action(Action::CloseAll)
+        );
+        // An unmatched second press only ends the wait.
+        assert_eq!(dispatch_vim(Some('g'), &vim("j", none)), VimStep::Nothing);
+        assert_eq!(
+            dispatch_vim(None, &vim("g", none)),
+            VimStep::Pending('g'),
+            "a fresh prefix starts again"
+        );
+    }
+
+    #[test]
+    fn alt_chords_never_reach_vim() {
+        let alt = Mods {
+            alt: true,
+            ..Mods::default()
+        };
+        assert_eq!(
+            dispatch_vim(None, &vim("j", alt)),
+            VimStep::Nothing,
+            "window managers own alt chords"
+        );
     }
 }

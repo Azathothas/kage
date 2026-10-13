@@ -327,7 +327,14 @@ fn onoff(ui: &mut egui::Ui, on: bool, palette: &Palette) {
 }
 
 /// The popover surface the pickers and the plus menu render on.
-fn surface(ui: &mut egui::Ui, palette: &Palette, width: f32, body: impl FnOnce(&mut egui::Ui)) {
+/// The menu surface every popover draws on: the raised fill, the
+/// hairline border and the flyout shadow.
+pub(crate) fn surface(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    width: f32,
+    body: impl FnOnce(&mut egui::Ui),
+) {
     egui::Frame::NONE
         .fill(palette.menu)
         .stroke(egui::Stroke::new(1.0, palette.line))
@@ -1169,7 +1176,7 @@ fn context_ring(
         points[..=lit.min(32)].to_vec(),
         egui::Stroke::new(2.0, ring),
     ));
-    if response.clicked() {
+    if store.prefs().fuel && response.clicked() {
         toolbar.toggle_gauge();
     }
     let tip = if size > 0 {

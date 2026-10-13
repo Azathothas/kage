@@ -58,7 +58,7 @@ pub fn probe(program: &str) -> Result<String, String> {
 
 /// The probe is a local process, which the browser cannot run.
 #[cfg(target_arch = "wasm32")]
-#[expect(dead_code, reason = "the web build never shows this screen")]
+#[cfg_attr(not(target_arch = "wasm32"), expect(dead_code))]
 pub fn probe(program: &str) -> Result<String, String> {
     Err(format!("cannot run {program} in the browser"))
 }
