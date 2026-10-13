@@ -559,23 +559,20 @@ fn todos_pill(
                     .family(crate::theme::family(crate::theme::FAMILY_MONO_REGULAR))
                     .color(palette.ink_strong),
             );
+            // The mini bar: a 36 by 4 track with the done share in the
+            // success green, laid out after the count.
+            let (track, _) =
+                ui.allocate_exact_size(egui::vec2(TODO_BAR, 4.0), egui::Sense::hover());
+            ui.painter()
+                .rect_filled(track, egui::CornerRadius::same(2), palette.fill_hover);
+            let fill = TODO_BAR * todos.done as f32 / todos.total.max(1) as f32;
+            ui.painter().rect_filled(
+                egui::Rect::from_min_size(track.min, egui::vec2(fill, 4.0)),
+                egui::CornerRadius::same(2),
+                palette.ok,
+            );
         });
     });
-    // The mini bar: a 36 by 4 track with the done share in the
-    // success green, on the pill's right edge.
-    let rect = response.rect;
-    let track = egui::Rect::from_min_size(
-        egui::pos2(rect.right() - TODO_BAR - 8.0, rect.center().y - 2.0),
-        egui::vec2(TODO_BAR, 4.0),
-    );
-    ui.painter()
-        .rect_filled(track, egui::CornerRadius::same(2), palette.fill_hover);
-    let fill = TODO_BAR * todos.done as f32 / todos.total.max(1) as f32;
-    ui.painter().rect_filled(
-        egui::Rect::from_min_size(track.min, egui::vec2(fill, 4.0)),
-        egui::CornerRadius::same(2),
-        palette.ok,
-    );
     let _ = response.on_hover_ui(|ui| {
         for (text, status) in &entries {
             let (icon, color, ink) = match status.as_str() {
