@@ -1089,18 +1089,7 @@ fn plan_chip(ui: &mut egui::Ui, store: &Store, events: &mut Vec<ToolbarEvent>) -
         palette.accent,
         palette.accent_soft,
     );
-    if ui
-        .add(
-            egui::Button::new(
-                egui::RichText::new("\u{2715}")
-                    .size(FS_2XS)
-                    .color(palette.accent),
-            )
-            .fill(egui::Color32::TRANSPARENT)
-            .corner_radius(egui::CornerRadius::same(R_FULL as u8)),
-        )
-        .clicked()
-    {
+    if chip_exit(ui, palette.accent, palette).clicked() {
         events.push(ToolbarEvent::TogglePlan);
     }
     Some(())
@@ -1120,21 +1109,29 @@ fn swarm_chip(ui: &mut egui::Ui, store: &Store, events: &mut Vec<ToolbarEvent>) 
         palette.done,
         palette.done_soft,
     );
-    if ui
-        .add(
-            egui::Button::new(
-                egui::RichText::new("\u{2715}")
-                    .size(FS_2XS)
-                    .color(palette.done),
-            )
-            .fill(egui::Color32::TRANSPARENT)
-            .corner_radius(egui::CornerRadius::same(R_FULL as u8)),
-        )
-        .clicked()
-    {
+    if chip_exit(ui, palette.done, palette).clicked() {
         events.push(ToolbarEvent::SwarmOff);
     }
     Some(())
+}
+
+/// The exit button a mode chip trails with: an X in the chip's tone,
+/// quiet until the pointer reaches it.
+fn chip_exit(ui: &mut egui::Ui, tone: egui::Color32, palette: &Palette) -> egui::Response {
+    crate::ui::forms::icon_btn(
+        ui,
+        "Exit mode",
+        Icon::X,
+        18.0,
+        12.0,
+        R_FULL,
+        crate::ui::forms::IconTones {
+            fill: egui::Color32::TRANSPARENT,
+            hover_fill: palette.fill_hover,
+            ink: tone.gamma_multiply(0.7),
+            hover_ink: tone,
+        },
+    )
 }
 
 /// One active-mode chip: the colored pill with its exit button.
@@ -1499,11 +1496,7 @@ fn model_row(
                                     .color(palette.ink),
                             );
                             if current {
-                                ui.label(
-                                    egui::RichText::new("\u{2713}")
-                                        .size(FS_SM)
-                                        .color(palette.accent),
-                                );
+                                crate::icons::icon(ui, Icon::Check, 13.0, palette.accent);
                             }
                         });
                         ui.add(
@@ -2040,15 +2033,19 @@ fn send_button(
 ) -> Option<()> {
     let palette = Palette::active_of(ui.ctx());
     if running && !has_text {
-        let response = ui.add(
-            egui::Button::new(
-                egui::RichText::new("\u{25A0}")
-                    .size(14.0)
-                    .color(palette.ink),
-            )
-            .fill(palette.fill_hover)
-            .corner_radius(egui::CornerRadius::same(R_FULL as u8))
-            .min_size(egui::vec2(32.0, 32.0)),
+        let response = crate::ui::forms::icon_btn(
+            ui,
+            "Interrupt",
+            Icon::Square,
+            32.0,
+            14.0,
+            R_FULL,
+            crate::ui::forms::IconTones {
+                fill: palette.fill_hover,
+                hover_fill: palette.danger_soft,
+                ink: palette.ink,
+                hover_ink: palette.danger,
+            },
         );
         if response.clicked() {
             events.push(ToolbarEvent::Cancel);
@@ -2061,11 +2058,19 @@ fn send_button(
     } else {
         (palette.send_bg_off, palette.send_icon_off)
     };
-    let response = ui.add(
-        egui::Button::new(egui::RichText::new("\u{2191}").size(14.0).color(fg))
-            .fill(bg)
-            .corner_radius(egui::CornerRadius::same(R_FULL as u8))
-            .min_size(egui::vec2(32.0, 32.0)),
+    let response = crate::ui::forms::icon_btn(
+        ui,
+        "Send",
+        Icon::ArrowUp,
+        32.0,
+        14.0,
+        R_FULL,
+        crate::ui::forms::IconTones {
+            fill: bg,
+            hover_fill: if has_text { palette.send_bg_hover } else { bg },
+            ink: fg,
+            hover_ink: fg,
+        },
     );
     if response.clicked() && has_text {
         events.push(ToolbarEvent::Submit);

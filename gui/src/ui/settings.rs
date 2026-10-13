@@ -507,16 +507,19 @@ impl SettingsView {
                                     ui.set_min_height(card.height());
                                     ui.horizontal(|ui| {
                                         ui.add_space(ui.available_width() - 40.0);
-                                        let response = ui.add(
-                                            egui::Button::new(
-                                                egui::RichText::new("\u{2715}")
-                                                    .size(FS_SM)
-                                                    .color(palette.muted),
-                                            )
-                                            .fill(egui::Color32::TRANSPARENT)
-                                            .stroke(egui::Stroke::NONE)
-                                            .corner_radius(egui::CornerRadius::same(R_MD as u8))
-                                            .min_size(egui::vec2(28.0, 28.0)),
+                                        let response = crate::ui::forms::icon_btn(
+                                            ui,
+                                            "Close",
+                                            crate::icons::Icon::X,
+                                            28.0,
+                                            14.0,
+                                            R_MD,
+                                            crate::ui::forms::IconTones {
+                                                fill: egui::Color32::TRANSPARENT,
+                                                hover_fill: palette.hover,
+                                                ink: palette.muted,
+                                                hover_ink: palette.ink,
+                                            },
                                         );
                                         if response.clicked() {
                                             close = true;

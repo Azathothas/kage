@@ -14,7 +14,9 @@ use kage_client::wire::{NoticeTone, SubagentState};
 use kage_client::{Session, Subagent, TranscriptItem};
 
 use crate::store::Store;
-use crate::theme::{FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_SM, FS_XS, Palette, R_LG, family};
+use crate::theme::{
+    FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_SM, FS_XS, Palette, R_LG, family,
+};
 use crate::ui::transcript::model::tool_verb;
 
 /// Where one subagent stands, as the cards label it.
@@ -506,14 +508,22 @@ pub fn agent_card(
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if facts.stoppable
                         && running
-                        && ui
-                            .add(egui::Button::new(
-                                egui::RichText::new("\u{25A0}")
-                                    .size(crate::theme::FS_XS)
-                                    .color(palette.danger),
-                            ))
-                            .on_hover_text("Stop this agent")
-                            .clicked()
+                        && crate::ui::forms::icon_btn(
+                            ui,
+                            "Stop this agent",
+                            crate::icons::Icon::Square,
+                            24.0,
+                            12.0,
+                            crate::theme::R_MD,
+                            crate::ui::forms::IconTones {
+                                fill: egui::Color32::TRANSPARENT,
+                                hover_fill: palette.fill_hover,
+                                ink: palette.muted,
+                                hover_ink: palette.muted,
+                            },
+                        )
+                        .on_hover_text("Stop this agent")
+                        .clicked()
                     {
                         events.push(AgentEvent::Stop(facts.id.clone()));
                     }

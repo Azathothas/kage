@@ -255,6 +255,51 @@ pub fn segments(
     picked
 }
 
+/// The four colors an icon button paints with: its fill and its icon,
+/// at rest and under the pointer.
+#[derive(Debug, Clone, Copy)]
+pub struct IconTones {
+    /// The fill at rest, transparent for a ghost button.
+    pub fill: egui::Color32,
+    /// The fill under the pointer.
+    pub hover_fill: egui::Color32,
+    /// The icon at rest.
+    pub ink: egui::Color32,
+    /// The icon under the pointer.
+    pub hover_ink: egui::Color32,
+}
+
+/// A `size` square button holding `icon` at `icon_size`, rounded by
+/// `radius`, painted in `tones`, named `label` for assistive tech.
+/// Drawn at the cursor.
+pub fn icon_btn(
+    ui: &mut egui::Ui,
+    label: &str,
+    icon: crate::icons::Icon,
+    size: f32,
+    icon_size: f32,
+    radius: f32,
+    tones: IconTones,
+) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let hovered = response.hovered();
+    let fill = if hovered {
+        tones.hover_fill
+    } else {
+        tones.fill
+    };
+    let radius = egui::CornerRadius::same(radius.min(size / 2.0) as u8);
+    ui.painter().rect_filled(rect, radius, fill);
+    let ink = if hovered { tones.hover_ink } else { tones.ink };
+    crate::icons::themed_image(icon, icon_size, ink).paint_at(
+        ui,
+        egui::Rect::from_center_size(rect.center(), egui::vec2(icon_size, icon_size)),
+    );
+    response
+}
+
 /// A small square button holding one icon, drawn at the cursor.
 pub fn icon_button(
     ui: &mut egui::Ui,

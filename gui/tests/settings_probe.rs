@@ -198,7 +198,7 @@ fn the_close_button_closes_the_dialog() {
     harness.state_mut().1.open(Section::General);
     harness.run();
     harness.run();
-    harness.get_by_label("\u{2715}").click();
+    harness.get_by_label("Close").click();
     harness.run();
     assert!(
         !harness.state().1.is_open(),

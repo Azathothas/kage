@@ -628,27 +628,43 @@ fn queue_row(
                     .color(palette.ink);
                 ui.add(egui::Label::new(text).truncate());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .add(egui::Button::new(
-                            egui::RichText::new("\u{2715}").size(crate::theme::FS_XS),
-                        ))
+                    let tones = crate::ui::forms::IconTones {
+                        fill: egui::Color32::TRANSPARENT,
+                        hover_fill: palette.hover,
+                        ink: palette.muted,
+                        hover_ink: palette.ink,
+                    };
+                    let button = |ui: &mut egui::Ui, label: &str, icon| {
+                        crate::ui::forms::icon_btn(
+                            ui,
+                            label,
+                            icon,
+                            crate::theme::CTL_ICO,
+                            12.0,
+                            crate::theme::R_SM,
+                            tones,
+                        )
+                    };
+                    if button(ui, "Remove", crate::icons::Icon::X)
                         .on_hover_text("Remove")
                         .clicked()
                     {
                         actions.push(DockAction::Remove(row.index));
                     }
-                    if ui
-                        .add(egui::Button::new(
-                            egui::RichText::new("\u{270E}").size(crate::theme::FS_XS),
-                        ))
+                    if button(ui, "Edit", crate::icons::Icon::Pencil)
                         .on_hover_text("fills the composer draft and leaves the queue")
                         .clicked()
                     {
                         actions.push(DockAction::Edit(row.index));
                     }
-                    let steer = ui.add(egui::Button::new(
-                        egui::RichText::new("\u{21B2}").size(crate::theme::FS_XS),
-                    ));
+                    let steer = ui
+                        .scope(|ui| {
+                            if steer_tip.is_some() {
+                                ui.set_opacity(0.45);
+                            }
+                            button(ui, "Steer now", crate::icons::Icon::CornerDownLeft)
+                        })
+                        .inner;
                     if steer_tip.is_none() && steer.clicked() {
                         actions.push(DockAction::Steer(row.index));
                     }
