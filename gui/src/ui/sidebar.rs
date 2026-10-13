@@ -641,27 +641,30 @@ fn list_header(ui: &mut egui::Ui, grouped: bool, events: &mut Vec<SidebarEvent>)
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.add_space(8.0);
-            if ui
-                .add(
-                    egui::Button::new(
-                        egui::RichText::new(if grouped { "\u{2261}" } else { "\u{1F5C1}" })
-                            .size(FS_XS)
-                            .color(palette.faint),
-                    )
-                    .fill(egui::Color32::TRANSPARENT)
-                    .corner_radius(egui::CornerRadius::same(R_MD as u8)),
-                )
+            let (rect, response) =
+                ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
+            let response = response
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text(if grouped {
                     "Show as one list"
                 } else {
                     "Group by project"
-                })
-                .clicked()
-            {
+                });
+            let glyph = if grouped {
+                crate::icons::Icon::List
+            } else {
+                crate::icons::Icon::Folder
+            };
+            crate::icons::themed_image(glyph, 13.0, palette.faint).paint_at(
+                ui,
+                egui::Rect::from_center_size(rect.center(), egui::vec2(13.0, 13.0)),
+            );
+            if response.clicked() {
                 events.push(SidebarEvent::ToggleGrouping);
             }
         });
     });
+    ui.add_space(3.0);
 }
 
 /// The list body: groups under project rows, or one flat list.
@@ -681,6 +684,7 @@ fn list_body(
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 0.0;
             if grouped {
                 for (project, members) in project_groups(&filtered) {
                     project_row(ui, sidebar, palette, &project, &members, events);
@@ -720,52 +724,105 @@ fn project_row(
 ) {
     let open = !sidebar.collapsed(project);
     let dir = members.iter().find_map(|item| item.dir.clone());
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 9.0;
-        ui.spacing_mut().icon_spacing = 9.0;
-        let plus_width = if dir.is_some() { 28.0 + 9.0 } else { 0.0 };
-        let response = ui.add(
-            egui::Button::new((
-                crate::icons::themed_image(
-                    if open {
-                        crate::icons::Icon::FolderOpen
-                    } else {
-                        crate::icons::Icon::Folder
-                    },
-                    15.0,
-                    palette.muted,
-                ),
-                egui::RichText::new(project)
-                    .size(FS_SM)
-                    .color(palette.muted),
-                egui::Atom::grow(),
-                egui::RichText::new(members.len().to_string())
-                    .size(FS_XS)
-                    .color(palette.faint),
-            ))
-            .fill(egui::Color32::TRANSPARENT)
-            .stroke(egui::Stroke::NONE)
-            .corner_radius(egui::CornerRadius::same(R_MD as u8))
-            .min_size(egui::vec2(ui.available_width() - plus_width, 24.0)),
+    ui.add_space(4.0);
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), PROJECT_ROW_H),
+        egui::Sense::click(),
+    );
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let plus = egui::Rect::from_min_size(
+        egui::pos2(rect.right() - 8.0 - 22.0, rect.center().y - 11.0),
+        egui::vec2(22.0, 22.0),
+    );
+    let plus_response = dir.as_ref().map(|_| {
+        ui.interact(
+            plus,
+            ui.id().with(("project-add", project)),
+            egui::Sense::click(),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("New session")
+    });
+    let plus_hovered = plus_response.as_ref().is_some_and(egui::Response::hovered);
+    let hovered = response.hovered() || plus_hovered;
+    if hovered {
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::same(R_MD as u8), palette.hover);
+    }
+    let ink = if hovered { palette.ink } else { palette.muted };
+    let mid = rect.center().y;
+    let folder = egui::Rect::from_min_size(
+        egui::pos2(rect.left() + 8.0, mid - 7.0),
+        egui::vec2(14.0, 14.0),
+    );
+    let glyph = if open {
+        crate::icons::Icon::FolderOpen
+    } else {
+        crate::icons::Icon::Folder
+    };
+    crate::icons::themed_image(glyph, 14.0, palette.muted).paint_at(ui, folder);
+    let mut right = if dir.is_some() {
+        plus.left() - 8.0
+    } else {
+        rect.right() - 8.0
+    };
+    if !members.is_empty() {
+        let count = ui.painter().layout_no_wrap(
+            members.len().to_string(),
+            egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR)),
+            palette.faint,
         );
-        if response.clicked() {
-            sidebar.toggle_project(project);
+        let left = right - count.size().x;
+        ui.painter().galley(
+            egui::pos2(left, mid - count.size().y / 2.0),
+            count,
+            palette.faint,
+        );
+        right = left - 8.0;
+    }
+    let mut job = egui::text::LayoutJob::simple_singleline(
+        project.to_owned(),
+        egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
+        ink,
+    );
+    let name_left = folder.right() + 8.0;
+    job.wrap.max_width = (right - name_left).max(0.0);
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    job.wrap.overflow_character = Some('\u{2026}');
+    let name = ui.painter().layout_job(job);
+    ui.painter()
+        .galley(egui::pos2(name_left, mid - name.size().y / 2.0), name, ink);
+    if let Some(add) = &plus_response {
+        if add.hovered() {
+            ui.painter().rect_filled(
+                plus,
+                egui::CornerRadius::same(R_MD as u8),
+                palette.fill_hover,
+            );
         }
-        if let Some(dir) = dir
-            && ui
-                .add(
-                    egui::Button::new(egui::RichText::new("+").size(FS_XS).color(palette.faint))
-                        .fill(egui::Color32::TRANSPARENT)
-                        .stroke(egui::Stroke::NONE)
-                        .corner_radius(egui::CornerRadius::same(R_MD as u8)),
-                )
-                .on_hover_text("New session")
-                .clicked()
-        {
+        let tint = if add.hovered() {
+            palette.ink
+        } else {
+            palette.faint
+        };
+        crate::icons::themed_image(crate::icons::Icon::Plus, 13.0, tint).paint_at(
+            ui,
+            egui::Rect::from_center_size(plus.center(), egui::vec2(13.0, 13.0)),
+        );
+    }
+    match (plus_response, dir) {
+        (Some(add), Some(dir)) if add.clicked() => {
             events.push(SidebarEvent::NewSession(Some(dir)));
         }
-    });
+        _ if response.clicked() => sidebar.toggle_project(project),
+        _ => {}
+    }
 }
+
+/// A project header's height. The reference declares 32px, but its
+/// overflowing list shrinks the header to its 22px plus button.
+const PROJECT_ROW_H: f32 = 22.0;
 
 /// One session row: title, then the attention badge, the working
 /// eclipse or the swarm glyph, else the relative time. An unread row
@@ -790,18 +847,24 @@ fn session_row(
         .title
         .clone()
         .unwrap_or_else(|| "untitled session".to_owned());
-    let response = ui.add(
-        egui::Button::new("")
-            .fill(if item.active {
-                palette.selected
-            } else {
-                egui::Color32::TRANSPARENT
-            })
-            .stroke(egui::Stroke::NONE)
-            .corner_radius(egui::CornerRadius::same(R_MD as u8))
-            .min_size(egui::vec2(ui.available_width(), 32.0)),
-    );
-    let rect = response.rect;
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 32.0), egui::Sense::click());
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let fill = match (item.active, response.hovered()) {
+        (true, false) => Some(palette.selected),
+        (true, true) => Some(palette.selected_hover),
+        (false, true) => Some(palette.hover),
+        (false, false) => None,
+    };
+    if let Some(fill) = fill {
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::same(R_MD as u8), fill);
+    }
+    let fg = if response.hovered() && !item.active {
+        palette.ink
+    } else {
+        fg
+    };
     // The fork guides: a rail per depth, with the elbow at the row's
     // own depth.
     for depth in 1..=place.depth {
@@ -839,33 +902,81 @@ fn session_row(
             );
         }
     }
-    // The trailing fact: the badge, the eclipse, the swarm glyph, the
-    // fork count, or the relative time.
-    let trailing = match item.state {
-        RowState::Approve => Some(("Approve".to_owned(), palette.ok, palette.ok_soft)),
-        RowState::Answer => Some(("Answer".to_owned(), palette.accent, palette.accent_soft)),
-        RowState::Review => Some(("Review".to_owned(), palette.ok, palette.ok_soft)),
-        RowState::Failed => Some(("Failed".to_owned(), palette.danger, palette.danger_soft)),
-        RowState::Running => None,
-        RowState::Idle if item.swarm => None,
-        RowState::Idle => ago(item.updated_at.as_deref(), now)
-            .map(|when| (when, palette.faint, egui::Color32::TRANSPARENT)),
+    let mid = rect.center().y;
+    let mut right = rect.right() - 8.0;
+    if item.pinned {
+        let pin =
+            egui::Rect::from_min_size(egui::pos2(right - 11.0, mid - 5.5), egui::vec2(11.0, 11.0));
+        crate::icons::themed_image(crate::icons::Icon::Pin, 11.0, palette.faint).paint_at(ui, pin);
+        right = pin.left() - 8.0;
+    }
+    let badge = match item.state {
+        RowState::Approve => Some(("Approve", palette.ok, palette.ok_soft)),
+        RowState::Answer => Some(("Answer", palette.accent, palette.accent_soft)),
+        RowState::Review => Some(("Review", palette.ok, palette.ok_soft)),
+        RowState::Failed => Some(("Failed", palette.danger, palette.danger_soft)),
+        _ => None,
     };
-    let badge = trailing.map(|(label, fg, bg)| {
+    if let Some((label, fg, bg)) = badge {
         let galley = ui.painter().layout_no_wrap(
-            label,
+            label.to_owned(),
             egui::FontId::new(FS_2XS, family(FAMILY_BODY_SEMIBOLD)),
             fg,
         );
-        (galley, fg, bg)
-    });
-    let reserved = match &badge {
-        Some((galley, _, _)) if place.kids > 0 => galley.size().x + 52.0,
-        Some((galley, _, bg)) if *bg == egui::Color32::TRANSPARENT => galley.size().x + 22.0,
-        Some((galley, _, _)) => galley.size().x + 28.0,
-        None if item.state == RowState::Running || place.kids > 0 => 28.0,
-        None => 8.0,
-    };
+        let pill = egui::Rect::from_min_size(
+            egui::pos2(right - galley.size().x - 12.0, mid - 9.0),
+            egui::vec2(galley.size().x + 12.0, 18.0),
+        );
+        ui.painter()
+            .rect_filled(pill, egui::CornerRadius::same(9), bg);
+        ui.painter()
+            .galley(pill.center() - galley.size() / 2.0, galley, fg);
+        right = pill.left() - 8.0;
+    } else if item.state == RowState::Running {
+        let at =
+            egui::Rect::from_min_size(egui::pos2(right - 14.0, mid - 7.0), egui::vec2(14.0, 14.0));
+        crate::ui::eclipse::paint(ui, at, 14.0, Some(crate::clock::epoch()), palette);
+        right = at.left() - 8.0;
+    } else if item.swarm {
+        let at =
+            egui::Rect::from_min_size(egui::pos2(right - 12.0, mid - 6.0), egui::vec2(12.0, 12.0));
+        crate::icons::themed_image(crate::icons::Icon::Waypoints, 12.0, palette.done)
+            .paint_at(ui, at);
+        right = at.left() - 8.0;
+    } else if let Some(when) = ago(item.updated_at.as_deref(), now) {
+        let galley = ui.painter().layout_no_wrap(
+            when,
+            egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR)),
+            palette.faint,
+        );
+        let left = right - galley.size().x;
+        ui.painter().galley(
+            egui::pos2(left, mid - galley.size().y / 2.0),
+            galley,
+            palette.faint,
+        );
+        right = left - 8.0;
+    }
+    if place.kids > 0 {
+        let count = ui.painter().layout_no_wrap(
+            place.kids.to_string(),
+            egui::FontId::new(10.5, family(FAMILY_MONO_REGULAR)),
+            palette.faint,
+        );
+        let left = right - count.size().x;
+        ui.painter().galley(
+            egui::pos2(left, mid - count.size().y / 2.0),
+            count,
+            palette.faint,
+        );
+        let icon = egui::Rect::from_min_size(
+            egui::pos2(left - 2.0 - 11.0, mid - 5.5),
+            egui::vec2(11.0, 11.0),
+        );
+        crate::icons::themed_image(crate::icons::Icon::GitBranch, 11.0, palette.faint)
+            .paint_at(ui, icon);
+        right = icon.left() - 8.0;
+    }
     let mut job = egui::text::LayoutJob::simple_singleline(
         title,
         egui::FontId::new(
@@ -878,58 +989,14 @@ fn session_row(
         ),
         fg,
     );
-    job.wrap.max_width = (rect.right() - rect.left() - indent - reserved).max(0.0);
+    job.wrap.max_width = (right - rect.left() - indent).max(0.0);
     job.wrap.max_rows = 1;
     job.wrap.break_anywhere = true;
-    job.wrap.overflow_character = Some('…');
+    job.wrap.overflow_character = Some('\u{2026}');
     let title_galley = ui.painter().layout_job(job);
-    let title_y = rect.center().y - title_galley.size().y / 2.0;
+    let title_y = mid - title_galley.size().y / 2.0;
     ui.painter()
         .galley(egui::pos2(rect.left() + indent, title_y), title_galley, fg);
-    let mut fork_count_right = rect.right() - 12.0;
-    if let Some((galley, fg, bg)) = badge {
-        let width = galley.size().x + 12.0;
-        let pill_rect = egui::Rect::from_min_size(
-            egui::pos2(rect.right() - width - 8.0, rect.center().y - 9.0),
-            egui::vec2(width, 18.0),
-        );
-        ui.painter()
-            .rect_filled(pill_rect, egui::CornerRadius::same(9), bg);
-        ui.painter()
-            .galley(pill_rect.center() - galley.size() / 2.0, galley, fg);
-        fork_count_right = pill_rect.left() - 6.0;
-    }
-    if item.state == RowState::Running {
-        // The working eclipse: a filled disc with a crescent bitten out
-        // of it, at the row's right edge.
-        let center = egui::pos2(rect.right() - 19.0, rect.center().y);
-        let radius = 7.0;
-        ui.painter()
-            .circle_filled(center, radius, palette.ink_strong);
-        ui.painter().circle_filled(
-            center + egui::vec2(2.0, -1.0),
-            radius * 0.8,
-            palette.sidebar,
-        );
-    }
-    if place.kids > 0 {
-        ui.painter().text(
-            egui::pos2(fork_count_right, rect.center().y),
-            egui::Align2::RIGHT_CENTER,
-            format!("\u{2387} {}", place.kids),
-            egui::FontId::new(10.5, family(FAMILY_MONO_REGULAR)),
-            palette.faint,
-        );
-    }
-    if item.pinned {
-        ui.painter().text(
-            egui::pos2(rect.right() - 12.0, rect.center().y),
-            egui::Align2::RIGHT_CENTER,
-            "\u{1F4CC}",
-            egui::FontId::new(11.0, family(FAMILY_BODY_REGULAR)),
-            palette.faint,
-        );
-    }
     if response.clicked() {
         events.push(SidebarEvent::Activate(item.id.clone()));
     }
