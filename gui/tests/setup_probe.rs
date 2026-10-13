@@ -94,8 +94,14 @@ fn an_empty_path_is_refused_where_the_user_can_see_it() {
     );
 }
 
+/// Serialises the tests that start a child process: a stub written by
+/// one test can be caught mid-fork by another and fail with "text file
+/// busy".
+static SPAWNS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn a_program_that_is_not_kage_is_refused_with_why() {
+    let _spawns = SPAWNS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut harness = harness_for(SetupView::new());
     harness.run();
     testutil::first_field(&harness)
@@ -118,6 +124,7 @@ fn a_program_that_is_not_kage_is_refused_with_why() {
 
 #[test]
 fn a_probed_binary_is_handed_to_the_shell() {
+    let _spawns = SPAWNS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let stub = std::env::temp_dir().join("kage-setup-probe-probe");
     std::fs::write(&stub, "#!/bin/sh\necho 'kage 9.9.9'\n").expect("the stub is written");
     #[cfg(unix)]
