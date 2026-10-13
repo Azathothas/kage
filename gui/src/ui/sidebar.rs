@@ -716,6 +716,7 @@ fn project_row(
                 .color(palette.muted),
         )
         .fill(egui::Color32::TRANSPARENT)
+        .stroke(egui::Stroke::NONE)
         .corner_radius(egui::CornerRadius::same(R_MD as u8))
         .min_size(egui::vec2(0.0, 32.0)),
     );
@@ -766,6 +767,7 @@ fn session_row(
             } else {
                 egui::Color32::TRANSPARENT
             })
+            .stroke(egui::Stroke::NONE)
             .corner_radius(egui::CornerRadius::same(R_MD as u8))
             .min_size(egui::vec2(ui.available_width(), 32.0)),
     );
