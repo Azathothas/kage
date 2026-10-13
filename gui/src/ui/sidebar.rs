@@ -855,6 +855,7 @@ fn session_row(
     });
     let reserved = match &badge {
         Some((galley, _, _)) if place.kids > 0 => galley.size().x + 52.0,
+        Some((galley, _, bg)) if *bg == egui::Color32::TRANSPARENT => galley.size().x + 22.0,
         Some((galley, _, _)) => galley.size().x + 28.0,
         None if item.state == RowState::Running || place.kids > 0 => 28.0,
         None => 8.0,
