@@ -946,6 +946,7 @@ impl ShellApp {
         let topbar_events: std::cell::RefCell<Vec<crate::ui::topbar::TopbarEvent>> =
             std::cell::RefCell::new(Vec::new());
         let sidebar_hidden = !self.shell.panels.sidebar_visible;
+        let workbench_visible = self.shell.panels.workbench_visible;
         let chat = |ui: &mut egui::Ui| {
             // The column is the transcript above and the composer
             // below: the transcript takes what is left, and the
@@ -961,7 +962,13 @@ impl ShellApp {
             let store = &mut store.borrow_mut();
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
-                crate::ui::topbar::show(ui, store, sidebar_hidden, &mut topbar_events.borrow_mut());
+                crate::ui::topbar::show(
+                    ui,
+                    store,
+                    sidebar_hidden,
+                    workbench_visible,
+                    &mut topbar_events.borrow_mut(),
+                );
                 if store.active_id().is_some() {
                     if self.shell.find.is_open() {
                         let rows = self.shell.transcript.searchable_rows(store);

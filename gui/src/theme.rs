@@ -1090,9 +1090,13 @@ fn map_visuals(p: &Palette, v: &mut egui::Visuals) {
     v.menu_corner_radius = corner(R_SM);
     v.window_shadow = p.shadow_2;
     v.popup_shadow = p.shadow_menu;
+    // The caret takes the accent, as the reference's does.
+    v.text_cursor.stroke.color = p.accent;
+    // Selected text keeps the ink, on the selection fill, as the
+    // reference selects.
     v.selection = egui::style::Selection {
         bg_fill: p.selection,
-        stroke: egui::Stroke::new(1.0, p.accent_bd),
+        stroke: egui::Stroke::new(1.0, p.ink_strong),
     };
     v.widgets.noninteractive = egui::style::WidgetVisuals {
         bg_fill: p.surface,
