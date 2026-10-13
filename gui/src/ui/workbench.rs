@@ -788,10 +788,16 @@ fn files_pane(
                     egui::Color32::TRANSPARENT
                 })
                 .corner_radius(egui::CornerRadius::same(R_MD as u8))
-                .min_size(egui::vec2(0.0, 28.0)),
+                .min_size(egui::vec2(ui.available_width(), 28.0)),
         );
         let rect = response.rect;
-        crate::icons::icon(ui, icon, 14.0, palette.muted);
+        paint_icon(
+            ui,
+            icon,
+            14.0,
+            palette.muted,
+            egui::pos2(rect.left() + 13.0, rect.center().y),
+        );
         ui.painter().text(
             egui::pos2(rect.left() + 26.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
@@ -1008,7 +1014,7 @@ fn terminal_pane(
             egui::Button::new("")
                 .fill(egui::Color32::TRANSPARENT)
                 .corner_radius(egui::CornerRadius::same(R_MD as u8))
-                .min_size(egui::vec2(0.0, 30.0)),
+                .min_size(egui::vec2(ui.available_width(), 30.0)),
         );
         let rect = header.rect;
         let (icon, color) = if run.running {
@@ -1018,7 +1024,13 @@ fn terminal_pane(
         } else {
             (crate::icons::Icon::CircleCheck, palette.ok)
         };
-        crate::icons::icon(ui, icon, 14.0, color);
+        paint_icon(
+            ui,
+            icon,
+            14.0,
+            color,
+            egui::pos2(rect.left() + 13.0, rect.center().y),
+        );
         ui.painter().text(
             egui::pos2(rect.left() + 26.0, rect.center().y),
             egui::Align2::LEFT_CENTER,
@@ -1370,4 +1382,18 @@ mod tests {
             params: json!({"sessionId": "s", "update": {}}),
         };
     }
+}
+
+/// Paints one icon centred on `center`, inside a row drawn before it.
+fn paint_icon(
+    ui: &mut egui::Ui,
+    icon: crate::icons::Icon,
+    size: f32,
+    color: egui::Color32,
+    center: egui::Pos2,
+) {
+    crate::icons::themed_image(icon, size, color).paint_at(
+        ui,
+        egui::Rect::from_center_size(center, egui::vec2(size, size)),
+    );
 }
