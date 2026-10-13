@@ -452,7 +452,7 @@ pub(crate) fn surface(
 
 /// The menu surface on `fill`: the pickers draw on the page's own
 /// background, as the reference's picker overlay does.
-fn surface_in(
+pub(crate) fn surface_in(
     ui: &mut egui::Ui,
     palette: &Palette,
     fill: egui::Color32,

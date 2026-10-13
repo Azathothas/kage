@@ -38,7 +38,10 @@ const PILL_TO_COMPOSER: f32 = 8.0;
 /// The gap between the composer and the cards.
 const COMPOSER_TO_CARDS: f32 = 16.0;
 /// How far the project menu hangs under the pill.
-const MENU_DROP: f32 = 6.0;
+const MENU_DROP: f32 = 7.0;
+/// How far the project menu sits in from the pill's left edge, where
+/// the reference anchors it.
+const MENU_INDENT: f32 = 10.0;
 /// The project menu's width, as the reference shell draws it.
 const MENU_W: f32 = 320.0;
 /// How many projects the menu lists, as the reference shell took them.
@@ -148,10 +151,14 @@ impl Welcome {
         enter_sends: bool,
     ) -> (Vec<WelcomeEvent>, crate::ui::composer::ComposerEvent) {
         let mut events = Vec::new();
-        let pane = ui.available_rect_before_wrap();
+        let full = ui.available_rect_before_wrap();
+        // The reference's chat band stays under the pane with no session,
+        // collapsed to its 16px bottom padding, and the stack centers in
+        // what is left above it.
+        let pane = full.with_max_y(full.max.y - crate::theme::SP_6);
         let dark = ui.ctx().theme() == egui::Theme::Dark;
         let palette = Palette::active_of(ui.ctx());
-        glow(ui, pane, dark);
+        glow(ui, full, dark);
 
         // The column centers itself, and clamps to the padded pane the
         // way the web client's `@media (max-width: 860px)` pads it. The
@@ -159,7 +166,10 @@ impl Welcome {
         // cards while the panel widths settle.
         let col_w = WELCOME_W.min(pane.width() - 2.0 * 24.0).max(320.0);
         let left = pane.left() + (pane.width() - col_w) / 2.0;
-        let inner_h = pane.height() - WELCOME_PAD_TOP - pane.height() * WELCOME_PAD_BOTTOM_SHARE;
+        // The bottom pad is a share of the window's height, not the
+        // pane's, as the reference measures it.
+        let viewport = ui.ctx().viewport_rect().height();
+        let inner_h = pane.height() - WELCOME_PAD_TOP - viewport * WELCOME_PAD_BOTTOM_SHARE;
         let offset = ((inner_h - self.stack_h) / 2.0).max(0.0);
         let mut stack = ui.new_child(
             egui::UiBuilder::new()
@@ -236,17 +246,34 @@ impl Welcome {
         let mut events = Vec::new();
         let narrow = ui.ctx().viewport_rect().width() <= NARROW;
         let cols = if narrow { 1 } else { 2 };
-        let gap = 8.0;
+        let gap = CARD_GAP;
         let col_w = (ui.available_width() - gap * (cols as f32 - 1.0)) / cols as f32;
-        for pair in SUGGESTIONS.chunks(cols) {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = gap;
-                for card in pair {
-                    if let Some(event) = card_view(ui, card, palette, col_w) {
-                        events.push(event);
-                    }
+        ui.spacing_mut().item_spacing.y = 0.0;
+        for (n, row) in SUGGESTIONS.chunks(cols).enumerate() {
+            if n > 0 {
+                ui.add_space(gap);
+            }
+            // A grid row is as tall as its tallest card, and every card
+            // in it stretches to that height.
+            let height = row
+                .iter()
+                .map(|card| {
+                    2.0 * 10.0 + 2.0 + card_text(ui, card, col_w, palette.muted).size().y.max(14.0)
+                })
+                .fold(0.0, f32::max);
+            let (rect, _) = ui.allocate_exact_size(
+                egui::vec2(ui.available_width(), height),
+                egui::Sense::hover(),
+            );
+            for (m, card) in row.iter().enumerate() {
+                let at = egui::Rect::from_min_size(
+                    egui::pos2(rect.left() + m as f32 * (col_w + gap), rect.top()),
+                    egui::vec2(col_w, height),
+                );
+                if let Some(event) = card_view(ui, card, palette, at) {
+                    events.push(event);
                 }
-            });
+            }
         }
         events
     }
@@ -278,22 +305,27 @@ impl Welcome {
             .title_bar(false)
             .collapsible(false)
             .resizable(false)
-            .fixed_pos(pill.left_bottom() + egui::vec2(0.0, MENU_DROP))
+            .fixed_pos(pill.left_bottom() + egui::vec2(MENU_INDENT, MENU_DROP))
             .min_width(MENU_W)
             .order(egui::Order::Foreground)
             .frame(egui::Frame::NONE)
             .show(ui.ctx(), |ui| {
-                crate::ui::toolbar::surface(ui, palette, MENU_W, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.add_space(9.0);
-                        ui.label(
-                            egui::RichText::new("PROJECT")
-                                .size(FS_2XS)
-                                .family(family(FAMILY_BODY_SEMIBOLD))
-                                .color(palette.faint),
-                        );
+                crate::ui::toolbar::surface_in(ui, palette, palette.bg, 5, MENU_W - 10.0, |ui| {
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    let (head, header) = ui.allocate_exact_size(
+                        egui::vec2(ui.available_width(), 6.0 + FS_2XS * 1.618 + 3.0),
+                        egui::Sense::hover(),
+                    );
+                    header.widget_info(|| {
+                        egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "PROJECT")
                     });
-                    ui.add_space(3.0);
+                    ui.painter().text(
+                        egui::pos2(head.left() + 9.0, head.top() + 6.0 + FS_2XS * 1.618 / 2.0),
+                        egui::Align2::LEFT_CENTER,
+                        "PROJECT",
+                        egui::FontId::new(FS_2XS, family(FAMILY_BODY_SEMIBOLD)),
+                        palette.faint,
+                    );
                     for dir in &dirs {
                         let id = egui::Id::new("welcome-project-row").with(dir.as_str());
                         let row =
@@ -438,72 +470,90 @@ fn wordmark(ui: &mut egui::Ui, palette: &Palette, dark: bool) {
     );
 }
 
-/// One suggestion card: its icon, its text and the tag it trails. The
-/// hover state rides the card's stable id across frames, so the frame
-/// can style itself before the response exists.
+/// The wrapped text of `card` in a column `width` wide: the room left
+/// beside the icon and the tag, at the reference's 1.5 line height.
+fn card_text(
+    ui: &egui::Ui,
+    card: &Suggestion,
+    width: f32,
+    color: egui::Color32,
+) -> std::sync::Arc<egui::Galley> {
+    let tag_space = card
+        .tag
+        .map_or(0.0, |tag| tag_galley(ui, tag, color).size().x + 14.0 + 10.0);
+    let text_w = (width - 2.0 - 24.0 - 14.0 - 10.0 - tag_space).max(40.0);
+    let format = egui::TextFormat {
+        font_id: egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
+        color,
+        line_height: Some(FS_SM * 1.5),
+        ..Default::default()
+    };
+    let mut job = egui::text::LayoutJob::single_section(card.text.to_owned(), format);
+    job.wrap.max_width = text_w;
+    ui.painter().layout_job(job)
+}
+
+/// One suggestion card painted into `rect`: the icon, the text and the
+/// tag, centered on the row, lifting onto the hover fill.
 fn card_view(
     ui: &mut egui::Ui,
     card: &Suggestion,
     palette: &Palette,
-    width: f32,
+    rect: egui::Rect,
 ) -> Option<WelcomeEvent> {
-    let id = egui::Id::new("welcome-card").with(card.id);
-    let hovered = ui.ctx().read_response(id).is_some_and(|r| r.hovered());
-    // The tag's width is reserved out of the text's wrap, so the two
-    // columns keep equal widths and the row never overflows them.
-    let tag_space = card.tag.map_or(0.0, |tag| {
-        tag_galley(ui, tag, palette.accent).size().x + 14.0 + 8.0
-    });
-    let frame = egui::Frame::NONE
-        .fill(if hovered {
-            palette.hover
-        } else {
-            egui::Color32::TRANSPARENT
-        })
-        .stroke(egui::Stroke::new(
-            1.0,
-            if hovered {
-                palette.line_strong
-            } else {
-                palette.line
-            },
-        ))
-        .corner_radius(egui::CornerRadius::same(R_LG as u8))
-        .inner_margin(egui::Margin::symmetric(12, 10))
-        .show(ui, |ui| {
-            ui.set_width(width - 24.0);
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 10.0;
-                crate::icons::icon(ui, card.icon, 14.0, palette.faint);
-                let text_w = (width - 24.0 - 14.0 - 10.0 - tag_space).max(80.0);
-                ui.allocate_ui_with_layout(
-                    egui::vec2(text_w, 20.0),
-                    egui::Layout::left_to_right(egui::Align::Center),
-                    |ui| {
-                        ui.set_width(text_w);
-                        ui.label(
-                            egui::RichText::new(card.text)
-                                .size(FS_SM)
-                                .color(if hovered { palette.ink } else { palette.muted }),
-                        );
-                    },
-                );
-            });
-        });
+    let response = ui
+        .interact(
+            rect,
+            egui::Id::new("welcome-card").with(card.id),
+            egui::Sense::click(),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, card.text));
+    let hovered = response.hovered();
+    let radius = egui::CornerRadius::same(R_LG as u8);
+    if hovered {
+        ui.painter().rect_filled(rect, radius, palette.hover);
+    }
+    let line = if hovered {
+        palette.line_strong
+    } else {
+        palette.line
+    };
+    ui.painter().rect_stroke(
+        rect,
+        radius,
+        egui::Stroke::new(1.0, line),
+        egui::StrokeKind::Inside,
+    );
+    let ink = if hovered { palette.ink } else { palette.muted };
+    let mid = rect.center().y;
+    let left = rect.left() + 1.0 + 12.0;
+    crate::icons::themed_image(card.icon, 14.0, palette.faint).paint_at(
+        ui,
+        egui::Rect::from_min_size(egui::pos2(left, mid - 7.0), egui::vec2(14.0, 14.0)),
+    );
+    let text = card_text(ui, card, rect.width(), ink);
+    ui.painter().galley(
+        egui::pos2(left + 14.0 + 10.0, mid - text.size().y / 2.0),
+        text,
+        ink,
+    );
     if let Some(tag) = card.tag {
         let (fg, bg) = if tag == "swarm" {
             (palette.done, palette.done_soft)
         } else {
             (palette.accent, palette.accent_soft)
         };
-        paint_tag(ui, tag, fg, bg, frame.response.rect);
+        paint_tag(ui, tag, fg, bg, rect);
     }
-    let response = ui.interact(frame.response.rect, id, egui::Sense::click());
     response.clicked().then_some(WelcomeEvent::Fill {
         text: card.text,
         option: card.option,
     })
 }
+
+/// The gap between the suggestion cards, both ways.
+const CARD_GAP: f32 = 8.0;
 
 /// The tag galley, shared by the space reservation and the paint.
 fn tag_galley(ui: &egui::Ui, tag: &str, fg: egui::Color32) -> std::sync::Arc<egui::Galley> {
@@ -521,7 +571,7 @@ fn paint_tag(ui: &mut egui::Ui, tag: &str, fg: egui::Color32, bg: egui::Color32,
     let width = galley.size().x + 14.0;
     let height = (galley.size().y + 2.0).max(16.0);
     let rect = egui::Rect::from_center_size(
-        egui::pos2(card.right() - 12.0 - width / 2.0, card.center().y),
+        egui::pos2(card.right() - 13.0 - width / 2.0, card.center().y),
         egui::vec2(width, height),
     );
     ui.painter()
@@ -547,7 +597,7 @@ fn hint(ui: &mut egui::Ui, palette: &Palette) {
         palette.faint,
     );
     let gap = 4.0;
-    let chip_w = chip.size().x + 2.0 * crate::theme::SP_2 + 2.0;
+    let chip_w = chip.size().x + 12.0;
     let width = chip_w + gap + label.size().x;
     let (rect, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 20.0), egui::Sense::hover());
@@ -560,6 +610,7 @@ fn hint(ui: &mut egui::Ui, palette: &Palette) {
             ))
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
+    row.spacing_mut().item_spacing.x = 0.0;
     crate::ui::palette::kbd_chip(&mut row, "Ctrl K", palette);
     row.add_space(gap);
     row.label(
