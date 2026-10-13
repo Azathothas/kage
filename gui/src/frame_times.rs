@@ -534,8 +534,9 @@ mod tests {
 
     #[test]
     fn a_tick_does_not_fire_early() {
-        let mut ticker = Ticker::new(Instant::now(), Duration::from_millis(100));
-        let mut now = Instant::now();
+        let start = Instant::now();
+        let mut ticker = Ticker::new(start, Duration::from_millis(100));
+        let mut now = start;
         now += Duration::from_millis(99);
         assert!(!ticker.tick(now), "99 ms is early for a 100 ms period");
         now += Duration::from_millis(2);
