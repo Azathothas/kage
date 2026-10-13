@@ -163,7 +163,7 @@ fn the_five_tabs_draw_and_the_strip_takes_a_click() {
     harness.get_by_label("Agents").click();
     harness.run();
     assert!(
-        harness.query_by_label("No agents yet").is_some(),
+        harness.query_by_label("No agents yet. Subagents and swarm workers show up here while they run.").is_some(),
         "the agents pane took over"
     );
     harness.get_by_label("Changes").click();

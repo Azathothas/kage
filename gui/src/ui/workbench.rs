@@ -578,7 +578,7 @@ pub fn show(
         ui.set_width(ui.available_width());
         tab_strip(ui, workbench, palette);
         let Some(session) = store.active_session() else {
-            empty_block(ui, crate::icons::Icon::Folder, "No session open", palette);
+            empty_block(ui, crate::icons::Icon::Folder, "Start a session to see its changes, agents and output here.", palette);
             return;
         };
         // The panes read the session by value, so the store stays free
@@ -649,7 +649,7 @@ fn changes_pane(
         empty_block(
             ui,
             crate::icons::Icon::FileDiff,
-            "No file changes yet",
+            "No file changes in this session yet.",
             palette,
         );
         return;
@@ -755,7 +755,7 @@ fn files_pane(
     events: &mut Vec<WorkbenchEvent>,
 ) {
     let Some(id) = store.active_id().map(str::to_owned) else {
-        empty_block(ui, crate::icons::Icon::Folder, "No session open", palette);
+        empty_block(ui, crate::icons::Icon::Folder, "Start a session to see its changes, agents and output here.", palette);
         return;
     };
     if !workbench.listing_asked(&id) {
@@ -766,7 +766,7 @@ fn files_pane(
         empty_block(
             ui,
             crate::icons::Icon::Folder,
-            "No file listing yet",
+            "Listing the session workdir\u{2026}",
             palette,
         );
         return;
@@ -975,7 +975,7 @@ fn agents_pane(
     cards.sort_by_key(|facts| facts.item.as_ref().map(|(_, ix)| *ix).unwrap_or(u32::MAX));
     if cards.is_empty() {
         let text = if agents.is_empty() {
-            "No agents yet"
+            "No agents yet. Subagents and swarm workers show up here while they run."
         } else {
             "No agents match this filter."
         };
@@ -1006,7 +1006,7 @@ fn terminal_pane(
         empty_block(
             ui,
             crate::icons::Icon::Terminal,
-            "No shell calls yet",
+            "Shell commands and their output collect here.",
             palette,
         );
         return;
@@ -1079,7 +1079,7 @@ fn browser_pane(ui: &mut egui::Ui, palette: &Palette, items: &[TranscriptItem]) 
         empty_block(
             ui,
             crate::icons::Icon::Globe,
-            "No pages fetched yet",
+            "Pages the agent fetches open here as reader text. No scripts, no remote images.",
             palette,
         );
         return;
