@@ -140,7 +140,7 @@ fn the_find_marks_tint_the_matched_rows() {
 
 #[test]
 fn the_timeline_rail_seeks_the_rows() {
-    let mut harness = harness_sized(900.0, 300.0);
+    let mut harness = harness_sized(900.0, 180.0);
     harness.run();
     harness.run();
     let (view, _, _) = harness.state();
@@ -148,7 +148,7 @@ fn the_timeline_rail_seeks_the_rows() {
 
     // The rail hangs 6px off the pane's right edge, 16px wide. A press
     // at its bottom seeks the last rows.
-    let bottom = egui::Pos2::new(900.0 - 6.0 - 8.0, 286.0);
+    let bottom = egui::Pos2::new(900.0 - 6.0 - 8.0, 166.0);
     harness.drag_at(bottom);
     harness.run();
     harness.drop_at(bottom);

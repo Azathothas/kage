@@ -16,6 +16,7 @@
 // The measured-height list's consumer, the transcript view, returns
 // with S04.1; until then the engine is carried but unreferenced, and
 // CI denies dead code.
+pub(crate) mod head;
 #[allow(dead_code)]
 pub mod list;
 pub mod markdown;

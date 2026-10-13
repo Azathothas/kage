@@ -826,7 +826,8 @@ impl ShellApp {
                 ui.set_min_size(ui.ctx().viewport_rect().size());
                 egui::Frame::NONE.fill(palette.bg).show(ui, |ui| {
                     ui.centered_and_justified(|ui| {
-                        let installing = self.installing == Some(crate::ui::settings::Install::Engine);
+                        let installing =
+                            self.installing == Some(crate::ui::settings::Install::Engine);
                         self.shell.setup.show(ui, installing);
                     });
                 });
@@ -959,46 +960,29 @@ impl ShellApp {
             // over a live transcript forever.
             let store = &mut store.borrow_mut();
             ui.vertical(|ui| {
-                crate::ui::topbar::show(
-                    ui,
-                    store,
-                    sidebar_hidden,
-                    &mut topbar_events.borrow_mut(),
-                );
-                // The vim bar sits under the composer, so the column
-                // reserves its height the way the old shell hung the
-                // bar below the bottom band.
-                let vim_h = if store.prefs().vim {
-                    VIM_MODEL_H
-                        + if self.shell.vim_line.is_some() {
-                            VIM_LINE_H
-                        } else {
-                            0.0
-                        }
-                } else {
-                    0.0
-                };
+                crate::ui::topbar::show(ui, store, sidebar_hidden, &mut topbar_events.borrow_mut());
                 if store.active_id().is_some() {
-                    // The transcript takes what is left of the column;
-                    // the dock, the approval card and the composer keep
-                    // their own height under it, so the field sits on
-                    // the column's bottom edge the way the old shell
-                    // pinned it. The card's band is the height it drew
-                    // last frame, so an ask shortens the transcript the
-                    // way the reference band's flex_none card pushes it.
-                    let composer_h = COMPOSER_H;
-                    let dock_h = DOCK_H;
-                    let approval_h = self.shell.approval.band();
-                    let top_h =
-                        (ui.available_height() - composer_h - dock_h - vim_h - approval_h)
-                            .max(0.0);
-                    let (top_rect, _) = ui.allocate_at_least(
-                        egui::vec2(ui.available_width(), top_h),
-                        egui::Sense::hover(),
-                    );
+                    egui::Panel::bottom("chat-band")
+                        .resizable(false)
+                        .show_separator_line(false)
+                        .frame(egui::Frame::NONE.inner_margin(egui::Margin {
+                            left: crate::theme::SP_8 as i8,
+                            right: crate::theme::SP_8 as i8,
+                            top: 0,
+                            bottom: crate::theme::SP_6 as i8,
+                        }))
+                        .show(ui, |ui| {
+                            centered_column(ui, |ui| {
+                                ui.spacing_mut().item_spacing.y = 0.0;
+                                self.show_dock(ui, store);
+                                self.show_approval(ui, store);
+                                self.show_composer(ui, store);
+                                self.show_vim_bar(ui, store);
+                            });
+                        });
                     let mut top = ui.new_child(
                         egui::UiBuilder::new()
-                            .max_rect(top_rect)
+                            .max_rect(ui.available_rect_before_wrap())
                             .layout(egui::Layout::top_down(egui::Align::Min)),
                     );
                     let mut events = Vec::new();
@@ -1055,12 +1039,6 @@ impl ShellApp {
                         }
                     }
                     self.handle_composer_event(ui, store, composer_event, running);
-                }
-                if store.active_id().is_some() {
-                    self.show_dock(ui, store);
-                    self.show_approval(ui, store);
-                    self.show_composer(ui, store);
-                    self.show_vim_bar(ui, store);
                 }
             });
         };
@@ -2587,14 +2565,27 @@ enum BuiltinRun {
     NotMine,
 }
 
-const COMPOSER_H: f32 = 132.0;
-
 /// The vim modeline's height, and the `:` line's above it.
 const VIM_MODEL_H: f32 = 26.0;
 const VIM_LINE_H: f32 = 28.0;
 
-/// The dock row's height: the pills, with their wrap room.
-const DOCK_H: f32 = 72.0;
+/// Lays `add` out in the design's content column: the parent's width
+/// up to [`crate::theme::CONTENT_W`], centered.
+fn centered_column<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let free = ui.available_rect_before_wrap();
+    let width = free.width().min(crate::theme::CONTENT_W);
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(free.center().x - width / 2.0, free.top()),
+        egui::vec2(width, free.height()),
+    );
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(rect)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+        add,
+    )
+    .inner
+}
 
 /// The name the router spells a key by: the key's own name, lowercased
 /// for the letter keys, as egui prints it.

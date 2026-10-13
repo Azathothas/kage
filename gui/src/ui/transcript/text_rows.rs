@@ -21,10 +21,11 @@ use kage_client::agent_text::{self, AgentText, Report};
 use kage_client::wire::NoticeTone;
 use kage_client::{Session, TranscriptItem};
 
+use super::head::{self, Head, Lead, Target};
 use super::model::last_sentence;
 use crate::theme::{
-    FAMILY_MONO_REGULAR, FS_2XS, FS_SM, FS_XS, Palette, R_FULL, R_SM, SP_1, SP_2, SP_3, SP_4, SP_5,
-    family,
+    FAMILY_BODY_REGULAR, FAMILY_MONO_REGULAR, FS_2XS, FS_BASE, FS_SM, FS_XS, Palette, R_FULL, SP_1,
+    SP_2, SP_3, SP_4, SP_5, family,
 };
 
 /// The activity row's height, the design's minimum row height.
@@ -61,6 +62,10 @@ pub enum UserAction {
     Copy(String),
     /// Put the message text in the composer to edit and resend.
     Edit(String),
+    /// Fork a new session from this message's turn.
+    Fork,
+    /// Drop this message and everything after it.
+    Rewind,
 }
 
 /// The names of a prompt's non-text blocks, for its attachment chips:
@@ -91,25 +96,9 @@ fn mono(size: f32) -> egui::FontId {
     egui::FontId::new(size, family(FAMILY_MONO_REGULAR))
 }
 
-/// One icon of the design's catalog at its small size.
-fn icon(ui: &mut egui::Ui, icon: crate::icons::Icon, color: egui::Color32) -> egui::Response {
-    crate::icons::icon(ui, icon, ICON_SM, color)
-}
-
 /// One icon of the design's catalog at its extra small size.
 fn icon_xs(ui: &mut egui::Ui, icon: crate::icons::Icon, color: egui::Color32) -> egui::Response {
     crate::icons::icon(ui, icon, ICON_XS, color)
-}
-
-/// The chevron a collapsible head trails with: pointing right when
-/// closed, down when open.
-fn chevron(ui: &mut egui::Ui, open: bool, color: egui::Color32) -> egui::Response {
-    let glyph = if open {
-        crate::icons::Icon::ChevronDown
-    } else {
-        crate::icons::Icon::ChevronRight
-    };
-    icon(ui, glyph, color)
 }
 
 /// The design's hairline: a one pixel rule in the faintest line token.
@@ -119,49 +108,26 @@ fn rule(ui: &mut egui::Ui, palette: &Palette) {
         .rect_filled(rect, egui::CornerRadius::ZERO, palette.subtle);
 }
 
-/// A collapsible head: the whole row is the click target and paints the
-/// design's hover fill. `contents` draws the head's widgets.
-fn head(
-    ui: &mut egui::Ui,
-    palette: &Palette,
-    contents: impl FnOnce(&mut egui::Ui),
-) -> egui::Response {
-    egui::Frame::NONE
-        .corner_radius(egui::CornerRadius::same(R_SM as u8))
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            let head = ui.allocate_response(egui::Vec2::ZERO, egui::Sense::click());
-            if head.hovered() {
-                ui.painter().rect_filled(
-                    head.rect,
-                    egui::CornerRadius::same(R_SM as u8),
-                    palette.hover,
-                );
-            }
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = SP_4;
-                ui.set_min_height(ROW_H);
-                contents(ui);
-            });
-        })
-        .response
-}
-
 /// The body an expanded row drops under its head: indented, ruled on
 /// its left edge in the design's border token.
 fn detail_frame(ui: &mut egui::Ui, palette: &Palette, contents: impl FnOnce(&mut egui::Ui)) {
-    egui::Frame::NONE
-        .stroke(egui::Stroke::new(2.0, palette.line))
-        .inner_margin(egui::Margin {
-            left: SP_5 as i8,
-            right: 0,
-            top: 0,
-            bottom: 0,
-        })
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width() - DETAIL_INDENT);
-            contents(ui);
-        });
+    let rule_x = ui.cursor().left() + DETAIL_INDENT + 1.0;
+    let top = ui.cursor().top();
+    let body = egui::Rect::from_min_max(
+        egui::pos2(rule_x + 1.0 + SP_5, top),
+        ui.max_rect().right_bottom(),
+    );
+    let inner = ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(body)
+            .layout(egui::Layout::top_down(egui::Align::Min)),
+        contents,
+    );
+    ui.painter().vline(
+        rule_x,
+        egui::Rangef::new(top, inner.response.rect.bottom()),
+        egui::Stroke::new(2.0, palette.line),
+    );
 }
 
 /// The steered bubble's border, drawn as dashes because egui strokes
@@ -245,62 +211,21 @@ fn spinner(ui: &mut egui::Ui, color: egui::Color32) -> egui::Response {
     response
 }
 
-/// A quiet icon button, the design's ghost control: no frame, the
-/// hover fill painted behind it.
-fn ghost_button(
-    ui: &mut egui::Ui,
-    icon: crate::icons::Icon,
-    tooltip: &str,
-    palette: &Palette,
-) -> egui::Response {
-    let response = ui
-        .add(
-            egui::Button::image(icon_image(icon, palette.muted))
-                .fill(egui::Color32::TRANSPARENT)
-                .stroke(egui::Stroke::NONE),
-        )
-        .on_hover_text(tooltip);
-    if response.hovered() {
-        ui.painter().rect_filled(
-            response.rect,
-            egui::CornerRadius::same(4),
-            palette.fill_hover,
-        );
-    }
-    response
-}
-
-/// The tinted image one icon draws as.
-fn icon_image(icon: crate::icons::Icon, color: egui::Color32) -> egui::Image<'static> {
-    egui::Image::new(egui::ImageSource::Bytes {
-        uri: icon.uri(),
-        bytes: icon.bytes().into(),
-    })
-    .tint(color)
-    .max_size(egui::Vec2::splat(ICON_SM))
-}
-
 /// A user message: its attachments, a right-aligned bubble, the steered
 /// tag when it rode into a running turn, and hover actions.
 pub fn render_user(
     ui: &mut egui::Ui,
-    session: &Session,
-    ix: usize,
     text: &str,
     attached: &[String],
     steered: bool,
+    lineage: bool,
 ) -> (egui::Response, Vec<UserAction>) {
-    let _ = session;
     let palette = Palette::active_of(ui.ctx());
     let mut actions = Vec::new();
+    let top = ui.cursor().top();
     let row = ui
         .with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
-            // The whole row reveals the actions, the way the old group
-            // hover did: the row's top-left corner marks the rect the
-            // pointer must sit in, and the action buttons draw at full
-            // opacity only while it is hovered.
-            let cover = ui.allocate_response(egui::Vec2::ZERO, egui::Sense::hover());
-            let top = cover.rect.min;
+            ui.spacing_mut().item_spacing.y = 0.0;
             if !attached.is_empty() {
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing.x = SP_3;
@@ -331,11 +256,16 @@ pub fn render_user(
                 .inner_margin(egui::Margin::symmetric(BUBBLE_PX as i8, BUBBLE_PY as i8))
                 .show(ui, |ui| {
                     ui.set_max_width((ui.available_width() * BUBBLE_MAX).max(1.0));
-                    ui.label(egui::RichText::new(text).size(FS_SM).color(if steered {
-                        palette.ink
-                    } else {
-                        palette.ink_strong
-                    }));
+                    ui.label(
+                        egui::RichText::new(text)
+                            .size(FS_BASE)
+                            .line_height(Some(FS_BASE * 1.5))
+                            .color(if steered {
+                                palette.ink
+                            } else {
+                                palette.ink_strong
+                            }),
+                    );
                 });
             if steered {
                 dashed_rect(ui, bubble.response.rect, BUBBLE_R, palette.line_strong);
@@ -350,33 +280,52 @@ pub fn render_user(
                     );
                 });
             }
-            // The hover actions, hidden until the pointer is over the
-            // row.
-            let actions_row = ui.allocate_response(egui::Vec2::ZERO, egui::Sense::click());
-            let hover = ui.input(|i| i.pointer.hover_pos());
-            let shown = hover.is_some_and(|at| at.y >= top.y && at.y <= actions_row.rect.bottom())
-                || actions_row.hovered();
             ui.add_space(SP_2);
-            ui.scope(|ui| {
-                ui.set_opacity(if shown { 1.0 } else { 0.0 });
-                if !shown {
-                    ui.disable();
+            let (strip, _) = ui.allocate_exact_size(
+                egui::vec2(ui.available_width(), head::ICON_BTN),
+                egui::Sense::hover(),
+            );
+            let over = egui::Rect::from_min_max(egui::pos2(strip.left(), top), strip.max);
+            if ui.rect_contains_pointer(over) {
+                let mut buttons = vec![
+                    (
+                        crate::icons::Icon::Copy,
+                        "Copy",
+                        UserAction::Copy(text.to_owned()),
+                    ),
+                    (
+                        crate::icons::Icon::Pencil,
+                        "Edit and resend",
+                        UserAction::Edit(text.to_owned()),
+                    ),
+                ];
+                if lineage {
+                    buttons.push((
+                        crate::icons::Icon::GitFork,
+                        "Fork from here",
+                        UserAction::Fork,
+                    ));
+                    buttons.push((
+                        crate::icons::Icon::Undo2,
+                        "Rewind to here",
+                        UserAction::Rewind,
+                    ));
                 }
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = SP_1;
-                    if ghost_button(ui, crate::icons::Icon::Copy, "Copy", palette).clicked() {
-                        actions.push(UserAction::Copy(text.to_owned()));
+                let step = head::ICON_BTN + SP_1;
+                let mut x = strip.right() - step * buttons.len() as f32 + SP_1;
+                for (glyph, tip, action) in buttons {
+                    let at = egui::Rect::from_min_size(
+                        egui::pos2(x, strip.top()),
+                        egui::vec2(head::ICON_BTN, head::ICON_BTN),
+                    );
+                    if head::icon_button(ui, at, glyph, tip, palette).clicked() {
+                        actions.push(action);
                     }
-                    if ghost_button(ui, crate::icons::Icon::Pencil, "Edit and resend", palette)
-                        .clicked()
-                    {
-                        actions.push(UserAction::Edit(text.to_owned()));
-                    }
-                });
-            });
+                    x += step;
+                }
+            }
         })
         .response;
-    let _ = ix;
     (row, actions)
 }
 
@@ -391,11 +340,10 @@ pub type ReportDraw<'a> = &'a mut dyn FnMut(&mut egui::Ui, usize, &Report);
 /// delivered part is dropped.
 pub fn render_delivered(
     ui: &mut egui::Ui,
-    session: &Session,
-    ix: usize,
     words: &str,
     parts: &[AgentText],
     mut report: Option<ReportDraw<'_>>,
+    lineage: bool,
 ) -> (egui::Response, Vec<UserAction>) {
     let palette = Palette::active_of(ui.ctx());
     let mut actions = Vec::new();
@@ -403,7 +351,7 @@ pub fn render_delivered(
     ui.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = SP_3;
         if !words.is_empty() {
-            let (words_row, words_actions) = render_user(ui, session, ix, words, &[], false);
+            let (words_row, words_actions) = render_user(ui, words, &[], false, lineage);
             row = Some(words_row);
             actions.extend(words_actions);
         }
@@ -481,17 +429,18 @@ pub fn render_summary(
     expanded: bool,
 ) -> egui::Response {
     let palette = Palette::active_of(ui.ctx());
-    let response = head(ui, palette, |ui| {
-        icon(ui, crate::icons::Icon::Layers, palette.muted);
-        ui.label(
-            egui::RichText::new("Context summary")
-                .size(FS_SM)
-                .color(palette.ink),
-        );
-        crate::ui::transcript::tool_rows::trailing(ui, |ui| {
-            chevron(ui, expanded, palette.faint);
-        });
-    });
+    let response = head::show(
+        ui,
+        Head {
+            lead: Lead::Icon(crate::icons::Icon::Layers, palette.muted),
+            verb: "Context summary".to_owned(),
+            verb_color: palette.ink,
+            target: None,
+            meta: Vec::new(),
+            chevron: Some(expanded),
+            nested: false,
+        },
+    );
     if expanded {
         ui.add_space(SP_2);
         let id = format!("summary-{ix}");
@@ -505,7 +454,6 @@ pub fn render_summary(
 /// Assistant reasoning: a live peek, then a collapsible body.
 pub fn render_thinking(
     ui: &mut egui::Ui,
-    ix: usize,
     text: &str,
     live: bool,
     expanded: bool,
@@ -517,33 +465,28 @@ pub fn render_thinking(
         (false, Some(span)) => format!("Thought for {}s", span.as_secs().max(1)),
         (false, None) => "Thought".to_owned(),
     };
-    let response = head(ui, palette, |ui| {
-        if live {
-            crate::ui::eclipse::eclipse(ui, ICON_SM, Some(crate::clock::epoch()));
-        } else {
-            icon(ui, crate::icons::Icon::Lightbulb, palette.muted);
-        }
-        ui.label(egui::RichText::new(label).size(FS_SM).color(if live {
-            palette.muted
-        } else {
-            palette.ink
-        }));
-        if live && !expanded {
-            let peek = egui::Label::new(
-                egui::RichText::new(last_sentence(text))
-                    .size(FS_SM)
-                    .color(palette.faint)
-                    .italics(),
-            )
-            .truncate();
-            let response = ui.add(peek);
-            let _ = ix;
-            let _ = response;
-        }
-        crate::ui::transcript::tool_rows::trailing(ui, |ui| {
-            chevron(ui, expanded, palette.faint);
-        });
+    let peek = (live && !expanded).then(|| Target {
+        text: last_sentence(text),
+        font: egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
+        color: palette.faint,
+        italics: true,
     });
+    let response = head::show(
+        ui,
+        Head {
+            lead: if live {
+                Lead::Eclipse
+            } else {
+                Lead::Icon(crate::icons::Icon::Lightbulb, palette.muted)
+            },
+            verb: label,
+            verb_color: if live { palette.muted } else { palette.ink },
+            target: peek,
+            meta: Vec::new(),
+            chevron: Some(expanded),
+            nested: false,
+        },
+    );
     if expanded {
         ui.add_space(SP_2);
         detail_frame(ui, palette, |ui| {

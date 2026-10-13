@@ -143,9 +143,11 @@ pub fn show(
     }
 
     // The chat column keeps what is left.
-    egui::CentralPanel::default().show(ui, |ui| {
-        chat(ui);
-    });
+    egui::CentralPanel::default()
+        .frame(egui::Frame::central_panel(ui.style()).inner_margin(0))
+        .show(ui, |ui| {
+            chat(ui);
+        });
 
     // The narrow overlays, over the chat column.
     if narrow && panels.side_float && panels.sidebar_visible {

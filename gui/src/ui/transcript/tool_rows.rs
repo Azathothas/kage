@@ -16,12 +16,12 @@
 //! caller threads in, the way the old element handlers toggled the
 //! view's own state.
 
-use std::f32::consts::TAU;
 use std::time::Duration;
 
 use kage_client::wire::{ContentBlock, NoticeTone, ToolCallStatus};
 use kage_client::{Session, Subagent, ToolCallItem, TranscriptItem};
 
+use super::head::{self, Head, Lead, Meta, Target};
 use super::model::{
     ChangeEntry, ChipTone, DiffLine, Family, Outcome, Row, RowKey, UiState, chips_for, diff_lines,
     plan_decision, tool_verb,
@@ -30,13 +30,11 @@ use crate::clock;
 use crate::store::{PlanChoice, plan_review};
 use crate::theme::{
     FAMILY_BODY_MEDIUM, FAMILY_BODY_REGULAR, FAMILY_MONO_BOLD, FAMILY_MONO_REGULAR, FS_2XS, FS_SM,
-    FS_XS, Palette, R_FULL, R_LG, R_MD, R_SM, SP_1, SP_2, SP_3, SP_4, SP_5, family,
+    FS_XS, Palette, R_FULL, R_LG, R_MD, SP_1, SP_2, SP_3, SP_4, SP_5, family,
 };
 use crate::timing::{RunEnd, SessionTimes};
 use crate::ui::agents::Phase;
 
-/// The activity row's minimum height.
-const ROW_H: f32 = 28.0;
 /// The turn-end row's height: the action buttons it carries.
 const TURN_END_H: f32 = 24.0;
 /// The design's 12px detail size.
@@ -58,8 +56,6 @@ const DETAIL_INDENT: f32 = 22.0;
 const DETAIL_HEAD_PY: f32 = 7.0;
 /// The mono body's vertical padding inside a detail box.
 const DETAIL_PRE_PY: f32 = 10.0;
-/// One turn of the working spinner.
-const SPIN_TURN: f32 = 0.9;
 
 /// What a tool row's actions ask the caller to do.
 ///
@@ -150,39 +146,11 @@ fn icon_xs(ui: &mut egui::Ui, icon: crate::icons::Icon, color: egui::Color32) ->
     crate::icons::icon(ui, icon, ICON_XS, color)
 }
 
-/// The chevron a collapsible head trails with: pointing right when
-/// closed, down when open.
-fn chevron(ui: &mut egui::Ui, open: bool, color: egui::Color32) -> egui::Response {
-    let glyph = if open {
-        crate::icons::Icon::ChevronDown
-    } else {
-        crate::icons::Icon::ChevronRight
-    };
-    icon(ui, glyph, color)
-}
-
-/// The working spinner: an arc turning once every [`SPIN_TURN`],
-/// asking for the frames it turns through.
+/// The working spinner at the small icon size.
 fn spinner(ui: &mut egui::Ui, color: egui::Color32) -> egui::Response {
-    ui.ctx().request_repaint();
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ICON_SM, ICON_SM), egui::Sense::hover());
-    let center = rect.center();
-    let radius = ICON_SM / 2.0 - 1.0;
-    let turn = (ui.ctx().input(|i| i.time) % f64::from(SPIN_TURN)) as f32 / SPIN_TURN;
-    let start = turn * TAU;
-    let steps = 24;
-    let points: Vec<egui::Pos2> = (0..=steps)
-        .map(|step| {
-            let angle = start + TAU * 0.75 * (step as f32 / steps as f32);
-            egui::pos2(
-                center.x + radius * angle.cos(),
-                center.y + radius * angle.sin(),
-            )
-        })
-        .collect();
-    ui.painter()
-        .add(egui::Shape::line(points, egui::Stroke::new(2.0, color)));
+    head::paint_spinner(ui, rect, color);
     response
 }
 
@@ -551,62 +519,52 @@ pub fn render_tool(
     };
 
     let clickable = diff.is_some() || !output.is_empty();
-    let response = clickable_row(
+    let lead = if failed {
+        Lead::Icon(crate::icons::Icon::CircleX, palette.danger)
+    } else if running {
+        Lead::Spinner(palette.accent)
+    } else {
+        Lead::Icon(tool_icon(&call.title), palette.muted)
+    };
+    let mut meta = Vec::new();
+    if call.status == ToolCallStatus::Pending {
+        meta.push(Meta::Chip {
+            text: "waiting".to_owned(),
+            fg: palette.muted,
+            bg: palette.hover,
+        });
+    }
+    for mark in chips_for(call) {
+        let (fg, bg) = chip_tone(mark.tone, palette);
+        meta.push(Meta::Chip {
+            text: mark.text,
+            fg,
+            bg,
+        });
+    }
+    if failed {
+        meta.push(Meta::Chip {
+            text: "failed".to_owned(),
+            fg: palette.danger,
+            bg: palette.danger_soft,
+        });
+    }
+    if let Some(took) = took {
+        meta.push(Meta::Faint(clock::span(took)));
+    }
+    if nested && !first_nested {
+        hairline(ui, palette);
+    }
+    let response = head::show(
         ui,
-        palette.hover,
-        egui::CornerRadius::same(R_SM as u8),
-        |ui| {
-            ui.spacing_mut().item_spacing.x = SP_4;
-            ui.set_height(ROW_H);
-            ui.horizontal(|ui| {
-                if nested {
-                    ui.add_space(SP_5);
-                } else {
-                    ui.add_space(SP_3);
-                }
-                if failed {
-                    icon(ui, crate::icons::Icon::CircleX, palette.danger);
-                } else if running {
-                    spinner(ui, palette.accent);
-                } else {
-                    icon(ui, tool_icon(&call.title), palette.muted);
-                }
-                ui.label(egui::RichText::new(&verb).size(FS_SM).color(verb_color));
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(&target)
-                            .font(mono(DETAIL_SIZE))
-                            .color(palette.muted),
-                    )
-                    .truncate(),
-                );
-                crate::ui::transcript::tool_rows::trailing(ui, |ui| {
-                    if clickable {
-                        chevron(ui, expanded, palette.faint);
-                    }
-                    if let Some(took) = took {
-                        ui.add_space(SP_4);
-                        ui.label(
-                            egui::RichText::new(clock::span(took))
-                                .font(mono(FS_2XS))
-                                .color(palette.faint),
-                        );
-                    }
-                    if failed {
-                        ui.add_space(SP_4);
-                        chip(ui, "failed", palette.danger, palette.danger_soft);
-                    }
-                    for mark in chips_for(call) {
-                        ui.add_space(SP_4);
-                        let (fg, bg) = chip_tone(mark.tone, palette);
-                        chip(ui, &mark.text, fg, bg);
-                    }
-                    if call.status == ToolCallStatus::Pending {
-                        ui.add_space(SP_4);
-                        chip(ui, "waiting", palette.muted, palette.selected);
-                    }
-                });
-            });
+        Head {
+            lead,
+            verb,
+            verb_color,
+            target: Some(Target::mono(target, palette)),
+            meta,
+            chevron: clickable.then_some(expanded),
+            nested,
         },
     );
     if response.clicked() && clickable {
@@ -688,7 +646,6 @@ pub fn render_tool(
     if more_click {
         ui_state.full_output.insert(ix);
     }
-    let _ = first_nested;
     (response, actions)
 }
 
@@ -995,36 +952,33 @@ pub fn render_group(
         Family::Explore => crate::icons::Icon::Search,
     };
 
-    let response = clickable_row(
+    let meta = if failed > 0 {
+        vec![Meta::Chip {
+            text: format!("{failed} failed"),
+            fg: palette.danger,
+            bg: palette.danger_soft,
+        }]
+    } else {
+        Vec::new()
+    };
+    let response = head::show(
         ui,
-        palette.hover,
-        egui::CornerRadius::same(R_SM as u8),
-        |ui| {
-            ui.spacing_mut().item_spacing.x = SP_4;
-            ui.add_space(SP_3);
-            ui.set_height(ROW_H);
-            if running {
-                spinner(ui, palette.accent);
+        Head {
+            lead: if running {
+                Lead::Spinner(palette.accent)
             } else {
-                icon(ui, group_icon, palette.muted);
-            }
-            ui.label(egui::RichText::new(label).size(FS_SM).color(if running {
+                Lead::Icon(group_icon, palette.muted)
+            },
+            verb: label.clone(),
+            verb_color: if running {
                 palette.ink_strong
             } else {
                 palette.ink
-            }));
-            crate::ui::transcript::tool_rows::trailing(ui, |ui| {
-                chevron(ui, expanded, palette.faint);
-                if failed > 0 {
-                    ui.add_space(SP_4);
-                    chip(
-                        ui,
-                        &format!("{failed} failed"),
-                        palette.danger,
-                        palette.danger_soft,
-                    );
-                }
-            });
+            },
+            target: None,
+            meta,
+            chevron: Some(expanded),
+            nested: false,
         },
     );
     if response.clicked() {
@@ -1065,74 +1019,61 @@ pub fn render_turn_end(
     let palette = Palette::active_of(ui.ctx());
     let mut actions = Vec::new();
     let (prompt, reply) = run_texts(session, ix);
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), TURN_END_H),
+        egui::Sense::hover(),
+    );
+    let mid = rect.center().y;
+    let body = egui::FontId::new(FS_2XS, family(FAMILY_BODY_REGULAR));
+    let mut x = rect.left();
+    let text = |ui: &egui::Ui, x: &mut f32, text: String| {
+        let galley = ui
+            .painter()
+            .layout_no_wrap(text, body.clone(), palette.faint);
+        let width = galley.size().x;
+        ui.painter().galley(
+            egui::pos2(*x, mid - galley.size().y / 2.0),
+            galley,
+            palette.faint,
+        );
+        *x += width + SP_4;
+    };
+    if let Some(end) = end {
+        text(ui, &mut x, clock::time_of_day(end.at));
+        text(ui, &mut x, "\u{b7}".to_owned());
+        text(ui, &mut x, clock::span(end.took));
+    }
+    if let Some(outcome) = outcome {
+        let (label, fg, bg) = match outcome {
+            Outcome::Interrupted => ("interrupted", palette.muted, palette.hover),
+            Outcome::Failed => ("failed", palette.danger, palette.danger_soft),
+        };
+        x = head::paint_chip(ui, egui::pos2(x, mid), label, fg, bg).right() + SP_4;
+    }
     let mut copy = false;
     let mut retry = false;
     let mut fork = false;
     let mut rewind = false;
-    let response = ui
-        .horizontal(|ui| {
-            ui.set_min_width(ui.available_width());
-            ui.spacing_mut().item_spacing.x = SP_4;
-            ui.set_min_height(TURN_END_H);
-            if let Some(end) = end {
-                ui.label(
-                    egui::RichText::new(clock::time_of_day(end.at))
-                        .size(FS_2XS)
-                        .color(palette.faint),
-                );
-                ui.label(
-                    egui::RichText::new("\u{b7}")
-                        .size(FS_2XS)
-                        .color(palette.faint),
-                );
-                ui.label(
-                    egui::RichText::new(clock::span(end.took))
-                        .font(mono(FS_2XS))
-                        .color(palette.faint),
-                );
-            }
-            if let Some(outcome) = outcome {
-                ui.add_space(SP_4);
-                match outcome {
-                    Outcome::Interrupted => {
-                        chip(ui, "interrupted", palette.muted, palette.selected);
-                    }
-                    Outcome::Failed => {
-                        chip(ui, "failed", palette.danger, palette.danger_soft);
-                    }
-                }
-            }
-            crate::ui::transcript::tool_rows::trailing(ui, |ui| {
-                if !pinned {
-                    ui.add_space(SP_1);
-                    if icon_button(ui, crate::icons::Icon::Undo2, "Rewind to here", palette)
-                        .clicked()
-                    {
-                        rewind = true;
-                    }
-                    ui.add_space(SP_1);
-                    if icon_button(ui, crate::icons::Icon::GitFork, "Fork from here", palette)
-                        .clicked()
-                    {
-                        fork = true;
-                    }
-                }
-                if prompt.is_some() {
-                    ui.add_space(SP_1);
-                    if icon_button(ui, crate::icons::Icon::RefreshCw, "Retry", palette).clicked() {
-                        retry = true;
-                    }
-                }
-                if !reply.is_empty() {
-                    ui.add_space(SP_1);
-                    if icon_button(ui, crate::icons::Icon::Copy, "Copy response", palette).clicked()
-                    {
-                        copy = true;
-                    }
-                }
-            });
-        })
-        .response;
+    if ui.rect_contains_pointer(rect) {
+        let mut button = |ui: &mut egui::Ui, glyph, tip: &str| {
+            let at = egui::Rect::from_min_size(
+                egui::pos2(x, mid - head::ICON_BTN / 2.0),
+                egui::vec2(head::ICON_BTN, head::ICON_BTN),
+            );
+            x += head::ICON_BTN + SP_1;
+            head::icon_button(ui, at, glyph, tip, palette).clicked()
+        };
+        if !reply.is_empty() {
+            copy = button(ui, crate::icons::Icon::Copy, "Copy response");
+        }
+        if prompt.is_some() {
+            retry = button(ui, crate::icons::Icon::RefreshCw, "Retry");
+        }
+        if !pinned {
+            fork = button(ui, crate::icons::Icon::GitFork, "Fork from here");
+            rewind = button(ui, crate::icons::Icon::Undo2, "Rewind to here");
+        }
+    }
     if copy {
         actions.push(RowAction::Copy(reply));
     }
@@ -1146,28 +1087,6 @@ pub fn render_turn_end(
         actions.push(RowAction::Rewind(ix));
     }
     (response, actions)
-}
-
-/// A quiet icon button: no frame, the hover fill painted behind it.
-fn icon_button(
-    ui: &mut egui::Ui,
-    glyph: crate::icons::Icon,
-    tooltip: &str,
-    palette: &Palette,
-) -> egui::Response {
-    let background = ui.painter().add(egui::Shape::Noop);
-    let response = ui.add(egui::Button::image(icon_image(glyph, palette.muted)));
-    if response.hovered() {
-        ui.painter().set(
-            background,
-            egui::Shape::rect_filled(
-                response.rect,
-                egui::CornerRadius::same(4),
-                palette.fill_hover,
-            ),
-        );
-    }
-    response.on_hover_text(tooltip)
 }
 
 /// The todos row: Updated todos, the one in progress or all done, the
@@ -1191,42 +1110,32 @@ pub fn render_todos(
         .map(|todo| todo.text.clone())
         .unwrap_or_default();
 
-    let response = clickable_row(
+    let (fg, bg) = if complete {
+        (palette.ok, palette.ok_soft)
+    } else {
+        (palette.muted, palette.hover)
+    };
+    let response = head::show(
         ui,
-        palette.hover,
-        egui::CornerRadius::same(R_SM as u8),
-        |ui| {
-            ui.spacing_mut().item_spacing.x = SP_4;
-            ui.add_space(SP_3);
-            ui.set_height(ROW_H);
-            icon(ui, crate::icons::Icon::ListTodo, palette.muted);
-            ui.label(
-                egui::RichText::new("Updated todos")
-                    .size(FS_SM)
-                    .color(palette.ink),
-            );
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(if complete {
-                        "all done".to_owned()
-                    } else {
-                        current
-                    })
-                    .font(mono(DETAIL_SIZE))
-                    .color(palette.muted),
-                )
-                .truncate(),
-            );
-            crate::ui::transcript::tool_rows::trailing(ui, |ui| {
-                chevron(ui, expanded, palette.faint);
-                ui.add_space(SP_4);
-                let (fg, bg) = if complete {
-                    (palette.ok, palette.ok_soft)
+        Head {
+            lead: Lead::Icon(crate::icons::Icon::ListTodo, palette.muted),
+            verb: "Updated todos".to_owned(),
+            verb_color: palette.ink,
+            target: Some(Target::mono(
+                if complete {
+                    "all done".to_owned()
                 } else {
-                    (palette.muted, palette.selected)
-                };
-                chip(ui, &format!("{done}/{}", todos.len()), fg, bg);
-            });
+                    current
+                },
+                palette,
+            )),
+            meta: vec![Meta::Chip {
+                text: format!("{done}/{}", todos.len()),
+                fg,
+                bg,
+            }],
+            chevron: Some(expanded),
+            nested: false,
         },
     );
     if response.clicked() {
@@ -1847,8 +1756,18 @@ fn agent_card(
                 crate::ui::transcript::tool_rows::trailing(ui, |ui| {
                     if facts.stoppable {
                         ui.add_space(SP_4);
-                        if icon_button(ui, crate::icons::Icon::Square, "Stop agent", palette)
-                            .clicked()
+                        let (at, _) = ui.allocate_exact_size(
+                            egui::vec2(head::ICON_BTN, head::ICON_BTN),
+                            egui::Sense::hover(),
+                        );
+                        if head::icon_button(
+                            ui,
+                            at,
+                            crate::icons::Icon::Square,
+                            "Stop agent",
+                            palette,
+                        )
+                        .clicked()
                         {
                             stop = true;
                         }

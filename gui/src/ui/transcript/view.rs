@@ -27,7 +27,7 @@ use super::text_rows::{self, UserAction};
 use super::tool_rows::{self, PlanRevise, RowAction};
 use crate::reveal::{self, Reveal};
 use crate::store::Store;
-use crate::theme::Palette;
+use crate::theme::{CONTENT_W, Palette, SP_8};
 use crate::timing::SessionTimes;
 
 /// The vim cursor's rail: how far left of the column it sits.
@@ -219,9 +219,10 @@ impl TranscriptView {
             born,
         };
 
-        // Measure the rows whose signature moved, laid out offscreen at
-        // the column's width.
-        list.sync(&signatures, |ix| measure_row(&mut *ui, rows, ix, &mut ctx));
+        let column_w = (ui.max_rect().width() - 2.0 * SP_8).clamp(0.0, CONTENT_W);
+        list.sync(&signatures, |ix| {
+            measure_row(&mut *ui, column_w, rows, ix, &mut ctx)
+        });
 
         let viewport = ui.available_height().max(1.0);
         let content = list.content_height();
@@ -241,7 +242,8 @@ impl TranscriptView {
 
         let mut area = egui::ScrollArea::vertical()
             .id_salt("transcript-rows")
-            .auto_shrink([false, false]);
+            .auto_shrink([false, false])
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden);
         if let Some(target) = target {
             area = area.vertical_scroll_offset(target);
         }
@@ -252,8 +254,9 @@ impl TranscriptView {
                 return;
             }
             let top = ui.max_rect().top();
+            let mid = ui.max_rect().center().x;
             let rect = egui::Rect::from_x_y_ranges(
-                ui.max_rect().x_range(),
+                mid - column_w / 2.0..=mid + column_w / 2.0,
                 top + list.offset_of(first)..=top + list.offset_of(last),
             );
             ui.scope_builder(
@@ -615,16 +618,20 @@ fn row_tint(find: &FindMarks, key: RowKey) -> Option<egui::Color32> {
 /// follow would park the viewport past every row but the last.
 const MEASURE_MAX_H: f32 = 20_000.0;
 
-fn measure_row(ui: &mut egui::Ui, rows: &[Row], ix: usize, ctx: &mut RowCtx<'_>) -> f32 {
+fn measure_row(
+    ui: &mut egui::Ui,
+    width: f32,
+    rows: &[Row],
+    ix: usize,
+    ctx: &mut RowCtx<'_>,
+) -> f32 {
     let Some(row) = rows.get(ix) else {
         return 0.0;
     };
     let prev = ix.checked_sub(1).map(|p| &rows[p]);
     let last = ix + 1 == rows.len();
-    let rect = egui::Rect::from_min_size(
-        egui::pos2(-1.0e6, -1.0e6),
-        egui::vec2(ui.available_width(), MEASURE_MAX_H),
-    );
+    let rect =
+        egui::Rect::from_min_size(egui::pos2(-1.0e6, -1.0e6), egui::vec2(width, MEASURE_MAX_H));
     // A root-level ui, not a child of the panel hierarchy: a child
     // whose rect sits far outside its ancestors measures wrong (the
     // row comes back the size of the offer plus its content), while
@@ -641,7 +648,13 @@ fn measure_row(ui: &mut egui::Ui, rows: &[Row], ix: usize, ctx: &mut RowCtx<'_>)
     let top = child.cursor().top();
     let mut actions = Vec::new();
     row_cell(&mut child, row, prev, last, ctx, &mut actions);
-    child.min_rect().bottom() - top
+    let measured = child.min_rect().bottom() - top;
+    if measured.is_finite() {
+        measured
+    } else {
+        eprintln!("kage: row {ix} measured {measured}: {row:?}");
+        0.0
+    }
 }
 
 /// Draws one row and returns the height it took, margins included.
@@ -668,11 +681,17 @@ fn row_cell(
     ctx: &mut RowCtx<'_>,
     events: &mut Vec<RowAction>,
 ) -> egui::Response {
+    let spacing = ui.spacing().item_spacing.y;
+    ui.spacing_mut().item_spacing.y = 0.0;
     ui.add_space(gap(prev, row));
-    let inner = egui::Frame::NONE.show(ui, |ui| render_row(ui, row, ctx, events));
+    let inner = egui::Frame::NONE.show(ui, |ui| {
+        ui.spacing_mut().item_spacing.y = spacing;
+        render_row(ui, row, ctx, events)
+    });
     if last {
         ui.add_space(margins(row).1);
     }
+    ui.spacing_mut().item_spacing.y = spacing;
     inner.response
 }
 
@@ -718,20 +737,19 @@ fn render_row(
             {
                 let palette = Palette::active_of(ui.ctx());
                 let mut opened = None;
-                let mut draw = |ui: &mut egui::Ui, n: usize, report: &kage_client::agent_text::Report| {
-                    if crate::ui::agents::report_card(ui, n, report, palette) {
-                        opened = Some(report.session.clone());
-                    }
-                };
-                let (response, actions) = text_rows::render_delivered(
-                    ui,
-                    session,
-                    *ix,
-                    words,
-                    &parts,
-                    Some(&mut draw),
+                let mut draw =
+                    |ui: &mut egui::Ui, n: usize, report: &kage_client::agent_text::Report| {
+                        if crate::ui::agents::report_card(ui, n, report, palette) {
+                            opened = Some(report.session.clone());
+                        }
+                    };
+                let (response, actions) =
+                    text_rows::render_delivered(ui, words, &parts, Some(&mut draw), !*pinned);
+                events.extend(
+                    actions
+                        .into_iter()
+                        .map(|action| user_row_action(*ix, action)),
                 );
-                events.extend(actions.into_iter().map(user_row_action));
                 if let Some(id) = opened {
                     events.push(RowAction::OpenAgent(id));
                 }
@@ -740,8 +758,12 @@ fn render_row(
             Some(TranscriptItem::User { steered, .. }) => {
                 let attached = text_rows::attachments(session, *ix);
                 let (response, actions) =
-                    text_rows::render_user(ui, session, *ix, text, &attached, *steered);
-                events.extend(actions.into_iter().map(user_row_action));
+                    text_rows::render_user(ui, text, &attached, *steered, !*pinned);
+                events.extend(
+                    actions
+                        .into_iter()
+                        .map(|action| user_row_action(*ix, action)),
+                );
                 response
             }
             _ => blank_row(ui),
@@ -755,7 +777,6 @@ fn render_row(
         Row::Thinking { ix, live, expanded } => match session.items.get(*ix) {
             Some(TranscriptItem::Thinking { text, .. }) => text_rows::render_thinking(
                 ui,
-                *ix,
                 shown(revealed, *ix, text),
                 *live,
                 *expanded,
@@ -865,10 +886,12 @@ fn render_row(
 
 /// Carries out the actions a user row raised: the copy goes to the
 /// clipboard now, and the edit asks for the composer E05 brings.
-fn user_row_action(action: UserAction) -> RowAction {
+fn user_row_action(ix: usize, action: UserAction) -> RowAction {
     match action {
         UserAction::Copy(text) => RowAction::Copy(text),
         UserAction::Edit(text) => RowAction::Edit(text),
+        UserAction::Fork => RowAction::Fork(Some(ix)),
+        UserAction::Rewind => RowAction::Rewind(ix),
     }
 }
 
