@@ -49,7 +49,10 @@ pub fn show(ui: &mut egui::Ui, store: &Store, sidebar_hidden: bool, events: &mut
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
             ui.spacing_mut().item_spacing.x = SP_4;
-            if sidebar_hidden && icon_button(ui, "show-sidebar", Icon::PanelLeft, palette).clicked()
+            if sidebar_hidden
+                && icon_button(ui, "show-sidebar", Icon::PanelLeft, palette)
+                    .on_hover_text("Show sidebar (Ctrl \\)")
+                    .clicked()
             {
                 events.push(TopbarEvent::ShowSidebar);
             }
@@ -79,7 +82,10 @@ pub fn show(ui: &mut egui::Ui, store: &Store, sidebar_hidden: bool, events: &mut
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if icon_button(ui, "toggle-workbench", Icon::PanelRight, palette).clicked() {
+                if icon_button(ui, "toggle-workbench", Icon::PanelRight, palette)
+                    .on_hover_text("Workbench (Ctrl B)")
+                    .clicked()
+                {
                     events.push(TopbarEvent::ToggleWorkbench);
                 }
                 if let Some(session) = store.active_session() {
@@ -251,7 +257,9 @@ fn session_menu(
             SessionAction::Archive,
             events,
         );
-    });
+    })
+    .0
+    .on_hover_text("Session actions");
 }
 
 /// One row of the session menu.

@@ -9,8 +9,8 @@
 use crate::icons::Icon;
 use crate::store::Store;
 use crate::theme::{
-    FAMILY_BODY_MEDIUM, FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_2XS, FS_XS, Palette, R_FULL,
-    R_LG, R_MD, SP_2, SP_4, family,
+    FAMILY_BODY_MEDIUM, FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_2XS, FS_SM, FS_XS, Palette,
+    R_FULL, R_LG, R_MD, SP_2, SP_4, family,
 };
 use crate::ui::pickers;
 
@@ -22,6 +22,15 @@ const MENU_W: f32 = 440.0;
 
 /// The model picker's surface width.
 const MODEL_W: f32 = 400.0;
+
+/// The model picker's card width, as the reference draws it.
+const PICKER_W: f32 = 380.0;
+
+/// The mode picker's card width, as the reference draws it.
+const MODE_PICKER_W: f32 = 440.0;
+
+/// The model list's tallest scroll, as the reference caps it.
+const PICKER_LIST_H: f32 = 360.0;
 
 /// Which picker popover shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,6 +62,8 @@ pub enum ToolbarEvent {
     Compact,
     /// Send or queue the draft.
     Submit,
+    /// Open the providers section of settings.
+    OpenProviders,
 }
 
 /// The toolbar's state: which popover is open and each picker's
@@ -308,6 +319,25 @@ fn section_label(ui: &mut egui::Ui, text: &str, palette: &Palette) {
     ui.add_space(SP_2 / 2.0);
 }
 
+/// A picker section's label: the small caps row, as the reference
+/// picker groups its list.
+fn pop_label(ui: &mut egui::Ui, text: &str, palette: &Palette) {
+    let text = egui::RichText::new(text.to_uppercase())
+        .size(FS_2XS)
+        .family(family(FAMILY_BODY_SEMIBOLD))
+        .color(palette.faint);
+    egui::Frame::NONE
+        .inner_margin(egui::Margin {
+            left: 9,
+            right: 9,
+            top: 6,
+            bottom: 3,
+        })
+        .show(ui, |ui| {
+            ui.label(text);
+        });
+}
+
 /// The on/off chip the mode rows carry.
 fn onoff(ui: &mut egui::Ui, on: bool, palette: &Palette) {
     let (bg, fg) = if on {
@@ -373,7 +403,6 @@ pub fn show(
     let mut events = Vec::new();
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing = egui::vec2(SP_2, 0.0);
-        ui.add_space(SP_4);
         plus_button(ui, toolbar, store, &mut events);
         mode_button(ui, toolbar, store, &mut events);
         plan_chip(ui, store, &mut events);
@@ -429,7 +458,7 @@ fn plus_button(
         .collapsible(false)
         .resizable(false)
         .fixed_pos(response.rect.left_bottom() + egui::vec2(0.0, SP_2))
-        .fixed_size(egui::vec2(MENU_W, 0.0))
+        .min_width(MENU_W)
         .order(egui::Order::Foreground)
         .frame(egui::Frame::NONE)
         .show(ui.ctx(), |ui| {
@@ -644,14 +673,6 @@ fn dimmed_row(
     let _ = response.on_hover_text(reason);
 }
 
-/// The thinking rows the model picker lists, from the active session.
-fn thinking_rows_for(store: &Store) -> Vec<kage_client::wire::SessionConfigSelectOption> {
-    store
-        .active_session()
-        .map(|session| pickers::thinking_rows(session, ""))
-        .unwrap_or_default()
-}
-
 /// The permission mode pill, listing the advertised values with the
 /// active one marked.
 fn mode_button(
@@ -682,6 +703,7 @@ fn mode_button(
         );
         crate::icons::icon(ui, Icon::ChevronDown, 12.0, palette.faint);
     });
+    let response = response.on_hover_text("Permission mode (Shift+Tab cycles)");
     if response.clicked() {
         toolbar.toggle_picker(Picker::Mode);
     }
@@ -696,16 +718,15 @@ fn mode_button(
         .collapsible(false)
         .resizable(false)
         .fixed_pos(response.rect.left_bottom() + egui::vec2(0.0, SP_2))
-        .fixed_size(egui::vec2(MODEL_W, 0.0))
+        .min_width(MODE_PICKER_W)
         .order(egui::Order::Foreground)
         .frame(egui::Frame::NONE)
         .show(ui.ctx(), |ui| {
-            surface(ui, palette, MODEL_W, |ui| {
-                ui.set_max_height(360.0);
+            surface(ui, palette, MODE_PICKER_W, |ui| {
                 let query = ui.add(
                     egui::TextEdit::singleline(toolbar.mode_query())
                         .hint_text("Search modes")
-                        .desired_width(MODEL_W - 16.0)
+                        .desired_width(MODE_PICKER_W - 16.0)
                         .id(egui::Id::new("mode-picker-query")),
                 );
                 if query.gained_focus() {
@@ -720,8 +741,10 @@ fn mode_button(
                 let highlight = toolbar.mode_highlight();
                 for (index, row) in rows.iter().enumerate() {
                     let selected = index == highlight;
+                    let row_id = egui::Id::new("mode-row").with(row.value.as_str());
+                    let hovered = ui.ctx().read_response(row_id).is_some_and(|r| r.hovered());
                     let inner = egui::Frame::NONE
-                        .fill(if selected {
+                        .fill(if selected || hovered {
                             palette.selected
                         } else {
                             egui::Color32::TRANSPARENT
@@ -736,8 +759,8 @@ fn mode_button(
                                 crate::icons::icon(ui, pickers::mode_icon(&row.value), 14.0, tint);
                                 ui.vertical(|ui| {
                                     let name = egui::RichText::new(row.name.clone())
-                                        .size(FS_XS + 1.0)
-                                        .color(palette.ink);
+                                        .size(FS_SM)
+                                        .color(tone.unwrap_or(palette.ink));
                                     ui.add_sized(
                                         [ui.available_width() - 60.0, 18.0],
                                         egui::Label::new(name).selectable(false),
@@ -773,20 +796,16 @@ fn mode_button(
                                     );
                                 }
                                 if row.value == active {
-                                    ui.label(
-                                        egui::RichText::new("active")
-                                            .size(FS_2XS)
-                                            .color(palette.accent),
-                                    );
+                                    crate::icons::icon(ui, Icon::Check, 14.0, palette.accent);
                                 }
                             })
                             .response
                         })
                         .inner;
-                    let rect = inner.rect;
-                    let id = egui::Id::new("mode-row").with(rect.top().to_bits());
-                    let response = ui.interact(rect, id, egui::Sense::click());
-                    if response.clicked() {
+                    if ui
+                        .interact(inner.rect, row_id, egui::Sense::click())
+                        .clicked()
+                    {
                         store.set_permission(&row.value);
                         toolbar.close_pickers();
                     }
@@ -900,7 +919,7 @@ fn model_button(
     ui: &mut egui::Ui,
     toolbar: &mut Toolbar,
     store: &mut Store,
-    _events: &mut Vec<ToolbarEvent>,
+    events: &mut Vec<ToolbarEvent>,
 ) -> Option<()> {
     let palette = Palette::active_of(ui.ctx());
     let open = toolbar.picker() == Some(Picker::Model);
@@ -944,26 +963,20 @@ fn model_button(
         return Some(());
     }
     let starred: Vec<String> = store.prefs().starred_models.iter().cloned().collect();
+    // The picker card: the search row over a scrolling list, the
+    // thinking level and its notes under a separator, as the reference
+    // picker stacks them.
     egui::Window::new("model-picker")
         .title_bar(false)
         .collapsible(false)
         .resizable(false)
         .fixed_pos(response.rect.left_bottom() + egui::vec2(0.0, SP_2))
-        .fixed_size(egui::vec2(MODEL_W + 80.0, 0.0))
+        .min_width(PICKER_W)
         .order(egui::Order::Foreground)
         .frame(egui::Frame::NONE)
         .show(ui.ctx(), |ui| {
-            surface(ui, palette, MODEL_W + 80.0, |ui| {
-                ui.set_max_height(420.0);
-                let query = ui.add(
-                    egui::TextEdit::singleline(toolbar.model_query())
-                        .hint_text("Search models")
-                        .desired_width(MODEL_W + 60.0)
-                        .id(egui::Id::new("model-picker-query")),
-                );
-                if query.gained_focus() {
-                    toolbar.model_query().clear();
-                }
+            surface(ui, palette, PICKER_W, |ui| {
+                let catalog = store.models().is_some();
                 let fallback = store
                     .composer_option("model")
                     .map(|option| option.options)
@@ -976,134 +989,403 @@ fn model_button(
                 );
                 let rows = pickers::flat_rows(&sections);
                 let total = rows.len();
-                let highlight = toolbar.model_highlight();
-                for section in &sections {
-                    section_label(ui, &section.label, palette);
-                    for row in &section.rows {
-                        let index = rows
-                            .iter()
-                            .position(|candidate| candidate.id == row.id)
-                            .unwrap_or(0);
-                        let selected = index == highlight;
-                        let inner = egui::Frame::NONE
-                            .fill(if selected {
-                                palette.selected
-                            } else {
-                                egui::Color32::TRANSPARENT
-                            })
+
+                // The keys the reference picker answers, while the
+                // search field holds focus: the highlight steps, Enter
+                // chooses, Escape leaves.
+                let (up, down, run, leave) = ui.input(|i| {
+                    (
+                        i.key_pressed(egui::Key::ArrowUp),
+                        i.key_pressed(egui::Key::ArrowDown),
+                        i.key_pressed(egui::Key::Enter),
+                        i.key_pressed(egui::Key::Escape),
+                    )
+                });
+                if leave {
+                    toolbar.close_pickers();
+                    return;
+                }
+                if up {
+                    toolbar.step_model(-1, total);
+                }
+                if down {
+                    toolbar.step_model(1, total);
+                }
+                let highlight = if total == 0 {
+                    0
+                } else {
+                    toolbar.model_highlight().min(total - 1)
+                };
+                if run
+                    && total > 0
+                    && let Some(row) = rows.get(highlight)
+                {
+                    store.set_option("model", &row.id);
+                    toolbar.close_pickers();
+                }
+
+                // The search row: the lens over a borderless field, a
+                // separator under both.
+                let search = egui::Frame::NONE
+                    .inner_margin(egui::Margin {
+                        left: 12,
+                        right: 12,
+                        top: 10,
+                        bottom: 10,
+                    })
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 8.0;
+                            crate::icons::icon(ui, Icon::Search, 14.0, palette.faint);
+                            ui.add(
+                                egui::TextEdit::singleline(toolbar.model_query())
+                                    .hint_text("Search models...")
+                                    .desired_width(ui.available_width())
+                                    .frame(egui::Frame::NONE)
+                                    .id(egui::Id::new("model-picker-query")),
+                            )
+                        })
+                        .inner
+                    });
+                if search.inner.gained_focus() {
+                    toolbar.model_query().clear();
+                }
+                let line = search.response.rect;
+                ui.painter().hline(
+                    line.left()..=line.right(),
+                    line.bottom(),
+                    egui::Stroke::new(1.0, palette.subtle),
+                );
+
+                // The list scrolls; the card around it keeps its size.
+                egui::ScrollArea::vertical()
+                    .max_height(PICKER_LIST_H)
+                    .show(ui, |ui| {
+                        egui::Frame::NONE
+                            .inner_margin(egui::Margin::same(5))
+                            .show(ui, |ui| {
+                                let mut index = 0;
+                                for section in &sections {
+                                    pop_label(ui, &section.label, palette);
+                                    for row in &section.rows {
+                                        let highlighted = index == highlight;
+                                        match model_row(ui, row, highlighted, store, palette) {
+                                            RowAsk::Star => store.toggle_star(&row.id),
+                                            RowAsk::Choose => {
+                                                store.set_option("model", &row.id);
+                                                toolbar.close_pickers();
+                                            }
+                                            RowAsk::None => {}
+                                        }
+                                        index += 1;
+                                    }
+                                }
+                                if index == 0 {
+                                    egui::Frame::NONE.inner_margin(egui::Margin::same(14)).show(
+                                        ui,
+                                        |ui| {
+                                            ui.label(
+                                                egui::RichText::new(if catalog {
+                                                    "No models match"
+                                                } else {
+                                                    "Loading models..."
+                                                })
+                                                .size(FS_SM)
+                                                .color(palette.faint),
+                                            );
+                                        },
+                                    );
+                                }
+                            });
+                    });
+
+                // The foot: thinking level, the cache note, the
+                // providers door, under a separator.
+                let foot_top = ui.cursor().top();
+                let foot = egui::Frame::NONE
+                    .inner_margin(egui::Margin::same(12))
+                    .show(ui, |ui| {
+                        ui.spacing_mut().item_spacing.y = 8.0;
+                        if let Some(thinking) = store.composer_option("thinking") {
+                            thinking_row(ui, store, palette, thinking.current_value.as_str());
+                        }
+                        ui.label(
+                            egui::RichText::new(
+                                "Switching the model or thinking level mid-session \
+                                 invalidates the prompt cache.",
+                            )
+                            .size(FS_2XS)
+                            .color(palette.faint),
+                        );
+                        let providers = egui::Frame::NONE
+                            .fill(palette.fill)
                             .corner_radius(egui::CornerRadius::same(R_MD as u8))
-                            .inner_margin(egui::Margin::symmetric(9, 7))
+                            .inner_margin(egui::Margin::symmetric(9, 5))
                             .show(ui, |ui| {
                                 ui.horizontal(|ui| {
-                                    ui.spacing_mut().item_spacing.x = 10.0;
-                                    let tile = pickers::provider_tile(&row.provider);
-                                    egui::Frame::NONE
-                                        .fill(palette.fill)
-                                        .corner_radius(egui::CornerRadius::same(6))
-                                        .inner_margin(egui::Margin::symmetric(4, 3))
-                                        .show(ui, |ui| {
-                                            ui.label(
-                                                egui::RichText::new(tile)
-                                                    .size(10.0)
-                                                    .family(family(FAMILY_MONO_REGULAR))
-                                                    .color(palette.muted),
-                                            );
-                                        });
-                                    ui.vertical(|ui| {
-                                        ui.horizontal(|ui| {
-                                            ui.label(
-                                                egui::RichText::new(row.name.clone())
-                                                    .size(FS_XS + 1.0)
-                                                    .color(palette.ink),
-                                            );
-                                            if let Some(context) = row.context {
-                                                chip(ui, &pickers::window_size(context), palette);
-                                            }
-                                            if row.images {
-                                                chip(ui, "images", palette);
-                                            }
-                                        });
-                                        ui.label(
-                                            egui::RichText::new(row.model.clone())
-                                                .size(11.5)
-                                                .family(family(FAMILY_MONO_REGULAR))
-                                                .color(palette.faint),
-                                        );
-                                    });
-                                    if let Some((input, output)) = row.cost {
-                                        ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
-                                            |ui| {
-                                                ui.label(
-                                                    egui::RichText::new(format!(
-                                                        "${input:.1}/${output:.1}"
-                                                    ))
-                                                    .size(10.5)
-                                                    .family(family(FAMILY_MONO_REGULAR))
-                                                    .color(palette.faint),
-                                                );
-                                            },
-                                        );
-                                    }
-                                })
-                                .response
-                            })
-                            .inner;
-                        let rect = inner.rect;
-                        let id = egui::Id::new("model-row").with(rect.top().to_bits());
-                        let response = ui.interact(rect, id, egui::Sense::click());
-                        if response.clicked() {
-                            store.set_option("model", &row.id);
-                            toolbar.close_pickers();
-                        }
-                    }
-                }
-                if total == 0 {
-                    ui.label(
-                        egui::RichText::new("no models match")
-                            .size(FS_XS)
-                            .color(palette.faint),
-                    );
-                }
-                if let Some(thinking) = store.composer_option("thinking") {
-                    section_label(ui, "Thinking", palette);
-                    let levels = thinking_rows_for(store);
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = SP_2;
-                        for level in &levels {
-                            let selected = level.value == thinking.current_value;
-                            let response = egui::Frame::NONE
-                                .fill(if selected {
-                                    palette.accent_soft
-                                } else {
-                                    palette.fill
-                                })
-                                .corner_radius(egui::CornerRadius::same(R_FULL as u8))
-                                .inner_margin(egui::Margin::symmetric(9, 4))
-                                .show(ui, |ui| {
+                                    ui.spacing_mut().item_spacing.x = 6.0;
+                                    crate::icons::icon(ui, Icon::Settings, 12.0, palette.muted);
                                     ui.label(
-                                        egui::RichText::new(pickers::level_label(level))
+                                        egui::RichText::new("Manage providers")
                                             .size(FS_XS)
-                                            .color(if selected {
-                                                palette.accent
-                                            } else {
-                                                palette.muted
-                                            }),
+                                            .color(palette.ink),
                                     );
-                                })
-                                .response;
-                            let rect = response.rect;
-                            let id = egui::Id::new("thinking-row").with(rect.top().to_bits());
-                            let clicked = ui.interact(rect, id, egui::Sense::click()).clicked();
-                            if clicked {
-                                store.set_option("thinking", &level.value);
-                            }
+                                });
+                            })
+                            .response;
+                        let id = egui::Id::new("model-providers");
+                        if ui
+                            .interact(providers.rect, id, egui::Sense::click())
+                            .clicked()
+                        {
+                            toolbar.close_pickers();
+                            events.push(ToolbarEvent::OpenProviders);
                         }
                     });
-                }
+                let line = foot.response.rect;
+                ui.painter().hline(
+                    line.left()..=line.right(),
+                    foot_top,
+                    egui::Stroke::new(1.0, palette.subtle),
+                );
             });
         });
     Some(())
+}
+
+/// One catalog row: the provider tile, the name over its slug, the
+/// context and cost chips and the star, as the reference row carries
+/// them. The whole row chooses; the star toggles on its own.
+fn model_row(
+    ui: &mut egui::Ui,
+    row: &pickers::ModelRow,
+    highlighted: bool,
+    store: &Store,
+    palette: &Palette,
+) -> RowAsk {
+    let starred = store.prefs().starred_models.contains(&row.id);
+    let current = store
+        .composer_option("model")
+        .is_some_and(|option| option.current_value == row.id);
+    let row_id = egui::Id::new("model-row").with(row.id.as_str());
+    let hovered = ui.ctx().read_response(row_id).is_some_and(|r| r.hovered());
+    let mut star_asked = false;
+    let frame = egui::Frame::NONE
+        .fill(if highlighted || hovered {
+            palette.selected
+        } else {
+            egui::Color32::TRANSPARENT
+        })
+        .corner_radius(egui::CornerRadius::same(R_MD as u8))
+        .inner_margin(egui::Margin {
+            left: 9,
+            right: 9,
+            top: 7,
+            bottom: 7,
+        })
+        .show(ui, |ui| {
+            // The row spans the list's whole width.
+            ui.set_min_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 10.0;
+                // The chips' width, measured so the name over the slug
+                // takes everything the chips leave, the way the
+                // reference's flex row shares the row.
+                let mut right_w = 16.0_f32;
+                if let Some((input, output)) = row.cost {
+                    right_w += 6.0 + chip_text_w(ui, &format!("${input:.1}/${output:.1}"));
+                }
+                if let Some(context) = row.context {
+                    right_w += 6.0 + chip_text_w(ui, &pickers::window_size(context));
+                }
+                let middle_w = (ui.available_width() - 22.0 - 20.0 - right_w).max(80.0);
+                // The provider tile: a fixed 22 square, the letters
+                // centered in it.
+                ui.allocate_ui_with_layout(
+                    egui::vec2(22.0, 22.0),
+                    egui::Layout::centered_and_justified(egui::Direction::LeftToRight),
+                    |ui| {
+                        egui::Frame::NONE
+                            .fill(palette.fill)
+                            .corner_radius(egui::CornerRadius::same(6))
+                            .show(ui, |ui| {
+                                ui.label(
+                                    egui::RichText::new(pickers::provider_tile(&row.provider))
+                                        .size(10.0)
+                                        .family(family(FAMILY_MONO_REGULAR))
+                                        .color(palette.muted),
+                                );
+                            });
+                    },
+                );
+                // The name over the slug, the block that truncates.
+                let mut detail = row.model.clone();
+                if row.images {
+                    detail.push_str(" \u{b7} reads images");
+                }
+                ui.allocate_ui_with_layout(
+                    egui::vec2(middle_w, 36.0),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            ui.label(
+                                egui::RichText::new(row.name.clone())
+                                    .size(FS_SM)
+                                    .color(palette.ink),
+                            );
+                            if current {
+                                ui.label(
+                                    egui::RichText::new("\u{2713}")
+                                        .size(FS_SM)
+                                        .color(palette.accent),
+                                );
+                            }
+                        });
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(detail)
+                                    .size(FS_2XS)
+                                    .family(family(FAMILY_MONO_REGULAR))
+                                    .color(palette.faint),
+                            )
+                            .truncate(),
+                        );
+                    },
+                );
+                // The star, the cost and the context window, flush
+                // with the row's right edge.
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    let star = egui::Frame::NONE
+                        .inner_margin(egui::Margin::same(2))
+                        .corner_radius(egui::CornerRadius::same(4))
+                        .show(ui, |ui| {
+                            crate::icons::icon(
+                                ui,
+                                if starred { Icon::StarFill } else { Icon::Star },
+                                12.0,
+                                if starred { palette.warn } else { palette.ghost },
+                            );
+                        })
+                        .response;
+                    let star_id = egui::Id::new("model-star").with(row.id.as_str());
+                    if ui
+                        .interact(star.rect, star_id, egui::Sense::click())
+                        .clicked()
+                    {
+                        star_asked = true;
+                    }
+                    if let Some((input, output)) = row.cost {
+                        ui.label(
+                            egui::RichText::new(format!("${input:.1}/${output:.1}"))
+                                .size(FS_2XS)
+                                .family(family(FAMILY_MONO_REGULAR))
+                                .color(palette.faint),
+                        );
+                    }
+                    if let Some(context) = row.context {
+                        chip(ui, &pickers::window_size(context), palette);
+                    }
+                });
+            });
+        })
+        .response;
+    if star_asked {
+        return RowAsk::Star;
+    }
+    if ui
+        .interact(frame.rect, row_id, egui::Sense::click())
+        .clicked()
+    {
+        return RowAsk::Choose;
+    }
+    RowAsk::None
+}
+
+/// The painted width of a chip's text, its padding aside, so row
+/// layouts can reserve for it.
+fn chip_text_w(ui: &egui::Ui, text: &str) -> f32 {
+    let galley = ui.painter().layout_no_wrap(
+        text.to_owned(),
+        egui::FontId::new(10.5, family(FAMILY_MONO_REGULAR)),
+        egui::Color32::WHITE,
+    );
+    galley.size().x + 12.0
+}
+
+/// What one row's click asked for: the star alone, the whole row, or
+/// nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RowAsk {
+    /// The star was clicked: toggle it, keep the picker open.
+    Star,
+    /// The row was clicked: choose the model, close the picker.
+    Choose,
+    /// Nothing was clicked.
+    None,
+}
+
+/// The thinking level row: the bulb over its label, then one segment
+/// per level, the ones the chosen model does not take dimmed, as the
+/// reference foot draws them.
+fn thinking_row(ui: &mut egui::Ui, store: &mut Store, palette: &Palette, current: &str) {
+    let Some(option) = store.composer_option("thinking") else {
+        return;
+    };
+    let takes = store
+        .composer_option("model")
+        .and_then(|option| pickers::model_levels(store, &option.current_value));
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        crate::icons::icon(ui, Icon::Lightbulb, 12.0, palette.muted);
+        ui.label(
+            egui::RichText::new("Thinking level")
+                .size(FS_XS)
+                .color(palette.muted),
+        );
+    });
+    let count = option.options.len().max(1);
+    let seg_w = (ui.available_width() - 4.0 - (count as f32 - 1.0) * 2.0) / count as f32;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        for level in &option.options {
+            let on = level.value == current;
+            let enabled = level.value == "default"
+                || takes.as_ref().is_none_or(|levels| {
+                    levels.contains(&level.value) || (levels.is_empty() && level.value == "off")
+                });
+            let ink = if on {
+                palette.ink_strong
+            } else {
+                palette.muted
+            };
+            let ink = if enabled {
+                ink
+            } else {
+                ink.gamma_multiply(0.35)
+            };
+            let seg = egui::Frame::NONE
+                .fill(if on { palette.raised } else { palette.fill })
+                .corner_radius(egui::CornerRadius::same(6))
+                .show(ui, |ui| {
+                    ui.set_min_width(seg_w);
+                    ui.set_min_height(24.0);
+                    ui.centered_and_justified(|ui| {
+                        ui.label(
+                            egui::RichText::new(pickers::level_label(level))
+                                .size(FS_XS)
+                                .color(ink),
+                        );
+                    });
+                })
+                .response;
+            let id = egui::Id::new("thinking-segment").with(level.value.as_str());
+            if enabled && !on && ui.interact(seg.rect, id, egui::Sense::click()).clicked() {
+                store.set_option("thinking", &level.value);
+            }
+        }
+    });
 }
 
 /// Compact, offered once the context passes the 80 percent the engine
@@ -1213,7 +1495,7 @@ fn context_ring(
         .collapsible(false)
         .resizable(false)
         .fixed_pos(response.rect.left_bottom() + egui::vec2(0.0, SP_2))
-        .fixed_size(egui::vec2(MODEL_W, 0.0))
+        .min_width(MODEL_W)
         .order(egui::Order::Foreground)
         .frame(egui::Frame::NONE)
         .show(ui.ctx(), |ui| {
