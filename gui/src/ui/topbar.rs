@@ -11,11 +11,12 @@ use crate::ui::sidebar::project_name;
 
 /// What the top bar asked for; the shell carries it out after its
 /// panels are drawn.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TopbarEvent {
     ShowSidebar,
     ToggleWorkbench,
     Session(SessionAction),
+    Rename(String),
 }
 
 /// The session actions of the menu at the top bar's end.
@@ -28,6 +29,15 @@ pub enum SessionAction {
     CopyId,
     Close,
     Archive,
+}
+
+const RENAME_DRAFT: &str = "topbar-rename-draft";
+const RENAME_INPUT: &str = "topbar-rename-input";
+
+fn start_rename(ui: &mut egui::Ui, title: String) {
+    ui.data_mut(|data| data.insert_temp(egui::Id::new(RENAME_DRAFT), title));
+    ui.ctx()
+        .memory_mut(|memory| memory.request_focus(egui::Id::new(RENAME_INPUT)));
 }
 
 /// Draws the top bar over the chat column. `sidebar_hidden` shows the
@@ -50,14 +60,8 @@ pub fn show(ui: &mut egui::Ui, store: &Store, sidebar_hidden: bool, events: &mut
                         .color(palette.muted),
                 );
                 ui.label(egui::RichText::new("/").size(FS_SM).color(palette.faint));
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(store.display_title(&session.id))
-                            .size(FS_SM)
-                            .color(palette.ink),
-                    )
-                    .truncate(),
-                );
+                let title = store.display_title(&session.id);
+                rename_or_title(ui, palette, title, events);
                 if store.fork_parent(&session.id).is_some() {
                     pill(ui, palette, |ui| {
                         ui.label(egui::RichText::new("fork").size(FS_XS).color(palette.muted));
@@ -100,6 +104,53 @@ fn pill(ui: &mut egui::Ui, palette: &Palette, content: impl FnOnce(&mut egui::Ui
         });
 }
 
+/// The session title, which a double click or the menu turns into an
+/// inline field. Enter or leaving the field names the session; Escape
+/// drops the edit.
+fn rename_or_title(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    title: String,
+    events: &mut Vec<TopbarEvent>,
+) {
+    let draft_id = egui::Id::new(RENAME_DRAFT);
+    let Some(mut draft) = ui.data(|data| data.get_temp::<String>(draft_id)) else {
+        let response = ui
+            .add(
+                egui::Label::new(
+                    egui::RichText::new(&title).size(FS_SM).color(palette.ink),
+                )
+                .truncate()
+                .sense(egui::Sense::click()),
+            )
+            .on_hover_text("Double-click to rename");
+        if response.double_clicked() {
+            start_rename(ui, title);
+        }
+        return;
+    };
+    let edit = ui.add(
+        egui::TextEdit::singleline(&mut draft)
+            .id(egui::Id::new(RENAME_INPUT))
+            .desired_width(240.0)
+            .font(egui::FontId::new(FS_SM, crate::theme::family(crate::theme::FAMILY_BODY_REGULAR))),
+    );
+    let (enter, escape) = ui.input(|input| {
+        (
+            input.key_pressed(egui::Key::Enter),
+            input.key_pressed(egui::Key::Escape),
+        )
+    });
+    if escape {
+        ui.data_mut(|data| data.remove::<String>(draft_id));
+    } else if enter || edit.lost_focus() {
+        ui.data_mut(|data| data.remove::<String>(draft_id));
+        events.push(TopbarEvent::Rename(draft));
+    } else {
+        ui.data_mut(|data| data.insert_temp(draft_id, draft));
+    }
+}
+
 /// The session actions behind the ellipsis button.
 fn session_menu(
     ui: &mut egui::Ui,
@@ -126,6 +177,15 @@ fn session_menu(
     )
     .ui(ui, |ui| {
         ui.set_min_width(220.0);
+        if ui
+            .add(egui::Button::image_and_text(
+                crate::icons::themed_image(Icon::Pencil, 14.0, palette.ink),
+                "Rename",
+            ))
+            .clicked()
+        {
+            start_rename(ui, store.display_title(&session.id));
+        }
         menu_item(
             ui,
             palette,

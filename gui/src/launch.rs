@@ -1041,6 +1041,9 @@ impl ShellApp {
                 crate::ui::topbar::TopbarEvent::Session(action) => {
                     self.carry_session(ui.ctx(), action);
                 }
+                crate::ui::topbar::TopbarEvent::Rename(title) => {
+                    self.shell.store.rename(&title);
+                }
             }
         }
         self.shell.sidebar = sidebar.into_inner();
