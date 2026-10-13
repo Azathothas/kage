@@ -443,6 +443,7 @@ fn plus_button(
         .corner_radius(egui::CornerRadius::same(R_FULL as u8))
         .min_size(egui::vec2(PILL_H, PILL_H)),
     );
+    let response = response.on_hover_text("Add");
     if response.clicked() {
         toolbar.toggle_plus();
     }
@@ -956,6 +957,7 @@ fn model_button(
         );
         crate::icons::icon(ui, Icon::ChevronDown, 12.0, palette.faint);
     });
+    let response = response.on_hover_text("Model and thinking");
     if response.clicked() {
         toolbar.toggle_picker(Picker::Model);
     }
@@ -1438,7 +1440,8 @@ fn context_ring(
                 .family(family(FAMILY_MONO_REGULAR))
                 .color(palette.faint),
         );
-    });
+    })
+    .on_hover_text("Context");
     let rect = response.rect;
     let center = rect.left_center() + egui::vec2(9.0, 0.0);
     let radius = 9.0;
