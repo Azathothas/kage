@@ -33,8 +33,10 @@ const WORDMARK_GAP: f32 = 16.0;
 const WORDMARK_MB: f32 = 30.0;
 /// The pill's left inset in the column, as the reference shell indents it.
 const PILL_ML: f32 = 12.0;
-/// The gap between the pill and the cards, across the mounted composer.
-const PILL_TO_CARDS: f32 = 16.0;
+/// The gap between the pill and the composer under it.
+const PILL_TO_COMPOSER: f32 = 8.0;
+/// The gap between the composer and the cards.
+const COMPOSER_TO_CARDS: f32 = 16.0;
 /// How far the project menu hangs under the pill.
 const MENU_DROP: f32 = 6.0;
 /// The project menu's width, as the reference shell draws it.
@@ -132,9 +134,19 @@ impl Welcome {
     }
 
     /// Draws the pane over the column's free area and reports what the
-    /// cards and the pill asked for. The glow paints over the whole
-    /// pane, so the composer below draws on it rather than beside it.
-    pub fn show(&mut self, ui: &mut egui::Ui, store: &mut Store) -> Vec<WelcomeEvent> {
+    /// cards, the pill and the hosted composer asked for. The glow
+    /// paints over the whole pane, and the composer mounts inside the
+    /// stack between the pill and the cards, as the reference pane
+    /// hosts it.
+    pub fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        store: &mut Store,
+        composer: &mut crate::ui::composer::Composer,
+        commands: &[serde_json::Value],
+        running: bool,
+        enter_sends: bool,
+    ) -> (Vec<WelcomeEvent>, crate::ui::composer::ComposerEvent) {
         let mut events = Vec::new();
         let pane = ui.available_rect_before_wrap();
         let dark = ui.ctx().theme() == egui::Theme::Dark;
@@ -157,18 +169,24 @@ impl Welcome {
                 ))
                 .layout(egui::Layout::top_down(egui::Align::Min)),
         );
-        let started = stack.cursor().top();
         stack.add_space(WELCOME_PAD_TOP + offset);
+        // The height the next frame centers on starts here: the
+        // leading pad and offset are the pane's, not the stack's, so
+        // counting them would feed the offset back into itself and
+        // settle the stack high of center.
+        let content_top = stack.cursor().top();
         wordmark(&mut stack, palette, dark);
         stack.add_space(WORDMARK_MB);
         let pill = self.project_pill(&mut stack, store, palette);
-        stack.add_space(PILL_TO_CARDS);
+        stack.add_space(PILL_TO_COMPOSER);
+        let composer_event = composer.show(&mut stack, store, commands, running, enter_sends);
+        stack.add_space(COMPOSER_TO_CARDS);
         events.extend(self.cards(&mut stack, palette));
         stack.add_space(18.0);
         hint(&mut stack, palette);
-        self.stack_h = stack.cursor().top() - started;
+        self.stack_h = stack.cursor().top() - content_top;
         self.project_menu(&mut stack, store, palette, pill, &mut events);
-        events
+        (events, composer_event)
     }
 
     /// The project pill: the folder and the name of the directory the
@@ -261,7 +279,7 @@ impl Welcome {
             .collapsible(false)
             .resizable(false)
             .fixed_pos(pill.left_bottom() + egui::vec2(0.0, MENU_DROP))
-            .fixed_size(egui::vec2(MENU_W, 0.0))
+            .min_width(MENU_W)
             .order(egui::Order::Foreground)
             .frame(egui::Frame::NONE)
             .show(ui.ctx(), |ui| {
@@ -365,13 +383,16 @@ fn wordmark(ui: &mut egui::Ui, palette: &Palette, dark: bool) {
     // The toolkit's SVG paints the path one flat color, and the file
     // carries none, so the shadow's fill rides in a patched copy: the
     // reference wordmark tints the same outline `accent_soft`. The uri keys
-    // the loader's cache per color, so a theme swap re-decodes.
-    let hex = palette.accent_soft.to_hex();
-    let shadow_uri = format!("bytes://kage-glyph-shadow-{hex}");
+    // the loader's cache per color, so a theme swap re-decodes, and ends
+    // in `.svg` so the SVG loader takes it.
+    let [r, g, b, a] = palette.accent_soft.to_srgba_unmultiplied();
+    let fill = format!("#{r:02x}{g:02x}{b:02x}");
+    let opacity = f32::from(a) / 255.0;
+    let shadow_uri = format!("bytes://kage-glyph-shadow-{r:02x}{g:02x}{b:02x}{a:02x}.svg");
     let patched = str::replace(
         str::from_utf8(GLYPH).unwrap_or(""),
         "<path ",
-        &format!("<path fill=\"{hex}\" "),
+        &format!("<path fill=\"{fill}\" fill-opacity=\"{opacity}\" "),
     );
     egui::Image::new(egui::ImageSource::Bytes {
         uri: shadow_uri.into(),

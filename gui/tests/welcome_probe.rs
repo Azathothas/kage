@@ -23,9 +23,9 @@ fn sessionless() -> Store {
 type Pane = (Store, Welcome, Composer, Vec<WelcomeEvent>, bool);
 
 /// A harness over the welcome pane, wired the way the shell is: the
-/// pane reserves the composer's band, the composer stays mounted
-/// under it, a `Fill` sets the draft and holds its option, and an
-/// `OpenFolder` is recorded for the shell's dialog layer.
+/// pane hosts the composer inside its centered stack, a `Fill` sets
+/// the draft and holds its option, and an `OpenFolder` is recorded
+/// for the shell's dialog layer.
 fn harness(store: Store) -> Harness<'static, Pane> {
     Harness::builder()
         .with_size(egui::Vec2::new(1000.0, 760.0))
@@ -35,17 +35,16 @@ fn harness(store: Store) -> Harness<'static, Pane> {
                     return;
                 }
                 egui::CentralPanel::default().show(ui, |ui| {
-                    let pane_h = (ui.available_height() - 150.0).max(0.0);
-                    let (rect, _) = ui.allocate_at_least(
-                        egui::vec2(ui.available_width(), pane_h),
-                        egui::Sense::hover(),
-                    );
                     let mut pane = ui.new_child(
                         egui::UiBuilder::new()
-                            .max_rect(rect)
+                            .max_rect(ui.available_rect_before_wrap())
                             .layout(egui::Layout::top_down(egui::Align::Min)),
                     );
-                    for event in welcome.show(&mut pane, store) {
+                    let commands = store.composer_commands().to_vec();
+                    let (evs, composer_event) =
+                        welcome.show(&mut pane, store, composer, &commands, false, true);
+                    let _ = composer_event;
+                    for event in evs {
                         match event {
                             WelcomeEvent::Fill { text, option } => {
                                 if let Some((id, value)) = option {
@@ -57,8 +56,6 @@ fn harness(store: Store) -> Harness<'static, Pane> {
                             other => events.push(other),
                         }
                     }
-                    let commands = store.composer_commands().to_vec();
-                    composer.show(ui, store, &commands, false, true);
                 });
             },
             (store, Welcome::new(), Composer::new(), Vec::new(), false),

@@ -190,18 +190,22 @@ fn palette_share(img: &image::RgbaImage, colors: &[egui::Color32]) -> f32 {
     hits as f32 / painted as f32
 }
 
-/// The surfaces the shadow palette paints the shell with.
-const SHADOW_SURFACES: [egui::Color32; 3] = [
+/// The surfaces the shadow palette paints the shell with, including
+/// the composer card the welcome stack hosts.
+const SHADOW_SURFACES: [egui::Color32; 4] = [
     egui::Color32::from_rgb(0x0F, 0x0E, 0x13),
     egui::Color32::from_rgb(0x0B, 0x0A, 0x0E),
     egui::Color32::from_rgb(0x17, 0x15, 0x1D),
+    egui::Color32::from_rgb(0x15, 0x13, 0x1B),
 ];
 
-/// The surfaces the dawn palette paints the shell with.
-const DAWN_SURFACES: [egui::Color32; 3] = [
+/// The surfaces the dawn palette paints the shell with, including
+/// the composer card the welcome stack hosts.
+const DAWN_SURFACES: [egui::Color32; 4] = [
     egui::Color32::from_rgb(0xF7, 0xF5, 0xF9),
     egui::Color32::from_rgb(0xEE, 0xEB, 0xF2),
     egui::Color32::from_rgb(0xEF, 0xEC, 0xF3),
+    egui::Color32::from_rgb(0xFF, 0xFF, 0xFF),
 ];
 
 /// The two shells both histograms require, in both themes: the sidebar
