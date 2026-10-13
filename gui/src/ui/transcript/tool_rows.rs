@@ -557,53 +557,55 @@ pub fn render_tool(
         egui::CornerRadius::same(R_SM as u8),
         |ui| {
             ui.spacing_mut().item_spacing.x = SP_4;
-            ui.set_min_height(ROW_H);
-            if nested {
-                ui.add_space(SP_5);
-            } else {
-                ui.add_space(SP_3);
-            }
-            if failed {
-                icon(ui, crate::icons::Icon::CircleX, palette.danger);
-            } else if running {
-                spinner(ui, palette.accent);
-            } else {
-                icon(ui, tool_icon(&call.title), palette.muted);
-            }
-            ui.label(egui::RichText::new(&verb).size(FS_SM).color(verb_color));
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(&target)
-                        .font(mono(DETAIL_SIZE))
-                        .color(palette.muted),
-                )
-                .truncate(),
-            );
-            crate::ui::transcript::tool_rows::trailing(ui, |ui| {
-                if clickable {
-                    chevron(ui, expanded, palette.faint);
-                }
-                if let Some(took) = took {
-                    ui.add_space(SP_4);
-                    ui.label(
-                        egui::RichText::new(clock::span(took))
-                            .font(mono(FS_2XS))
-                            .color(palette.faint),
-                    );
+            ui.set_height(ROW_H);
+            ui.horizontal(|ui| {
+                if nested {
+                    ui.add_space(SP_5);
+                } else {
+                    ui.add_space(SP_3);
                 }
                 if failed {
-                    ui.add_space(SP_4);
-                    chip(ui, "failed", palette.danger, palette.danger_soft);
+                    icon(ui, crate::icons::Icon::CircleX, palette.danger);
+                } else if running {
+                    spinner(ui, palette.accent);
+                } else {
+                    icon(ui, tool_icon(&call.title), palette.muted);
                 }
-                for mark in chips_for(call) {
-                    ui.add_space(SP_4);
-                    let (fg, bg) = chip_tone(mark.tone, palette);
-                    chip(ui, &mark.text, fg, bg);
-                }
-                if call.status == ToolCallStatus::Pending {
-                    ui.add_space(SP_4);
-                    chip(ui, "waiting", palette.muted, palette.selected);
-                }
+                ui.label(egui::RichText::new(&verb).size(FS_SM).color(verb_color));
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(&target)
+                            .font(mono(DETAIL_SIZE))
+                            .color(palette.muted),
+                    )
+                    .truncate(),
+                );
+                crate::ui::transcript::tool_rows::trailing(ui, |ui| {
+                    if clickable {
+                        chevron(ui, expanded, palette.faint);
+                    }
+                    if let Some(took) = took {
+                        ui.add_space(SP_4);
+                        ui.label(
+                            egui::RichText::new(clock::span(took))
+                                .font(mono(FS_2XS))
+                                .color(palette.faint),
+                        );
+                    }
+                    if failed {
+                        ui.add_space(SP_4);
+                        chip(ui, "failed", palette.danger, palette.danger_soft);
+                    }
+                    for mark in chips_for(call) {
+                        ui.add_space(SP_4);
+                        let (fg, bg) = chip_tone(mark.tone, palette);
+                        chip(ui, &mark.text, fg, bg);
+                    }
+                    if call.status == ToolCallStatus::Pending {
+                        ui.add_space(SP_4);
+                        chip(ui, "waiting", palette.muted, palette.selected);
+                    }
+                });
             });
         },
     );
@@ -1000,7 +1002,7 @@ pub fn render_group(
         |ui| {
             ui.spacing_mut().item_spacing.x = SP_4;
             ui.add_space(SP_3);
-            ui.set_min_height(ROW_H);
+            ui.set_height(ROW_H);
             if running {
                 spinner(ui, palette.accent);
             } else {
@@ -1196,7 +1198,7 @@ pub fn render_todos(
         |ui| {
             ui.spacing_mut().item_spacing.x = SP_4;
             ui.add_space(SP_3);
-            ui.set_min_height(ROW_H);
+            ui.set_height(ROW_H);
             icon(ui, crate::icons::Icon::ListTodo, palette.muted);
             ui.label(
                 egui::RichText::new("Updated todos")

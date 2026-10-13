@@ -49,9 +49,14 @@ fn replayed_store() -> Store {
 /// A harness over the transcript view at `width`, over a store driven
 /// through the recording.
 fn harness_for(width: f32) -> Harness<'static, (TranscriptView, Store, bool)> {
+    harness_sized(width, 700.0)
+}
+
+/// A harness over the transcript view at `width` by `height`.
+fn harness_sized(width: f32, height: f32) -> Harness<'static, (TranscriptView, Store, bool)> {
     let store = replayed_store();
     Harness::builder()
-        .with_size(egui::Vec2::new(width, 700.0))
+        .with_size(egui::Vec2::new(width, height))
         .build_ui_state(
             |ui, (view, store, started): &mut (TranscriptView, Store, bool)| {
                 if testutil::theme_installed(started, ui.ctx()) {
@@ -135,7 +140,7 @@ fn the_find_marks_tint_the_matched_rows() {
 
 #[test]
 fn the_timeline_rail_seeks_the_rows() {
-    let mut harness = harness_for(900.0);
+    let mut harness = harness_sized(900.0, 300.0);
     harness.run();
     harness.run();
     let (view, _, _) = harness.state();
@@ -143,7 +148,7 @@ fn the_timeline_rail_seeks_the_rows() {
 
     // The rail hangs 6px off the pane's right edge, 16px wide. A press
     // at its bottom seeks the last rows.
-    let bottom = egui::Pos2::new(900.0 - 6.0 - 8.0, 686.0);
+    let bottom = egui::Pos2::new(900.0 - 6.0 - 8.0, 286.0);
     harness.drag_at(bottom);
     harness.run();
     harness.drop_at(bottom);
