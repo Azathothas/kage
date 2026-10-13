@@ -329,7 +329,7 @@ fn the_keyboard_page_lists_the_shell_bindings() {
     );
     assert_eq!(
         testutil::count(&harness, "Ctrl"),
-        8,
+        10,
         "the modifier caps draw"
     );
     assert_eq!(
@@ -339,7 +339,7 @@ fn the_keyboard_page_lists_the_shell_bindings() {
     );
     assert_eq!(
         testutil::count(&harness, "Esc"),
-        2,
+        3,
         "the interrupt's two caps draw"
     );
     assert_eq!(

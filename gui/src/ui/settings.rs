@@ -131,6 +131,7 @@ fn action_label(name: &str) -> Option<&'static str> {
         "NewSession" => "New session",
         "ToggleSidebar" => "Toggle sidebar",
         "ToggleWorkbench" => "Toggle workbench",
+        "CycleMode" => "Cycle permission mode",
         "OpenSettings" => "Settings",
         "OpenFind" => "Find in chat",
         "SendPrompt" => "Send, or steer the running turn",
@@ -1194,6 +1195,34 @@ fn keyboard(ui: &mut egui::Ui, store: &Store, palette: &Palette) {
         .map(|(a, b)| (a.to_owned(), b.to_owned()))
         .collect();
     table(ui, &owned, palette);
+    let vim = if store.prefs().vim {
+        "Vim mode (on)"
+    } else {
+        "Vim mode (off; turn it on under General)"
+    };
+    group(ui, vim, palette);
+    let vim_keys = [
+        ("Leave the composer", "Esc"),
+        ("Move between rows", "j k"),
+        ("First row", "g g"),
+        ("Last row", "Shift G"),
+        ("Half a page", "Ctrl D Ctrl U"),
+        ("Open or close a row", "z a"),
+        ("Open all, close all", "z R z M"),
+        ("Find, next, previous", "/ n N"),
+        ("Back to the composer", "i"),
+        ("Command line", ":"),
+    ];
+    let vim_rows: Vec<(String, String)> = vim_keys
+        .into_iter()
+        .map(|(a, b)| (a.to_owned(), b.to_owned()))
+        .collect();
+    table(ui, &vim_rows, palette);
+    note(
+        ui,
+        "Commands for the : line: theme <name>, model <name>, swarm on|off, plan on|off, goal <text>, new, settings, compact, noh, q, vim off.",
+        palette,
+    );
 }
 
 /// The Lab page: the experiments behind toggles.
