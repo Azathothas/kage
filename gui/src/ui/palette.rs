@@ -15,14 +15,22 @@ use kage_client::Session;
 use serde_json::Value;
 
 use crate::theme::{
-    FS_2XS, FS_SM, FS_XS, Palette as Theme, R_MD, R_XL, SP_2, SP_3, SP_4, SP_5, SP_6,
+    FAMILY_BODY_MEDIUM, FAMILY_BODY_REGULAR, FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_2XS,
+    FS_SM, FS_XS, Palette as Theme, R_MD, R_XL, family,
 };
 
 /// The dialog's width, the old palette's 620px.
 const DIALOG_W: f32 = 620.0;
 
+/// The dialog's height cap, the old palette's 520px.
+const DIALOG_MAX_H: f32 = 520.0;
+
 /// The list's height cap, the old palette's 420px.
 const LIST_MAX_H: f32 = 420.0;
+
+/// The line height the old toolkit set its text in, as a multiple of
+/// the font size.
+const LINE: f32 = 1.618;
 
 /// The rows an empty query lists before the rest give way.
 const RECENT_CAP: usize = 5;
@@ -280,12 +288,18 @@ impl RegistryOwned {
             crate::modes::active_mode(session).is_some_and(|mode| mode == crate::modes::PLAN_MODE)
         });
         let commands = session.map(|session| session.commands.clone());
-        let sessions = store
-            .state()
+        let state = store.state();
+        let mut sessions: Vec<(String, Option<String>, bool)> = state
             .sessions
             .iter()
-            .map(|(id, session)| (id.clone(), session.title.clone(), !session.items.is_empty()))
+            .filter(|(_, session)| session.parent.is_none())
+            .map(|(id, _)| (id.clone(), Some(store.display_title(id)), true))
             .collect();
+        for info in &state.directory {
+            if !state.sessions.contains_key(&info.session_id) {
+                sessions.push((info.session_id.clone(), info.title.clone(), false));
+            }
+        }
         RegistryOwned {
             session: session.cloned(),
             plan_on,
@@ -392,6 +406,78 @@ impl Palette {
         Some(entry)
     }
 
+    /// The search glyph and the query field across the dialog's top.
+    fn query_row(&mut self, ui: &mut egui::Ui, palette: &Theme) {
+        egui::Frame::NONE
+            .inner_margin(egui::Margin::symmetric(16, 14))
+            .show(ui, |ui| {
+                let size = egui::vec2(ui.available_width(), 28.0);
+                let layout = egui::Layout::left_to_right(egui::Align::Center);
+                ui.allocate_ui_with_layout(size, layout, |ui| {
+                    ui.spacing_mut().item_spacing.x = 10.0;
+                    crate::icons::icon(ui, crate::icons::Icon::Search, 16.0, palette.faint);
+                    let field = egui::TextEdit::singleline(&mut self.query)
+                        .id(egui::Id::new("kage-palette-query"))
+                        .hint_text(
+                            egui::RichText::new("Run a command or switch session")
+                                .color(palette.faint),
+                        )
+                        .text_color(palette.ink_strong)
+                        .font(egui::FontId::new(15.0, family(FAMILY_BODY_REGULAR)))
+                        .frame(egui::Frame::NONE)
+                        .margin(egui::Margin::ZERO)
+                        .desired_width(ui.available_width());
+                    ui.add(field).request_focus();
+                });
+            });
+    }
+
+    /// The grouped rows, or the empty note. Gives back the row a click
+    /// ran.
+    fn list(
+        &self,
+        ui: &mut egui::Ui,
+        rows: &[PaletteEntry],
+        selected: usize,
+        palette: &Theme,
+    ) -> Option<usize> {
+        if rows.is_empty() {
+            let galley = ui.painter().layout_no_wrap(
+                "Nothing matches".to_owned(),
+                egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
+                palette.faint,
+            );
+            let (rect, _) = ui.allocate_exact_size(
+                egui::vec2(ui.available_width(), FS_SM * LINE + 48.0),
+                egui::Sense::hover(),
+            );
+            ui.painter()
+                .galley(rect.min + egui::vec2(24.0, 24.0), galley, palette.faint);
+            return None;
+        }
+        let mut clicked = None;
+        let mut last_kind = "";
+        for (index, entry) in rows.iter().enumerate() {
+            let kind = match entry {
+                PaletteEntry::Action { .. } | PaletteEntry::Command { .. } => "command",
+                PaletteEntry::Session { .. } => "session",
+            };
+            if kind != last_kind {
+                last_kind = kind;
+                let label = match kind {
+                    "session" if self.query.trim().is_empty() => "RECENT SESSIONS",
+                    "session" => "SESSIONS",
+                    _ => "COMMANDS",
+                };
+                section_label(ui, label, palette);
+            }
+            if entry_row(ui, entry, index == selected, palette).clicked() {
+                clicked = Some(index);
+            }
+        }
+        clicked
+    }
+
     /// Draws the modal over `rows`, centered with a dimmed backdrop.
     /// A click on a row runs it and the row comes back for the shell
     /// to carry out; a click on the backdrop closes the palette.
@@ -437,171 +523,52 @@ impl Palette {
                     egui::CornerRadius::ZERO,
                     egui::Color32::from_black_alpha(115),
                 );
-                if backdrop.clicked() {
-                    backdrop_clicked = true;
-                }
+                backdrop_clicked = backdrop.clicked();
                 let dialog = egui::Rect::from_min_size(
                     egui::pos2((screen.width() - DIALOG_W) / 2.0, screen.height() * 0.12),
-                    egui::vec2(DIALOG_W, LIST_MAX_H + 96.0),
+                    egui::vec2(DIALOG_W, DIALOG_MAX_H),
                 );
-                ui.scope_builder(
-                    egui::UiBuilder::new().max_rect(dialog),
-                    |ui| {
-                        let frame = egui::Frame::NONE
-                            .fill(palette.bg)
-                            .stroke(egui::Stroke::new(1.0, palette.line))
-                            .inner_margin(egui::Margin::same(0))
-                            .corner_radius(egui::CornerRadius::same(R_XL as u8))
-                            .shadow(palette.shadow_2);
-                        frame.show(ui, |ui| {
-                            ui.set_max_width(DIALOG_W);
-                            ui.vertical(|ui| {
-                            // The query field, focused so typing lands
-                            // in it.
-                            let field = egui::TextEdit::singleline(&mut self.query)
-                                .id(egui::Id::new("kage-palette-query"))
-                                .hint_text("Run a command or switch session")
-                                .text_color(palette.ink_strong)
-                                .font(egui::FontSelection::FontId(egui::FontId::new(
-                                    15.0,
-                                    crate::theme::family(crate::theme::FAMILY_BODY_REGULAR),
-                                )))
-                                .frame(egui::Frame::NONE)
-                                .margin(egui::Margin::symmetric(SP_6 as i8, SP_5 as i8))
-                                .desired_width(DIALOG_W);
-                            let response = ui.add(field);
-                            response.request_focus();
-                            ui.separator();
-                            // The rows, capped in height and scrolled.
+                ui.scope_builder(egui::UiBuilder::new().max_rect(dialog), |ui| {
+                    egui::Frame::NONE
+                        .fill(palette.bg)
+                        .stroke(egui::Stroke::new(1.0, palette.line))
+                        .corner_radius(egui::CornerRadius::same(R_XL as u8))
+                        .shadow(palette.shadow_2)
+                        .show(ui, |ui| {
+                            ui.set_width(DIALOG_W - 2.0);
+                            ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
+                            self.query_row(ui, palette);
+                            divider(ui, palette);
                             egui::ScrollArea::vertical()
                                 .max_height(LIST_MAX_H)
+                                .auto_shrink([false, true])
                                 .show(ui, |ui| {
-                                    ui.set_max_width(DIALOG_W);
-                                    if rows.is_empty() {
-                                        ui.label(
-                                            egui::RichText::new("Nothing matches")
-                                                .size(FS_SM)
-                                                .color(palette.faint),
-                                        );
-                                    }
-                                    let mut last_kind = "";
-                                    for (index, entry) in rows.iter().enumerate() {
-                                        let kind = match entry {
-                                            PaletteEntry::Action { .. }
-                                            | PaletteEntry::Command { .. } => "command",
-                                            PaletteEntry::Session { .. } => "session",
-                                        };
-                                        if kind != last_kind {
-                                            last_kind = kind;
-                                            let label = match kind {
-                                                "session" if self.query.trim().is_empty() => {
-                                                    "RECENT SESSIONS"
-                                                }
-                                                "session" => "SESSIONS",
-                                                _ => "COMMANDS",
-                                            };
-                                            ui.add_space(SP_3);
-                                            ui.label(
-                                                egui::RichText::new(label)
-                                                    .size(FS_2XS)
-                                                    .color(palette.faint),
-                                            );
-                                        }
-                                        let (icon, mono_label) = match entry {
-                                            PaletteEntry::Action { action, .. } => {
-                                                (action_icon(*action), false)
+                                    egui::Frame::NONE.inner_margin(egui::Margin::same(6)).show(
+                                        ui,
+                                        |ui| {
+                                            ui.set_width(ui.available_width());
+                                            ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
+                                            if let Some(index) =
+                                                self.list(ui, rows, selected, palette)
+                                            {
+                                                run = Some(index);
                                             }
-                                            PaletteEntry::Command { .. } => {
-                                                (crate::icons::Icon::Command, true)
-                                            }
-                                            PaletteEntry::Session { .. } => {
-                                                (crate::icons::Icon::MessageSquare, false)
-                                            }
-                                        };
-                                        let fill = if index == selected {
-                                            palette.selected
-                                        } else {
-                                            palette.fill
-                                        };
-                                        let row = egui::Frame::NONE
-                                            .fill(fill)
-                                            .inner_margin(egui::Margin::symmetric(
-                                                SP_4 as i8,
-                                                SP_2 as i8,
-                                            ))
-                                            .corner_radius(egui::CornerRadius::same(R_MD as u8))
-                                            .show(ui, |ui| {
-                                                ui.set_max_width(DIALOG_W);
-                                                ui.horizontal_top(|ui| {
-                                                    crate::icons::icon(ui, icon, 14.0, palette.faint);
-                                                    ui.add_space(SP_3);
-                                                    let text_block = ui.vertical(|ui| {
-                                                        let mut text = egui::RichText::new(entry.label())
-                                                            .color(palette.ink);
-                                                        if mono_label {
-                                                            text = text.font(egui::FontId::new(
-                                                                12.5,
-                                                                crate::theme::family(
-                                                                    crate::theme::FAMILY_MONO_REGULAR,
-                                                                ),
-                                                            ));
-                                                        } else {
-                                                            text = text.size(FS_SM);
-                                                        }
-                                                        ui.label(text);
-                                                        let detail = entry.detail();
-                                                        if !detail.is_empty() {
-                                                            ui.label(
-                                                                egui::RichText::new(detail)
-                                                                    .size(FS_XS)
-                                                                    .color(palette.muted),
-                                                            );
-                                                        }
-                                                    });
-                                                    let text_height = text_block.response.rect.height();
-                                                    ui.allocate_ui_with_layout(
-                                                        egui::vec2(ui.available_width(), text_height),
-                                                        egui::Layout::right_to_left(
-                                                            egui::Align::Center,
-                                                        ),
-                                                        |ui| match entry {
-                                                            PaletteEntry::Action { keys, .. } => {
-                                                                match keys {
-                                                                    Some(keys) => {
-                                                                        kbd_chip(ui, keys, palette)
-                                                                    }
-                                                                    None => {
-                                                                        ui.allocate_response(
-                                                                            egui::Vec2::ZERO,
-                                                                            egui::Sense::hover(),
-                                                                        )
-                                                                    }
-                                                                }
-                                                            }
-                                                            _ => badge_chip(ui, entry.badge(), palette),
-                                                        },
-                                                    );
-                                                });
-                                            });
-                                        if row.response.interact(egui::Sense::click()).clicked() {
-                                            run = Some(index);
-                                        }
-                                    }
+                                        },
+                                    );
                                 });
-                            // The footer hints.
-                            ui.add_space(SP_2);
-                            ui.separator();
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = SP_5;
-                                ui.add_space(SP_6);
-                                hint(ui, "\u{2191}\u{2193}", "move", palette);
-                                hint(ui, "Enter", "run", palette);
-                                hint(ui, "Esc", "close", palette);
-                            });
-                            });
+                            divider(ui, palette);
+                            egui::Frame::NONE
+                                .inner_margin(egui::Margin::symmetric(16, 8))
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.spacing_mut().item_spacing.x = 14.0;
+                                        hint(ui, "\u{2191}\u{2193}", "move", palette);
+                                        hint(ui, "Enter", "run", palette);
+                                        hint(ui, "Esc", "close", palette);
+                                    });
+                                });
                         });
-                    },
-                );
+                });
             });
         if backdrop_clicked {
             self.close();
@@ -635,40 +602,194 @@ fn action_icon(action: Action) -> crate::icons::Icon {
     }
 }
 
-/// The bordered keyboard hint chip of the design.
-pub(crate) fn kbd_chip(ui: &mut egui::Ui, label: &str, palette: &Theme) -> egui::Response {
-    egui::Frame::NONE
-        .fill(palette.fill)
-        .stroke(egui::Stroke::new(1.0, palette.line))
-        .inner_margin(egui::Margin::symmetric(SP_2 as i8, 1))
-        .corner_radius(egui::CornerRadius::same(5))
-        .show(ui, |ui| {
-            ui.label(
-                egui::RichText::new(label)
-                    .monospace()
-                    .size(FS_2XS)
-                    .color(palette.faint),
-            )
-        })
-        .response
+/// `text` laid out on one line, cut with an ellipsis past `max_width`.
+fn one_line(
+    ui: &egui::Ui,
+    text: String,
+    font: egui::FontId,
+    color: egui::Color32,
+    max_width: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::simple_singleline(text, font, color);
+    job.wrap.max_width = max_width.max(0.0);
+    job.wrap.max_rows = 1;
+    job.wrap.break_anywhere = true;
+    job.wrap.overflow_character = Some('\u{2026}');
+    ui.painter().layout_job(job)
 }
 
-/// The small rounded meta chip of the design's badges.
-fn badge_chip(ui: &mut egui::Ui, label: &str, palette: &Theme) -> egui::Response {
-    egui::Frame::NONE
-        .fill(palette.fill)
-        .inner_margin(egui::Margin::symmetric(SP_3 as i8, 0))
-        .corner_radius(egui::CornerRadius::same(4))
-        .show(ui, |ui| {
-            ui.label(egui::RichText::new(label).size(FS_2XS).color(palette.muted))
-        })
-        .response
+/// A full-width hairline between the dialog's parts.
+fn divider(ui: &mut egui::Ui, palette: &Theme) {
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
+    ui.painter()
+        .rect_filled(rect, egui::CornerRadius::ZERO, palette.subtle);
+}
+
+/// A group's caps label over its rows.
+fn section_label(ui: &mut egui::Ui, label: &str, palette: &Theme) {
+    let line = FS_2XS * LINE;
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), 6.0 + line + 3.0),
+        egui::Sense::hover(),
+    );
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::FontId::new(FS_2XS, family(FAMILY_BODY_SEMIBOLD)),
+        palette.faint,
+    );
+    let y = rect.top() + 6.0 + (line - galley.size().y) / 2.0;
+    ui.painter()
+        .galley(egui::pos2(rect.left() + 9.0, y), galley, palette.faint);
+}
+
+/// One row: the icon, the label over its detail, and the shortcut or
+/// kind chip at the right.
+fn entry_row(
+    ui: &mut egui::Ui,
+    entry: &PaletteEntry,
+    selected: bool,
+    palette: &Theme,
+) -> egui::Response {
+    let (icon, label_font) = match entry {
+        PaletteEntry::Action { action, .. } => (
+            action_icon(*action),
+            egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
+        ),
+        PaletteEntry::Command { .. } => (
+            crate::icons::Icon::Command,
+            egui::FontId::new(12.5, family(FAMILY_MONO_REGULAR)),
+        ),
+        PaletteEntry::Session { .. } => (
+            crate::icons::Icon::MessageSquare,
+            egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
+        ),
+    };
+    let detail = entry.detail();
+    let label_h = FS_SM * LINE;
+    let detail_h = if detail.is_empty() { 0.0 } else { FS_XS * LINE };
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), 7.0 + label_h + detail_h + 7.0),
+        egui::Sense::click(),
+    );
+    let label = entry.label();
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    if selected || response.hovered() {
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::same(R_MD as u8), palette.selected);
+    }
+    let top = rect.top() + 7.0;
+    let chip_left = match entry {
+        PaletteEntry::Action { keys: None, .. } => rect.right() - 9.0,
+        PaletteEntry::Action {
+            keys: Some(keys), ..
+        } => paint_kbd(ui, egui::pos2(rect.right() - 9.0, top), keys, palette).left() - 10.0,
+        _ => {
+            paint_badge(
+                ui,
+                egui::pos2(rect.right() - 9.0, top + 2.0),
+                entry.badge(),
+                palette,
+            )
+            .left()
+                - 10.0
+        }
+    };
+    let icon_rect = egui::Rect::from_min_size(
+        egui::pos2(rect.left() + 9.0, top + 2.0),
+        egui::vec2(14.0, 14.0),
+    );
+    crate::icons::themed_image(icon, 14.0, palette.faint).paint_at(ui, icon_rect);
+    let text_x = icon_rect.right() + 10.0;
+    let label = one_line(
+        ui,
+        entry.label(),
+        label_font,
+        palette.ink,
+        chip_left - text_x,
+    );
+    let y = top + (label_h - label.size().y) / 2.0;
+    ui.painter()
+        .galley(egui::pos2(text_x, y), label, palette.ink);
+    if !detail.is_empty() {
+        let galley = one_line(
+            ui,
+            detail,
+            egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR)),
+            palette.muted,
+            chip_left - text_x,
+        );
+        let y = top + label_h + (detail_h - galley.size().y) / 2.0;
+        ui.painter()
+            .galley(egui::pos2(text_x, y), galley, palette.muted);
+    }
+    response
+}
+
+/// Paints the keyboard chip with its right edge and top at `anchor`
+/// and gives back where it landed.
+fn paint_kbd(ui: &egui::Ui, anchor: egui::Pos2, label: &str, palette: &Theme) -> egui::Rect {
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::FontId::new(10.5, family(FAMILY_MONO_REGULAR)),
+        palette.faint,
+    );
+    let size = egui::vec2(galley.size().x + 12.0, 18.0);
+    let rect = egui::Rect::from_min_size(anchor - egui::vec2(size.x, 0.0), size);
+    ui.painter().rect_stroke(
+        rect,
+        egui::CornerRadius::same(5),
+        egui::Stroke::new(1.0, palette.line),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, palette.faint);
+    rect
+}
+
+/// Paints the rounded kind badge with its right edge and top at
+/// `anchor` and gives back where it landed.
+fn paint_badge(ui: &egui::Ui, anchor: egui::Pos2, label: &str, palette: &Theme) -> egui::Rect {
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::FontId::new(10.5, family(FAMILY_BODY_MEDIUM)),
+        palette.muted,
+    );
+    let size = egui::vec2(galley.size().x + 16.0, 10.5 * LINE + 4.0);
+    let rect = egui::Rect::from_min_size(anchor - egui::vec2(size.x, 0.0), size);
+    let radius = egui::CornerRadius::same((size.y / 2.0) as u8);
+    ui.painter().rect_filled(rect, radius, palette.fill);
+    ui.painter().rect_stroke(
+        rect,
+        radius,
+        egui::Stroke::new(1.0, palette.line),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, palette.muted);
+    rect
+}
+
+/// The bordered keyboard hint chip of the design.
+pub(crate) fn kbd_chip(ui: &mut egui::Ui, label: &str, palette: &Theme) -> egui::Response {
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::FontId::new(10.5, family(FAMILY_MONO_REGULAR)),
+        palette.faint,
+    );
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(galley.size().x + 12.0, 18.0),
+        egui::Sense::hover(),
+    );
+    paint_kbd(ui, rect.right_top(), label, palette);
+    response
 }
 
 /// One footer hint: the chip and the word beside it.
 fn hint(ui: &mut egui::Ui, keys: &str, word: &str, palette: &Theme) {
     ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = SP_2;
+        ui.spacing_mut().item_spacing.x = 4.0;
         kbd_chip(ui, keys, palette);
         ui.label(egui::RichText::new(word).size(FS_2XS).color(palette.faint));
     });
