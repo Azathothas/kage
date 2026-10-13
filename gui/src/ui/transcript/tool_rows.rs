@@ -29,11 +29,12 @@ use super::model::{
 use crate::clock;
 use crate::store::{PlanChoice, plan_review};
 use crate::theme::{
-    FAMILY_BODY_MEDIUM, FAMILY_BODY_REGULAR, FAMILY_MONO_REGULAR, FS_2XS, FS_SM, FS_XS, Palette,
-    R_FULL, R_LG, R_MD, SP_1, SP_2, SP_3, SP_4, SP_5, family,
+    FAMILY_BODY_MEDIUM, FAMILY_BODY_REGULAR, FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_2XS,
+    FS_SM, FS_XS, Palette, R_FULL, R_LG, R_MD, SP_1, SP_2, SP_3, SP_4, SP_5, SP_6, family,
 };
 use crate::timing::{RunEnd, SessionTimes};
 use crate::ui::agents::Phase;
+use crate::ui::settings_config::{BtnTone as SmTone, btn_sm_at};
 
 /// The turn-end row's height: the action buttons it carries.
 const TURN_END_H: f32 = 24.0;
@@ -56,6 +57,20 @@ const DETAIL_INDENT: f32 = 22.0;
 const DETAIL_HEAD_PY: f32 = 7.0;
 /// The mono body's vertical padding inside a detail box.
 const DETAIL_PRE_PY: f32 = 10.0;
+/// One mono line of a detail body.
+const DETAIL_LINE: f32 = 19.0;
+/// The column a diff line's marker sits centered in.
+const DIFF_MARKER_W: f32 = 20.0;
+/// The plan card's section padding, top and bottom.
+const PLAN_PY: f32 = 10.0;
+/// The design's line height over its font size.
+const PHI: f32 = 1.618;
+/// The state column of a swarm member row.
+const MEMBER_STATE_W: f32 = 92.0;
+/// The changes card's side padding.
+const CHANGES_PX: f32 = 12.0;
+/// The gap between the changes head's items.
+const CHANGES_GAP: f32 = 10.0;
 
 /// What a tool row's actions ask the caller to do.
 ///
@@ -107,38 +122,9 @@ fn mono(size: f32) -> egui::FontId {
     egui::FontId::new(size, family(FAMILY_MONO_REGULAR))
 }
 
-/// A trailing right-to-left row inside the head it trails: right
-/// aligned pills, vertically centred on the head's own height.
-///
-/// The height comes from what the head has already laid out (its
-/// `set_min_height` at the row's top), and the sub-ui is allocated at
-/// that height: a bare `with_layout(right_to_left(Align::Center))`
-/// centres its contents in ALL the height the parent still offers, so
-/// in the transcript's measure pass, where the offer is the whole
-/// row budget, every such head measured the offer tall and the list
-/// scrolled past every row but the last.
-pub(crate) fn trailing(ui: &mut egui::Ui, contents: impl FnOnce(&mut egui::Ui)) {
-    let height = ui.min_rect().height().max(16.0);
-    ui.allocate_ui_with_layout(
-        egui::vec2(ui.available_width(), height),
-        egui::Layout::right_to_left(egui::Align::Center),
-        contents,
-    );
-}
-
-/// The tinted image one icon draws as.
-fn icon_image(icon: crate::icons::Icon, color: egui::Color32) -> egui::Image<'static> {
-    egui::Image::new(egui::ImageSource::Bytes {
-        uri: icon.uri(),
-        bytes: icon.bytes().into(),
-    })
-    .tint(color)
-    .max_size(egui::Vec2::splat(ICON_SM))
-}
-
-/// One icon of the design's catalog at its small size.
-fn icon(ui: &mut egui::Ui, icon: crate::icons::Icon, color: egui::Color32) -> egui::Response {
-    crate::icons::icon(ui, icon, ICON_SM, color)
+/// The regular body font at `size`.
+fn body(size: f32) -> egui::FontId {
+    egui::FontId::new(size, family(FAMILY_BODY_REGULAR))
 }
 
 /// One icon of the design's catalog at its extra small size.
@@ -152,119 +138,6 @@ fn spinner(ui: &mut egui::Ui, color: egui::Color32) -> egui::Response {
         ui.allocate_exact_size(egui::vec2(ICON_SM, ICON_SM), egui::Sense::hover());
     head::paint_spinner(ui, rect, color);
     response
-}
-
-/// A clickable row that fills the available width, painting `hover`
-/// behind its contents while hovered and reporting the click.
-///
-/// The contents draw into a scope so their union rect is known, then
-/// that rect is stretched to the full column width and interacted
-/// with. The hover fill is painted behind the contents through a shape
-/// reserved before they draw, so the text is never tinted.
-fn clickable_row(
-    ui: &mut egui::Ui,
-    hover: egui::Color32,
-    radius: egui::CornerRadius,
-    contents: impl FnOnce(&mut egui::Ui),
-) -> egui::Response {
-    let background = ui.painter().add(egui::Shape::Noop);
-    let left = ui.max_rect().left();
-    let right = ui.max_rect().right();
-    let inner = ui.scope(|ui| {
-        ui.set_min_width(ui.available_width());
-        contents(ui);
-    });
-    let mut rect = inner.response.rect;
-    rect.min.x = left;
-    rect.max.x = right.max(rect.max.x);
-    let response = ui.interact(
-        rect,
-        ui.id().with(("row", ui.next_auto_id())),
-        egui::Sense::click(),
-    );
-    if response.hovered() {
-        ui.painter()
-            .set(background, egui::Shape::rect_filled(rect, radius, hover));
-    }
-    response
-}
-
-/// The tone a small action button carries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BtnTone {
-    /// The plain hairline button.
-    Plain,
-    /// The filled accent button, for the main action.
-    Primary,
-    /// The outlined danger button, for the refuse answer.
-    Danger,
-}
-
-/// One small action button as the design draws it: 26px tall, an 8px
-/// radius, medium small text, in one tone, with an optional leading
-/// icon. The caller reads the click off the returned response.
-fn btn_sm(
-    ui: &mut egui::Ui,
-    palette: &Palette,
-    tone: BtnTone,
-    label: &str,
-    glyph: Option<crate::icons::Icon>,
-) -> egui::Response {
-    let (fill, stroke, text) = match tone {
-        BtnTone::Plain => (palette.fill, palette.line, palette.ink),
-        BtnTone::Primary => (palette.accent, palette.accent, egui::Color32::WHITE),
-        BtnTone::Danger => (
-            egui::Color32::TRANSPARENT,
-            palette.danger_bd,
-            palette.danger,
-        ),
-    };
-    let rich = egui::RichText::new(label)
-        .size(FS_XS)
-        .color(text)
-        .font(egui::FontId::new(FS_XS, family(FAMILY_BODY_MEDIUM)));
-    let mut button = match glyph {
-        Some(glyph) => egui::Button::image_and_text(icon_image(glyph, text), rich),
-        None => egui::Button::new(rich),
-    };
-    button = button
-        .fill(fill)
-        .stroke(egui::Stroke::new(1.0, stroke))
-        .corner_radius(egui::CornerRadius::same(R_MD as u8))
-        .min_size(egui::vec2(0.0, 26.0))
-        .frame(true);
-    ui.add(button)
-}
-
-/// The colored chip of the design's chip anatomy: fully round, mono at
-/// the smallest size, on the caller's tint.
-fn chip(ui: &mut egui::Ui, text: &str, fg: egui::Color32, bg: egui::Color32) {
-    egui::Frame::NONE
-        .fill(bg)
-        .corner_radius(egui::CornerRadius::same(R_FULL as u8))
-        .inner_margin(egui::Margin::symmetric(7, 1))
-        .show(ui, |ui| {
-            ui.label(egui::RichText::new(text).font(mono(FS_2XS)).color(fg));
-        });
-}
-
-/// The state pill of the design: fully round, a tinted border and fill,
-/// small text in the tint's foreground.
-fn pill(
-    ui: &mut egui::Ui,
-    text: &str,
-    fg: egui::Color32,
-    bg: egui::Color32,
-    border: egui::Color32,
-) {
-    egui::Frame::NONE
-        .fill(bg)
-        .stroke(egui::Stroke::new(1.0, border))
-        .corner_radius(egui::CornerRadius::same(R_FULL as u8))
-        .inner_margin(egui::Margin::symmetric(7, 1))
-        .show(ui, |ui| {
-            ui.label(egui::RichText::new(text).size(10.5).color(fg));
-        });
 }
 
 /// The foreground and background one chip tone renders in.
@@ -574,9 +447,15 @@ pub fn render_tool(
     let mut more_click = false;
     if expanded {
         ui.add_space(SP_2);
-        ui.horizontal_top(|ui| {
-            ui.add_space(DETAIL_INDENT);
-            ui.vertical(|ui| {
+        egui::Frame::NONE
+            .outer_margin(egui::Margin {
+                left: DETAIL_INDENT as i8,
+                right: 0,
+                top: 0,
+                bottom: 0,
+            })
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
                 let path = input_str(call.input.as_ref(), "path").to_owned();
                 if let Some(lines) = &diff {
                     let glyph = if call.title == "write" {
@@ -584,9 +463,16 @@ pub fn render_tool(
                     } else {
                         crate::icons::Icon::FileDiff
                     };
-                    if detail(ui, palette, Some((glyph, path.clone())), |ui| {
-                        render_diff(ui, lines, palette);
-                    }) {
+                    let head = DetailHead {
+                        icon: glyph,
+                        text: path.clone(),
+                        action: Some("Review"),
+                    };
+                    if detail(ui, palette, Some(head), None, |ui| {
+                        render_diff(ui, lines, palette)
+                    })
+                    .action
+                    {
                         actions.push(RowAction::OpenChange(call.tool_call_id.clone()));
                     }
                 } else if call.title == "shell" && !output.is_empty() {
@@ -599,40 +485,40 @@ pub fn render_tool(
                     };
                     let command = input_str(call.input.as_ref(), "command").to_owned();
                     let shown = strip_ansi(&lines[hidden..].join("\n"));
-                    let _ = detail(
-                        ui,
-                        palette,
-                        Some((crate::icons::Icon::Terminal, format!("$ {command}"))),
-                        |ui| render_pre(ui, &shown, palette),
-                    );
-                    if hidden > 0 {
-                        let label = format!("{hidden} earlier lines");
-                        let foot = clickable_row(ui, palette.hover, 0.0.into(), |ui| {
-                            ui.add_space(SP_5);
-                            ui.set_min_height(20.0);
-                            ui.label(egui::RichText::new(&label).size(FS_XS).color(palette.faint));
-                        });
-                        if foot.clicked() {
-                            more_click = true;
-                        }
-                    }
+                    let head = DetailHead {
+                        icon: crate::icons::Icon::Terminal,
+                        text: format!("$ {command}"),
+                        action: None,
+                    };
+                    let more = (hidden > 0).then(|| format!("{hidden} earlier lines"));
+                    let hit = detail(ui, palette, Some(head), more.as_deref(), |ui| {
+                        render_pre(ui, &shown, palette);
+                    });
+                    more_click = hit.footer;
                 } else if let Some(results) = search_results(call)
                     && !results.is_empty()
                 {
-                    let _ = detail(ui, palette, None, |ui| {
+                    let _ = detail(ui, palette, None, None, |ui| {
                         render_search_results(ui, &results, palette);
                     });
                 } else if !output.is_empty() {
                     let head = match call.title.as_str() {
-                        "read" => Some((crate::icons::Icon::File, path.clone())),
-                        "web_fetch" => Some((
-                            crate::icons::Icon::Globe,
-                            input_str(call.input.as_ref(), "url").to_owned(),
-                        )),
+                        "read" => Some(DetailHead {
+                            icon: crate::icons::Icon::File,
+                            text: path.clone(),
+                            action: Some("Open"),
+                        }),
+                        "web_fetch" => Some(DetailHead {
+                            icon: crate::icons::Icon::Globe,
+                            text: input_str(call.input.as_ref(), "url").to_owned(),
+                            action: Some("Reader"),
+                        }),
                         _ => None,
                     };
-                    let fired = detail(ui, palette, head, |ui| render_pre(ui, &output, palette));
-                    if fired {
+                    let hit = detail(ui, palette, head, None, |ui| {
+                        render_pre(ui, &output, palette)
+                    });
+                    if hit.action {
                         match call.title.as_str() {
                             "read" => actions.push(RowAction::OpenFile(path)),
                             "web_fetch" => actions.push(RowAction::OpenBrowser),
@@ -641,7 +527,6 @@ pub fn render_tool(
                     }
                 }
             });
-        });
     }
     if more_click {
         ui_state.full_output.insert(ix);
@@ -649,52 +534,151 @@ pub fn render_tool(
     (response, actions)
 }
 
+/// The head a detail box carries: its glyph, its mono text, and the
+/// action the head offers, if any.
+struct DetailHead {
+    icon: crate::icons::Icon,
+    text: String,
+    action: Option<&'static str>,
+}
+
+/// What a click in a detail box hit.
+#[derive(Default)]
+struct DetailHit {
+    /// The head's action.
+    action: bool,
+    /// The footer.
+    footer: bool,
+}
+
 /// The detail box under a tool row: the head, the body capped at the
-/// design's 320px and scrolling past it. The head's action button
-/// reports its click, so the caller can turn it into a [`RowAction`].
+/// design's 320px and scrolling past it, and an optional footer line.
 fn detail(
     ui: &mut egui::Ui,
     palette: &Palette,
-    head: Option<(crate::icons::Icon, String)>,
+    head: Option<DetailHead>,
+    footer: Option<&str>,
     body: impl FnOnce(&mut egui::Ui),
-) -> bool {
-    let mut fired = false;
+) -> DetailHit {
+    let mut hit = DetailHit::default();
     egui::Frame::NONE
         .fill(palette.well)
         .stroke(egui::Stroke::new(1.0, palette.line))
         .corner_radius(egui::CornerRadius::same(R_LG as u8))
         .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            if let Some((glyph, text)) = head {
-                ui.horizontal(|ui| {
-                    ui.set_min_width(ui.available_width());
-                    ui.spacing_mut().item_spacing.x = SP_4;
-                    ui.add_space(SP_5);
-                    ui.set_min_height(DETAIL_HEAD_PY * 2.0 + ICON_XS);
-                    icon_xs(ui, glyph, palette.muted);
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(&text)
-                                .font(mono(FS_XS))
-                                .color(palette.ink),
-                        )
-                        .truncate(),
-                    );
-                    crate::ui::transcript::tool_rows::trailing(ui, |ui| {
-                        if btn_sm(ui, palette, BtnTone::Plain, "Open", None).clicked() {
-                            fired = true;
-                        }
-                    });
-                });
-                hairline(ui, palette);
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 0.0;
+            if let Some(head) = head {
+                hit.action = detail_head(ui, &head, palette);
             }
             egui::ScrollArea::vertical()
                 .max_height(DETAIL_MAX_H)
                 .show(ui, |ui| {
-                    ui.set_min_width(ui.available_width());
+                    ui.set_width(ui.available_width());
                     body(ui);
                 });
+            if let Some(footer) = footer {
+                let (rect, response) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), SP_3 + FS_XS * 1.618 + SP_3),
+                    egui::Sense::click(),
+                );
+                let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, footer)
+                });
+                if response.hovered() {
+                    let radius = egui::CornerRadius {
+                        nw: 0,
+                        ne: 0,
+                        sw: R_LG as u8,
+                        se: R_LG as u8,
+                    };
+                    ui.painter().rect_filled(rect, radius, palette.hover);
+                }
+                ui.painter().hline(
+                    rect.x_range(),
+                    rect.top() + 0.5,
+                    egui::Stroke::new(1.0, palette.subtle),
+                );
+                let ink = if response.hovered() {
+                    palette.ink
+                } else {
+                    palette.faint
+                };
+                ui.painter().text(
+                    egui::pos2(rect.left() + SP_5, rect.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    footer,
+                    egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR)),
+                    ink,
+                );
+                hit.footer = response.clicked();
+            }
         });
+    hit
+}
+
+/// A detail box's head: its glyph and mono text over the hairline, and
+/// the ghost action at the right. Answers whether the action fired.
+fn detail_head(ui: &mut egui::Ui, head: &DetailHead, palette: &Palette) -> bool {
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(
+            ui.available_width(),
+            DETAIL_HEAD_PY + FS_XS * 1.618 + DETAIL_HEAD_PY,
+        ),
+        egui::Sense::hover(),
+    );
+    ui.painter().hline(
+        rect.x_range(),
+        rect.bottom() - 0.5,
+        egui::Stroke::new(1.0, palette.subtle),
+    );
+    let mid = rect.center().y;
+    crate::icons::themed_image(head.icon, ICON_XS, palette.muted).paint_at(
+        ui,
+        egui::Rect::from_min_size(
+            egui::pos2(rect.left() + SP_5, mid - ICON_XS / 2.0),
+            egui::vec2(ICON_XS, ICON_XS),
+        ),
+    );
+    let mut right = rect.right() - SP_5;
+    let mut fired = false;
+    if let Some(label) = head.action {
+        let galley = ui.painter().layout_no_wrap(
+            label.to_owned(),
+            egui::FontId::new(FS_XS, family(FAMILY_BODY_MEDIUM)),
+            palette.ink,
+        );
+        let button = egui::Rect::from_min_size(
+            egui::pos2(right - galley.size().x - 16.0, mid - 11.0),
+            egui::vec2(galley.size().x + 16.0, 22.0),
+        );
+        let response = ui
+            .interact(
+                button,
+                ui.id().with(("detail-action", &head.text)),
+                egui::Sense::click(),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+        if response.hovered() {
+            ui.painter()
+                .rect_filled(button, egui::CornerRadius::same(R_MD as u8), palette.hover);
+        }
+        ui.painter()
+            .galley(button.center() - galley.size() / 2.0, galley, palette.ink);
+        fired = response.clicked();
+        right = button.left() - SP_4;
+    }
+    let x = rect.left() + SP_5 + ICON_XS + SP_4;
+    let text = head::one_line(
+        ui,
+        head.text.clone(),
+        egui::TextFormat::simple(mono(FS_XS), palette.ink),
+        right - x,
+    );
+    ui.painter()
+        .galley(egui::pos2(x, mid - text.size().y / 2.0), text, palette.ink);
     fired
 }
 
@@ -726,86 +710,97 @@ fn render_pre(ui: &mut egui::Ui, text: &str, palette: &Palette) {
 }
 
 /// A unified diff with per-line added and removed coloring, computed
-/// from the markers the delivered text carries.
+/// from the markers the delivered text carries. Only the lines inside
+/// the clip are laid out, so a long diff costs what shows of it.
 pub(crate) fn render_diff(ui: &mut egui::Ui, lines: &[DiffLine], palette: &Palette) {
-    egui::Frame::NONE.fill(palette.deep).show(ui, |ui| {
-        ui.set_min_width(ui.available_width());
-        for line in lines {
-            let (color, bg) = match line {
-                DiffLine::Add(_) => (palette.diff_add, palette.diff_add_bg),
-                DiffLine::Del(_) => (palette.diff_del, palette.diff_del_bg),
-                DiffLine::Head(_) => (palette.faint, palette.selected),
-                DiffLine::Ctx(_) => (palette.ink, palette.deep),
-            };
-            egui::Frame::NONE.fill(bg).show(ui, |ui| {
-                ui.set_min_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 0.0;
-                    ui.add_space(4.0);
-                    ui.add_sized(
-                        egui::vec2(16.0, DETAIL_SIZE),
-                        egui::Label::new(
-                            egui::RichText::new(line.marker())
-                                .font(mono(DETAIL_SIZE))
-                                .color(palette.ghost),
-                        ),
-                    );
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(line.body())
-                                .font(mono(DETAIL_SIZE))
-                                .color(color),
-                        )
-                        .truncate(),
-                    );
-                });
-            });
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), lines.len() as f32 * DETAIL_LINE),
+        egui::Sense::hover(),
+    );
+    ui.painter()
+        .rect_filled(rect, egui::CornerRadius::ZERO, palette.deep);
+    let clip = ui.clip_rect();
+    for (n, line) in lines.iter().enumerate() {
+        let row = egui::Rect::from_min_size(
+            egui::pos2(rect.left(), rect.top() + n as f32 * DETAIL_LINE),
+            egui::vec2(rect.width(), DETAIL_LINE),
+        );
+        if !clip.intersects(row) {
+            continue;
         }
-    });
+        let (color, bg) = match line {
+            DiffLine::Add(_) => (palette.diff_add, palette.diff_add_bg),
+            DiffLine::Del(_) => (palette.diff_del, palette.diff_del_bg),
+            DiffLine::Head(_) => (palette.faint, palette.selected),
+            DiffLine::Ctx(_) => (palette.ink, palette.deep),
+        };
+        ui.painter().rect_filled(row, egui::CornerRadius::ZERO, bg);
+        ui.painter().text(
+            egui::pos2(row.left() + DIFF_MARKER_W / 2.0, row.center().y),
+            egui::Align2::CENTER_CENTER,
+            line.marker(),
+            mono(DETAIL_SIZE),
+            palette.ghost,
+        );
+        let x = row.left() + DIFF_MARKER_W;
+        let body = head::one_line(
+            ui,
+            line.body().to_owned(),
+            egui::TextFormat::simple(mono(DETAIL_SIZE), color),
+            row.right() - SP_5 - x,
+        );
+        ui.painter().galley(
+            egui::pos2(x, row.center().y - body.size().y / 2.0),
+            body,
+            color,
+        );
+    }
 }
 
 /// The results of a `web_search` call: title, URL and snippet each.
 fn render_search_results(ui: &mut egui::Ui, results: &[SearchResult], palette: &Palette) {
-    ui.vertical(|ui| {
-        for (n, result) in results.iter().enumerate() {
-            if n > 0 {
-                hairline(ui, palette);
-            }
-            ui.vertical(|ui| {
-                ui.add_space(SP_4);
-                ui.horizontal(|ui| {
-                    ui.add_space(SP_5);
-                    ui.label(
+    ui.add_space(SP_2);
+    for (n, result) in results.iter().enumerate() {
+        if n > 0 {
+            hairline(ui, palette);
+        }
+        egui::Frame::NONE
+            .inner_margin(egui::Margin::symmetric(SP_5 as i8, 7))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().item_spacing.y = 1.0;
+                ui.add(
+                    egui::Label::new(
                         egui::RichText::new(&result.title)
                             .size(FS_SM)
                             .color(palette.ink_strong),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.add_space(SP_5);
+                    )
+                    .wrap(),
+                );
+                let url = head::one_line(
+                    ui,
+                    result.url.clone(),
+                    egui::TextFormat::simple(mono(11.0), palette.faint),
+                    ui.available_width(),
+                );
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), url.size().y),
+                    egui::Sense::hover(),
+                );
+                ui.painter().galley(rect.min, url, palette.faint);
+                if !result.snippet.is_empty() {
                     ui.add(
                         egui::Label::new(
-                            egui::RichText::new(&result.url)
-                                .font(mono(11.0))
-                                .color(palette.faint),
-                        )
-                        .truncate(),
-                    );
-                });
-                if !result.snippet.is_empty() {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.add_space(SP_5);
-                        ui.label(
                             egui::RichText::new(&result.snippet)
                                 .size(FS_XS)
                                 .color(palette.muted),
-                        );
-                    });
+                        )
+                        .wrap(),
+                    );
                 }
-                ui.add_space(SP_4);
             });
-        }
-    });
+    }
+    ui.add_space(SP_2);
 }
 
 /// The files a run changed, as the design's changes card: the count
@@ -826,98 +821,188 @@ pub fn render_changes(
         .stroke(egui::Stroke::new(1.0, palette.line))
         .corner_radius(egui::CornerRadius::same(R_LG as u8))
         .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = SP_4;
-                ui.add_space(SP_5);
-                ui.set_min_height(44.0);
-                icon(ui, crate::icons::Icon::FileDiff, palette.faint);
-                ui.label(
-                    egui::RichText::new(format!(
-                        "{count} file{} changed",
-                        if count == 1 { "" } else { "s" }
-                    ))
-                    .size(FS_SM)
-                    .color(palette.ink_strong),
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let (rect, _) = ui
+                .allocate_exact_size(egui::vec2(ui.available_width(), 44.0), egui::Sense::hover());
+            let mid = rect.center().y;
+            let mut right = rect.right() - CHANGES_PX;
+            if let Some(first) = entries.first() {
+                let review = btn_sm_at(
+                    ui,
+                    egui::pos2(right, mid),
+                    egui::Align2::RIGHT_CENTER,
+                    ui.id().with(("changes-review", end)),
+                    "Review",
+                    None,
+                    SmTone::Plain,
+                    palette,
                 );
-                crate::ui::transcript::tool_rows::trailing(ui, |ui| {
-                    if let Some(first) = entries.first() {
-                        ui.add_space(SP_4);
-                        if btn_sm(ui, palette, BtnTone::Plain, "Review", None).clicked() {
-                            actions.push(RowAction::OpenChange(first.call_id.clone()));
-                        }
-                    }
-                    if del > 0 {
-                        ui.add_space(SP_4);
-                        chip(
-                            ui,
-                            &format!("-{del}"),
-                            palette.diff_del,
-                            palette.diff_del_bg,
-                        );
-                    }
-                    ui.add_space(SP_4);
-                    chip(
-                        ui,
-                        &format!("+{add}"),
-                        palette.diff_add,
-                        palette.diff_add_bg,
-                    );
-                });
-            });
-            for (n, entry) in entries.iter().enumerate() {
-                if n > 0 {
-                    hairline(ui, palette);
+                if review.clicked() {
+                    actions.push(RowAction::OpenChange(first.call_id.clone()));
                 }
-                let clicked = clickable_row(ui, palette.hover, 0.0.into(), |ui| {
-                    ui.spacing_mut().item_spacing.x = SP_4;
-                    ui.add_space(SP_5);
-                    ui.set_min_height(32.0);
-                    let glyph = if entry.created {
-                        crate::icons::Icon::FilePlus
-                    } else {
-                        crate::icons::Icon::File
-                    };
-                    icon(ui, glyph, palette.faint);
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(&entry.path)
-                                .font(mono(DETAIL_SIZE))
-                                .color(palette.ink),
-                        )
-                        .truncate(),
-                    );
-                    crate::ui::transcript::tool_rows::trailing(ui, |ui| {
-                        if entry.del > 0 {
-                            ui.add_space(SP_4);
-                            chip(
-                                ui,
-                                &format!("-{}", entry.del),
-                                palette.diff_del,
-                                palette.diff_del_bg,
-                            );
-                        }
-                        ui.add_space(SP_4);
-                        chip(
-                            ui,
-                            &format!("+{}", entry.add),
-                            palette.diff_add,
-                            palette.diff_add_bg,
-                        );
-                        if entry.created {
-                            ui.add_space(SP_4);
-                            pill(ui, "new", palette.ok, palette.ok_soft, palette.ok_bd);
-                        }
-                    });
+                right = review.rect.left() - CHANGES_GAP;
+            }
+            right = paint_totals(ui, right, mid, entries.len(), add, del, palette);
+            let x = paint_lead(ui, rect, crate::icons::Icon::FileDiff, palette) + CHANGES_GAP;
+            let title = head::one_line(
+                ui,
+                format!("{count} file{} changed", if count == 1 { "" } else { "s" }),
+                egui::TextFormat::simple(
+                    egui::FontId::new(FS_SM, family(FAMILY_BODY_SEMIBOLD)),
+                    palette.ink_strong,
+                ),
+                right - x,
+            );
+            ui.painter().galley(
+                egui::pos2(x, mid - title.size().y / 2.0),
+                title,
+                palette.ink_strong,
+            );
+            for entry in entries {
+                let (rect, response) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), 33.0),
+                    egui::Sense::click(),
+                );
+                let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &entry.path)
                 });
-                if clicked.clicked() {
+                ui.painter().hline(
+                    rect.x_range(),
+                    rect.top() + 0.5,
+                    egui::Stroke::new(1.0, palette.subtle),
+                );
+                let row = rect.with_min_y(rect.top() + 1.0);
+                if response.hovered() {
+                    ui.painter()
+                        .rect_filled(row, egui::CornerRadius::ZERO, palette.hover);
+                }
+                let mid = row.center().y;
+                let mut right = row.right() - CHANGES_PX;
+                if entry.del > 0 {
+                    right = head::paint_meta(
+                        ui,
+                        right,
+                        mid,
+                        Meta::Chip {
+                            text: format!("-{}", entry.del),
+                            fg: palette.diff_del,
+                            bg: palette.diff_del_bg,
+                        },
+                        palette,
+                    ) - SP_4;
+                }
+                right = head::paint_meta(
+                    ui,
+                    right,
+                    mid,
+                    Meta::Chip {
+                        text: format!("+{}", entry.add),
+                        fg: palette.diff_add,
+                        bg: palette.diff_add_bg,
+                    },
+                    palette,
+                ) - SP_4;
+                if entry.created {
+                    right = paint_new(ui, right, mid, palette) - SP_4;
+                }
+                let glyph = if entry.created {
+                    crate::icons::Icon::FilePlus
+                } else {
+                    crate::icons::Icon::File
+                };
+                let x = paint_lead(ui, row, glyph, palette) + SP_4;
+                let path = head::one_line(
+                    ui,
+                    entry.path.clone(),
+                    egui::TextFormat::simple(mono(DETAIL_SIZE), palette.ink),
+                    right - x,
+                );
+                ui.painter()
+                    .galley(egui::pos2(x, mid - path.size().y / 2.0), path, palette.ink);
+                if response.clicked() {
                     actions.push(RowAction::OpenChange(entry.call_id.clone()));
                 }
             }
         })
         .response;
-    let _ = end;
     (response, actions)
+}
+
+/// Paints a changes row's lead icon at its left padding, centered, and
+/// gives back its right edge.
+fn paint_lead(ui: &egui::Ui, row: egui::Rect, glyph: crate::icons::Icon, palette: &Palette) -> f32 {
+    let lead = egui::Rect::from_min_size(
+        egui::pos2(row.left() + CHANGES_PX, row.center().y - ICON_SM / 2.0),
+        egui::vec2(ICON_SM, ICON_SM),
+    );
+    crate::icons::themed_image(glyph, ICON_SM, palette.faint).paint_at(ui, lead);
+    lead.right()
+}
+
+/// Paints the changes card's line totals with their right edge at
+/// `right` and gives back their left edge.
+fn paint_totals(
+    ui: &egui::Ui,
+    right: f32,
+    mid: f32,
+    files: usize,
+    add: usize,
+    del: usize,
+    palette: &Palette,
+) -> f32 {
+    let mut right = right;
+    if files == 0 {
+        return right;
+    }
+    if del > 0 {
+        right = head::paint_meta(
+            ui,
+            right,
+            mid,
+            Meta::Chip {
+                text: format!("-{del}"),
+                fg: palette.diff_del,
+                bg: palette.diff_del_bg,
+            },
+            palette,
+        ) - CHANGES_GAP;
+    }
+    head::paint_meta(
+        ui,
+        right,
+        mid,
+        Meta::Chip {
+            text: format!("+{add}"),
+            fg: palette.diff_add,
+            bg: palette.diff_add_bg,
+        },
+        palette,
+    ) - CHANGES_GAP
+}
+
+/// Paints the `new` pill a created file carries, right edge at
+/// `right`, and gives back its left edge.
+fn paint_new(ui: &egui::Ui, right: f32, mid: f32, palette: &Palette) -> f32 {
+    let galley = ui.painter().layout_no_wrap(
+        "new".to_owned(),
+        egui::FontId::new(10.5, family(FAMILY_BODY_REGULAR)),
+        palette.ok,
+    );
+    let size = egui::vec2(galley.size().x + 14.0, galley.size().y + 2.0);
+    let rect = egui::Rect::from_min_size(egui::pos2(right - size.x, mid - size.y / 2.0), size);
+    let radius = egui::CornerRadius::same(R_FULL as u8);
+    ui.painter().rect_filled(rect, radius, palette.ok_soft);
+    ui.painter().rect_stroke(
+        rect,
+        radius,
+        egui::Stroke::new(1.0, palette.ok_bd),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, palette.ok);
+    rect.left()
 }
 
 /// A collapsed run of same-family tool calls, expandable to list its
@@ -1240,151 +1325,114 @@ pub fn render_plan_card(
     };
     let open = pending != ui_state.expanded.contains(&RowKey::Item(ix));
 
-    let card = egui::Frame::NONE
+    let mut approve = false;
+    let mut revise_click = false;
+    let mut reject = false;
+    let mut submit = false;
+    let mut toggled = false;
+    let response = egui::Frame::NONE
         .fill(palette.surface)
         .stroke(egui::Stroke::new(1.0, palette.accent_bd))
-        .corner_radius(egui::CornerRadius::same(R_LG as u8));
-    let head = card.show(ui, |ui| {
-        ui.set_min_width(ui.available_width());
-        clickable_row(
-            ui,
-            palette.hover,
-            egui::CornerRadius::same(R_LG as u8),
-            |ui| {
-                ui.spacing_mut().item_spacing.x = SP_4;
-                ui.add_space(SP_5);
-                ui.set_min_height(44.0);
-                egui::Frame::NONE
-                    .fill(palette.accent_soft)
-                    .corner_radius(egui::CornerRadius::same(R_MD as u8))
+        .corner_radius(egui::CornerRadius::same(R_LG as u8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 0.0;
+            toggled = plan_head(ui, &title, state, pending, open, palette).clicked();
+            if open && !doc.is_empty() {
+                hairline(ui, palette);
+                egui::ScrollArea::vertical()
+                    .id_salt(("plan-doc", ix))
+                    .max_height(PLAN_DOC_MAX_H)
                     .show(ui, |ui| {
-                        ui.set_min_size(egui::vec2(28.0, 28.0));
-                        ui.centered_and_justified(|ui| {
-                            icon(ui, crate::icons::Icon::PenLine, palette.accent);
-                        });
+                        egui::Frame::NONE
+                            .inner_margin(egui::Margin::symmetric(SP_6 as i8, SP_5 as i8))
+                            .show(ui, |ui| {
+                                ui.set_width(ui.available_width());
+                                pipeline.show(&format!("plan-{ix}"), &doc, false, ui);
+                            });
                     });
-                ui.add_space(SP_4);
-                ui.vertical(|ui| {
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(&title)
-                                .size(FS_SM)
-                                .color(palette.ink_strong),
-                        )
-                        .selectable(false)
-                        .truncate(),
-                    );
-                    ui.label(
-                        egui::RichText::new("Plan written in plan mode")
-                            .size(FS_XS)
-                            .color(palette.faint),
-                    );
-                });
-                crate::ui::transcript::tool_rows::trailing(ui, |ui| {
-                    icon(
-                        ui,
-                        if open {
-                            crate::icons::Icon::ChevronUp
-                        } else {
-                            crate::icons::Icon::ChevronDown
-                        },
-                        palette.faint,
-                    );
-                    if let Some((label, fg, bg, border)) = state {
-                        ui.add_space(SP_4);
-                        pill(ui, label, fg, bg, border);
-                    }
-                });
-            },
-        )
-    });
-    if head.response.clicked() {
-        toggle(ui_state, RowKey::Item(ix));
-    }
-    let response = head.response;
-
-    if open && !doc.is_empty() {
-        card.show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            egui::ScrollArea::vertical()
-                .max_height(PLAN_DOC_MAX_H)
-                .show(ui, |ui| {
-                    ui.add_space(SP_5);
-                    ui.horizontal(|ui| {
-                        ui.add_space(SP_5);
-                        ui.vertical(|ui| {
-                            let id = format!("plan-{ix}");
-                            pipeline.show(&id, &doc, false, ui);
-                        });
-                    });
-                    ui.add_space(SP_5);
-                });
-        });
-    }
-
-    if pending {
-        let revising = revise.open == Some(ix);
-        let mut approve = false;
-        let mut revise_click = false;
-        let mut reject = false;
-        let mut submit = false;
-        card.show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing.x = SP_4;
-                ui.add_space(SP_5);
-                ui.set_min_height(20.0);
-                ui.add_space(SP_3);
-                ui.label(
-                    egui::RichText::new("Ready to build with this plan?")
-                        .size(FS_SM)
-                        .color(palette.ink_strong),
+            }
+            if pending {
+                hairline(ui, palette);
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), 26.0 + 2.0 * PLAN_PY),
+                    egui::Sense::hover(),
                 );
-                crate::ui::transcript::tool_rows::trailing(ui, |ui| {
-                    ui.add_space(SP_5);
-                    if btn_sm(
-                        ui,
-                        palette,
-                        BtnTone::Primary,
+                let mid = rect.center().y;
+                let mut right = rect.right() - CHANGES_PX;
+                let answers = [
+                    (
                         "Approve plan",
                         Some(crate::icons::Icon::Check),
-                    )
-                    .clicked()
-                    {
-                        approve = true;
+                        SmTone::Primary,
+                    ),
+                    ("Revise", None, SmTone::Plain),
+                    ("Reject and exit", None, SmTone::Danger),
+                ];
+                for (n, (label, glyph, tone)) in answers.into_iter().enumerate() {
+                    let id = ui.id().with(("plan-answer", ix, n));
+                    let button = btn_sm_at(
+                        ui,
+                        egui::pos2(right, mid),
+                        egui::Align2::RIGHT_CENTER,
+                        id,
+                        label,
+                        glyph,
+                        tone,
+                        palette,
+                    );
+                    match n {
+                        0 => approve = button.clicked(),
+                        1 => revise_click = button.clicked(),
+                        _ => reject = button.clicked(),
                     }
-                    ui.add_space(SP_4);
-                    if btn_sm(ui, palette, BtnTone::Plain, "Revise", None).clicked() {
-                        revise_click = true;
-                    }
-                    ui.add_space(SP_4);
-                    if btn_sm(ui, palette, BtnTone::Danger, "Reject and exit", None).clicked() {
-                        reject = true;
-                    }
-                });
-            });
-            if revising {
-                ui.add_space(SP_3);
-                ui.horizontal(|ui| {
-                    ui.add_space(SP_5);
-                    let field = egui::TextEdit::singleline(&mut revise.text)
-                        .hint_text("What should change?")
-                        .desired_width((ui.available_width() - 2.0 * SP_5).max(40.0))
-                        .font(egui::FontSelection::FontId(egui::FontId::new(
-                            FS_SM,
-                            family(FAMILY_BODY_REGULAR),
-                        )));
-                    let resp = ui.add(field);
-                    resp.request_focus();
-                    if resp.lost_focus()
-                        && ui.input(|i| i.key_pressed(egui::Key::Enter))
-                        && !revise.text.trim().is_empty()
-                    {
-                        submit = true;
-                    }
-                });
+                    right = button.rect.left() - SP_4;
+                }
+                let x = rect.left() + CHANGES_PX;
+                let ask = head::one_line(
+                    ui,
+                    "Ready to build with this plan?".to_owned(),
+                    egui::TextFormat::simple(
+                        egui::FontId::new(FS_SM, family(FAMILY_BODY_SEMIBOLD)),
+                        palette.ink_strong,
+                    ),
+                    right - x,
+                );
+                ui.painter().galley(
+                    egui::pos2(x, mid - ask.size().y / 2.0),
+                    ask,
+                    palette.ink_strong,
+                );
+                if revise.open == Some(ix) {
+                    egui::Frame::NONE
+                        .inner_margin(egui::Margin {
+                            left: CHANGES_PX as i8,
+                            right: CHANGES_PX as i8,
+                            top: 0,
+                            bottom: PLAN_PY as i8,
+                        })
+                        .show(ui, |ui| {
+                            let field = egui::TextEdit::singleline(&mut revise.text)
+                                .hint_text("What should change?")
+                                .desired_width(ui.available_width())
+                                .font(egui::FontSelection::FontId(egui::FontId::new(
+                                    FS_SM,
+                                    family(FAMILY_BODY_REGULAR),
+                                )));
+                            let field = ui.add(field);
+                            field.request_focus();
+                            submit = field.lost_focus()
+                                && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                                && !revise.text.trim().is_empty();
+                        });
+                }
             }
-        });
+        })
+        .response;
+    if toggled {
+        toggle(ui_state, RowKey::Item(ix));
+    }
+    if pending {
         if revise_click {
             revise.open = if revise.open == Some(ix) {
                 None
@@ -1410,6 +1458,119 @@ pub fn render_plan_card(
     }
 
     (response, actions)
+}
+
+/// A plan card's head: the pen badge, the title over its note, the
+/// review state and the chevron. Pending plans sit on the accent tint.
+fn plan_head(
+    ui: &mut egui::Ui,
+    title: &str,
+    state: Option<(&str, egui::Color32, egui::Color32, egui::Color32)>,
+    pending: bool,
+    open: bool,
+    palette: &Palette,
+) -> egui::Response {
+    let title_h = FS_SM * PHI;
+    let note_h = FS_XS * PHI;
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), title_h + note_h + 2.0 * PLAN_PY),
+        egui::Sense::click(),
+    );
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, title));
+    let fill = if response.hovered() {
+        palette.hover
+    } else if pending {
+        palette.accent_soft
+    } else {
+        palette.surface
+    };
+    let top = egui::CornerRadius {
+        nw: R_LG as u8,
+        ne: R_LG as u8,
+        sw: 0,
+        se: 0,
+    };
+    ui.painter().rect_filled(rect.shrink(1.0), top, fill);
+    let mid = rect.center().y;
+    let badge = egui::Rect::from_min_size(
+        egui::pos2(rect.left() + CHANGES_PX, mid - 14.0),
+        egui::vec2(28.0, 28.0),
+    );
+    ui.painter().rect_filled(
+        badge,
+        egui::CornerRadius::same(R_MD as u8),
+        palette.accent_soft,
+    );
+    crate::icons::themed_image(crate::icons::Icon::PenLine, ICON_SM, palette.accent).paint_at(
+        ui,
+        egui::Rect::from_center_size(badge.center(), egui::vec2(ICON_SM, ICON_SM)),
+    );
+    let mut right = rect.right() - CHANGES_PX - ICON_SM;
+    let chevron = if open {
+        crate::icons::Icon::ChevronUp
+    } else {
+        crate::icons::Icon::ChevronDown
+    };
+    crate::icons::themed_image(chevron, ICON_SM, palette.faint).paint_at(
+        ui,
+        egui::Rect::from_min_size(
+            egui::pos2(right, mid - ICON_SM / 2.0),
+            egui::vec2(ICON_SM, ICON_SM),
+        ),
+    );
+    right -= CHANGES_GAP;
+    if let Some((label, fg, bg, border)) = state {
+        let galley = ui.painter().layout_no_wrap(
+            label.to_owned(),
+            egui::FontId::new(10.5, family(FAMILY_BODY_REGULAR)),
+            fg,
+        );
+        let size = egui::vec2(galley.size().x + 14.0, galley.size().y + 2.0);
+        let pill = egui::Rect::from_min_size(egui::pos2(right - size.x, mid - size.y / 2.0), size);
+        let radius = egui::CornerRadius::same(R_FULL as u8);
+        ui.painter().rect_filled(pill, radius, bg);
+        ui.painter().rect_stroke(
+            pill,
+            radius,
+            egui::Stroke::new(1.0, border),
+            egui::StrokeKind::Inside,
+        );
+        ui.painter()
+            .galley(pill.center() - galley.size() / 2.0, galley, fg);
+        right = pill.left() - CHANGES_GAP;
+    }
+    let x = badge.right() + CHANGES_GAP;
+    let text_top = mid - (title_h + note_h) / 2.0;
+    let heading = head::one_line(
+        ui,
+        title.to_owned(),
+        egui::TextFormat::simple(
+            egui::FontId::new(FS_SM, family(FAMILY_BODY_SEMIBOLD)),
+            palette.ink_strong,
+        ),
+        right - x,
+    );
+    ui.painter().galley(
+        egui::pos2(x, text_top + (title_h - heading.size().y) / 2.0),
+        heading,
+        palette.ink_strong,
+    );
+    let note = head::one_line(
+        ui,
+        "Plan written in plan mode".to_owned(),
+        egui::TextFormat::simple(
+            egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR)),
+            palette.faint,
+        ),
+        right - x,
+    );
+    ui.painter().galley(
+        egui::pos2(x, text_top + title_h + (note_h - note.size().y) / 2.0),
+        note,
+        palette.faint,
+    );
+    response
 }
 
 /// What a card shows about one subagent.
@@ -1582,19 +1743,6 @@ pub(crate) fn design_hash(text: &str) -> u32 {
     x.unsigned_abs()
 }
 
-/// The state label with its icon, in the state's color.
-fn state_chip(ui: &mut egui::Ui, facts: &AgentFacts, palette: &Palette) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 5.0;
-        icon_xs(ui, facts.phase.icon(), facts.phase.color(palette));
-        ui.label(
-            egui::RichText::new(facts.phase.label())
-                .size(FS_XS)
-                .color(facts.phase.color(palette)),
-        );
-    });
-}
-
 /// `4s` and `2.3k tok` joined by a middle dot, from what was measured.
 fn meta_line(facts: &AgentFacts) -> String {
     [
@@ -1677,7 +1825,6 @@ fn agent_card(
     palette: &Palette,
     actions: &mut Vec<RowAction>,
 ) -> egui::Response {
-    let body = |size: f32| egui::FontId::new(size, family(FAMILY_BODY_REGULAR));
     let line = 1.618;
     let name_h = FS_SM * line;
     let sub_h = FS_XS * line;
@@ -1891,83 +2038,25 @@ fn swarm_card(
     } else {
         format!("{agent} \u{b7} {} agents", counts.total)
     };
-    let ended = counts.done + counts.failed + counts.cancelled;
-
     let mut toggle_click = false;
     let mut open_member: Option<String> = None;
+    let mut template_click = false;
+    let mut agents_click = false;
+    let retry: Vec<String> = members
+        .iter()
+        .filter(|member| matches!(member.phase, Phase::Failed | Phase::Cancelled))
+        .map(|member| member.id.clone())
+        .collect();
     let response = egui::Frame::NONE
         .fill(palette.surface)
         .stroke(egui::Stroke::new(1.0, palette.done_bd))
         .corner_radius(egui::CornerRadius::same(R_LG as u8))
         .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            let head = clickable_row(ui, palette.hover, 0.0.into(), |ui| {
-                ui.spacing_mut().item_spacing.x = SP_4;
-                ui.add_space(SP_5);
-                ui.set_min_height(44.0);
-                egui::Frame::NONE
-                    .fill(palette.done_soft)
-                    .corner_radius(egui::CornerRadius::same(R_MD as u8))
-                    .show(ui, |ui| {
-                        ui.set_min_size(egui::vec2(28.0, 28.0));
-                        ui.centered_and_justified(|ui| {
-                            icon(ui, crate::icons::Icon::Waypoints, palette.done);
-                        });
-                    });
-                ui.add_space(SP_4);
-                ui.vertical(|ui| {
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(&description)
-                                .size(FS_SM)
-                                .color(palette.ink_strong),
-                        )
-                        .selectable(false)
-                        .truncate(),
-                    );
-                    ui.label(egui::RichText::new(&sub).size(FS_XS).color(palette.faint));
-                });
-                crate::ui::transcript::tool_rows::trailing(ui, |ui| {
-                    icon(
-                        ui,
-                        if open {
-                            crate::icons::Icon::ChevronUp
-                        } else {
-                            crate::icons::Icon::ChevronDown
-                        },
-                        palette.faint,
-                    );
-                    ui.add_space(SP_4);
-                    ui.label(
-                        egui::RichText::new(format!("{ended}"))
-                            .font(mono(FS_SM))
-                            .color(palette.ink_strong),
-                    );
-                    ui.label(
-                        egui::RichText::new(format!(" / {}", counts.total))
-                            .font(mono(FS_SM))
-                            .color(palette.faint),
-                    );
-                    if counts.live() {
-                        ui.add_space(SP_4);
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 5.0;
-                            icon_xs(ui, crate::icons::Icon::LoaderCircle, palette.accent);
-                            let mut live = format!("{} running", counts.running);
-                            if counts.paused > 0 {
-                                live.push_str(&format!(", {} limited", counts.paused));
-                            }
-                            ui.label(egui::RichText::new(live).size(FS_XS).color(palette.accent));
-                        });
-                    }
-                });
-            });
-            if head.clicked() {
-                toggle_click = true;
-            }
-            // The constellation while the preference asks for it, else the
-            // progress bar: done, failed and live shares of the batch.
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 0.0;
+            toggle_click = swarm_head(ui, &description, &sub, counts, open, palette).clicked();
             if let Some(origin) = field {
+                hairline(ui, palette);
                 let stars: Vec<crate::ui::constellation::Star> = members
                     .iter()
                     .map(|member| crate::ui::constellation::Star {
@@ -1979,114 +2068,144 @@ fn swarm_card(
                         phase: member.phase,
                     })
                     .collect();
-                let (asked, animate) = crate::ui::constellation::show(ui, &stars, None, origin);
-                for event in asked {
-                    open_member = match event {
-                        crate::ui::constellation::ConstellationEvent::Open(id) => Some(id),
-                    };
-                }
-                if animate {
-                    ui.ctx()
-                        .request_repaint_after(std::time::Duration::from_millis(50));
-                }
+                egui::Frame::NONE
+                    .inner_margin(egui::Margin {
+                        left: 10,
+                        right: 10,
+                        top: 2,
+                        bottom: 6,
+                    })
+                    .show(ui, |ui| {
+                        let (asked, animate) =
+                            crate::ui::constellation::show(ui, &stars, None, origin);
+                        for event in asked {
+                            open_member = match event {
+                                crate::ui::constellation::ConstellationEvent::Open(id) => Some(id),
+                            };
+                        }
+                        if animate {
+                            ui.ctx()
+                                .request_repaint_after(std::time::Duration::from_millis(50));
+                        }
+                    });
             } else {
-                let (track, _) = ui.allocate_exact_size(
-                    egui::vec2(ui.available_width(), 3.0),
-                    egui::Sense::hover(),
-                );
-                let share = |n: usize| {
-                    if counts.total == 0 {
-                        0.0
-                    } else {
-                        n as f32 / counts.total as f32
-                    }
-                };
-                let mut x = track.left();
-                for (n, color) in [
-                    (counts.done, palette.ok),
-                    (counts.failed, palette.danger),
-                    (counts.running + counts.paused, palette.done),
-                ] {
-                    let w = track.width() * share(n);
-                    if w > 0.0 {
-                        ui.painter().rect_filled(
-                            egui::Rect::from_min_size(
-                                egui::pos2(x, track.top()),
-                                egui::vec2(w, 3.0),
-                            ),
-                            0.0,
-                            color,
-                        );
-                        x += w;
-                    }
-                }
+                paint_progress(ui, counts, palette);
             }
             if open {
+                hairline(ui, palette);
                 egui::ScrollArea::vertical()
-                    .max_height(320.0)
+                    .id_salt(("swarm-members", ix))
+                    .max_height(DETAIL_MAX_H)
                     .show(ui, |ui| {
-                        ui.set_min_width(ui.available_width());
+                        ui.set_width(ui.available_width());
+                        ui.spacing_mut().item_spacing.y = 0.0;
                         for (n, member) in members.iter().enumerate() {
-                            if n > 0 {
-                                hairline(ui, palette);
-                            }
-                            let id = member.id.clone();
-                            let clicked = clickable_row(ui, palette.hover, 0.0.into(), |ui| {
-                                ui.spacing_mut().item_spacing.x = SP_4;
-                                ui.add_space(SP_5);
-                                ui.set_min_height(36.0);
-                                let (item, index) = member.item.clone().unwrap_or_else(|| {
-                                    (member.name.clone(), u32::try_from(n).unwrap_or(0))
-                                });
-                                ui.add_sized(
-                                    egui::vec2(18.0, 16.0),
-                                    egui::Label::new(
-                                        egui::RichText::new(format!("{:02}", index + 1))
-                                            .font(mono(11.0))
-                                            .color(palette.faint),
-                                    ),
-                                );
-                                ui.add(
-                                    egui::Label::new(egui::RichText::new(&item).color(palette.ink))
-                                        .truncate(),
-                                );
-                                let line = if member.phase.live() {
-                                    member
-                                        .reason
-                                        .clone()
-                                        .or_else(|| member.last.clone())
-                                        .unwrap_or_else(|| "starting".to_owned())
-                                } else {
-                                    member.result.clone().unwrap_or_default()
-                                };
-                                ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new(&line)
-                                            .font(mono(11.0))
-                                            .color(palette.faint),
-                                    )
-                                    .truncate(),
-                                );
-                                crate::ui::transcript::tool_rows::trailing(ui, |ui| {
-                                    ui.add_sized(
-                                        egui::vec2(44.0, 16.0),
-                                        egui::Label::new(
-                                            egui::RichText::new(
-                                                member.tokens.map(tokens).unwrap_or_default(),
-                                            )
-                                            .font(mono(11.0))
-                                            .color(palette.faint),
-                                        ),
-                                    );
-                                    state_chip(ui, member, palette);
-                                });
-                            });
-                            if clicked.clicked() {
-                                open_member = Some(id);
+                            if member_row(ui, n, member, palette).clicked() {
+                                open_member = Some(member.id.clone());
                             }
                         }
                     });
             }
+            if template_open && let Some(template) = template {
+                hairline(ui, palette);
+                let mut job = egui::text::LayoutJob::default();
+                for (n, part) in template.split("{{item}}").enumerate() {
+                    if n > 0 {
+                        job.append(
+                            "{{item}}",
+                            0.0,
+                            egui::TextFormat::simple(mono(FS_XS), palette.done),
+                        );
+                    }
+                    job.append(
+                        part,
+                        0.0,
+                        egui::TextFormat::simple(mono(FS_XS), palette.muted),
+                    );
+                }
+                egui::Frame::NONE
+                    .inner_margin(egui::Margin::symmetric(CHANGES_PX as i8, SP_4 as i8))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.add(egui::Label::new(job).wrap());
+                    });
+            }
+            hairline(ui, palette);
+            let (rect, _) = ui.allocate_exact_size(
+                egui::vec2(ui.available_width(), 26.0 + 2.0 * SP_4),
+                egui::Sense::hover(),
+            );
+            let mid = rect.center().y;
+            let mut left = rect.left() + CHANGES_PX;
+            if template.is_some() {
+                let label = if template_open {
+                    "Hide template"
+                } else {
+                    "Prompt template"
+                };
+                let button = btn_sm_at(
+                    ui,
+                    egui::pos2(left, mid),
+                    egui::Align2::LEFT_CENTER,
+                    ui.id().with(("swarm-template", ix)),
+                    label,
+                    Some(crate::icons::Icon::File),
+                    SmTone::Plain,
+                    palette,
+                );
+                template_click = button.clicked();
+                left = button.rect.right() + SP_4;
+            }
+            let mut right = rect.right() - CHANGES_PX;
+            let agents = btn_sm_at(
+                ui,
+                egui::pos2(right, mid),
+                egui::Align2::RIGHT_CENTER,
+                ui.id().with(("swarm-agents", ix)),
+                "Agents",
+                Some(crate::icons::Icon::Users),
+                SmTone::Plain,
+                palette,
+            );
+            agents_click = agents.clicked();
+            right = agents.rect.left() - SP_4;
+            if !counts.live() && !retry.is_empty() {
+                let button = btn_sm_at(
+                    ui,
+                    egui::pos2(right, mid),
+                    egui::Align2::RIGHT_CENTER,
+                    ui.id().with(("swarm-retry", ix)),
+                    &format!("Retry {}", retry.len()),
+                    Some(crate::icons::Icon::RefreshCw),
+                    SmTone::Plain,
+                    palette,
+                );
+                if button.clicked() {
+                    actions.push(RowAction::ResumeSwarm(retry.clone()));
+                }
+                right = button.rect.left() - SP_4;
+            }
+            let mut summary = format!("{} finished", counts.done);
+            if counts.failed > 0 {
+                summary.push_str(&format!(", {} failed", counts.failed));
+            }
+            if counts.cancelled > 0 {
+                summary.push_str(&format!(", {} aborted", counts.cancelled));
+            }
+            if let Some(took) = took {
+                summary.push_str(&format!(" \u{b7} {}", clock::span(took)));
+            }
+            let summary = head::one_line(
+                ui,
+                summary,
+                egui::TextFormat::simple(body(FS_XS), palette.muted),
+                (right - left).max(0.0),
+            );
+            ui.painter().galley(
+                egui::pos2(right - summary.size().x, mid - summary.size().y / 2.0),
+                summary,
+                palette.muted,
+            );
         })
         .response;
     if toggle_click {
@@ -2095,110 +2214,6 @@ fn swarm_card(
     if let Some(id) = open_member {
         actions.push(RowAction::OpenAgent(id));
     }
-
-    // The footer: the template while asked for, the summary, and the
-    // retry and agents buttons.
-    let mut template_click = false;
-    let mut agents_click = false;
-    let retry: Vec<String> = members
-        .iter()
-        .filter(|member| matches!(member.phase, Phase::Failed | Phase::Cancelled))
-        .map(|member| member.id.clone())
-        .collect();
-    egui::Frame::NONE
-        .fill(palette.surface)
-        .stroke(egui::Stroke::new(1.0, palette.done_bd))
-        .corner_radius(egui::CornerRadius::same(R_LG as u8))
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            if template_open && let Some(template) = template {
-                ui.horizontal_wrapped(|ui| {
-                    ui.add_space(SP_5);
-                    ui.add_space(SP_4);
-                    for (n, part) in template.split("{{item}}").enumerate() {
-                        if n > 0 {
-                            ui.label(
-                                egui::RichText::new("{{item}}")
-                                    .font(mono(FS_XS))
-                                    .color(palette.done),
-                            );
-                        }
-                        ui.label(
-                            egui::RichText::new(part)
-                                .font(mono(FS_XS))
-                                .color(palette.muted),
-                        );
-                    }
-                });
-            }
-            ui.horizontal(|ui| {
-                ui.set_min_width(ui.available_width());
-                ui.spacing_mut().item_spacing.x = SP_4;
-                ui.add_space(SP_5);
-                ui.set_min_height(20.0);
-                ui.add_space(SP_3);
-                if template.is_some()
-                    && btn_sm(
-                        ui,
-                        palette,
-                        BtnTone::Plain,
-                        if template_open {
-                            "Hide template"
-                        } else {
-                            "Prompt template"
-                        },
-                        Some(crate::icons::Icon::File),
-                    )
-                    .clicked()
-                {
-                    template_click = true;
-                }
-                crate::ui::transcript::tool_rows::trailing(ui, |ui| {
-                    ui.add_space(SP_5);
-                    if btn_sm(
-                        ui,
-                        palette,
-                        BtnTone::Plain,
-                        "Agents",
-                        Some(crate::icons::Icon::Users),
-                    )
-                    .clicked()
-                    {
-                        agents_click = true;
-                    }
-                    if !counts.live() && !retry.is_empty() {
-                        ui.add_space(SP_4);
-                        if btn_sm(
-                            ui,
-                            palette,
-                            BtnTone::Plain,
-                            &format!("Retry {}", retry.len()),
-                            Some(crate::icons::Icon::RefreshCw),
-                        )
-                        .clicked()
-                        {
-                            actions.push(RowAction::ResumeSwarm(retry.clone()));
-                        }
-                    }
-                    let mut summary = format!("{} finished", counts.done);
-                    if counts.failed > 0 {
-                        summary.push_str(&format!(", {} failed", counts.failed));
-                    }
-                    if counts.cancelled > 0 {
-                        summary.push_str(&format!(", {} aborted", counts.cancelled));
-                    }
-                    if let Some(took) = took {
-                        summary.push_str(&format!(" \u{b7} {}", clock::span(took)));
-                    }
-                    ui.add_space(SP_4);
-                    ui.label(
-                        egui::RichText::new(summary)
-                            .size(FS_XS)
-                            .color(palette.muted),
-                    );
-                });
-            });
-        });
     if template_click && !ui_state.templates.remove(&ix) {
         ui_state.templates.insert(ix);
     }
@@ -2206,6 +2221,291 @@ fn swarm_card(
         actions.push(RowAction::OpenAgents);
     }
     response
+}
+
+/// A swarm card's head: the waypoints badge, the description over the
+/// agent count, the live count, the finished tally and the chevron.
+fn swarm_head(
+    ui: &mut egui::Ui,
+    description: &str,
+    sub: &str,
+    counts: SwarmCounts,
+    open: bool,
+    palette: &Palette,
+) -> egui::Response {
+    let title_h = FS_SM * PHI;
+    let note_h = FS_XS * PHI;
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(
+            ui.available_width(),
+            (title_h + note_h + 2.0 * SP_4).max(44.0),
+        ),
+        egui::Sense::click(),
+    );
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, description));
+    let fill = if response.hovered() {
+        palette.hover
+    } else {
+        palette.done_soft
+    };
+    let top = egui::CornerRadius {
+        nw: R_LG as u8,
+        ne: R_LG as u8,
+        sw: 0,
+        se: 0,
+    };
+    ui.painter().rect_filled(rect.shrink(1.0), top, fill);
+    let mid = rect.center().y;
+    let badge = egui::Rect::from_min_size(
+        egui::pos2(rect.left() + CHANGES_PX, mid - 14.0),
+        egui::vec2(28.0, 28.0),
+    );
+    ui.painter().rect_filled(
+        badge,
+        egui::CornerRadius::same(R_MD as u8),
+        palette.done_soft,
+    );
+    crate::icons::themed_image(crate::icons::Icon::Waypoints, ICON_SM, palette.done).paint_at(
+        ui,
+        egui::Rect::from_center_size(badge.center(), egui::vec2(ICON_SM, ICON_SM)),
+    );
+    let mut right = rect.right() - CHANGES_PX - ICON_SM;
+    let chevron = if open {
+        crate::icons::Icon::ChevronUp
+    } else {
+        crate::icons::Icon::ChevronDown
+    };
+    crate::icons::themed_image(chevron, ICON_SM, palette.faint).paint_at(
+        ui,
+        egui::Rect::from_min_size(
+            egui::pos2(right, mid - ICON_SM / 2.0),
+            egui::vec2(ICON_SM, ICON_SM),
+        ),
+    );
+    right -= CHANGES_GAP;
+    let mut job = egui::text::LayoutJob::default();
+    let ended = counts.done + counts.failed + counts.cancelled;
+    job.append(
+        &ended.to_string(),
+        0.0,
+        egui::TextFormat::simple(mono(FS_SM), palette.ink_strong),
+    );
+    job.append(
+        &format!(" / {}", counts.total),
+        0.0,
+        egui::TextFormat::simple(mono(FS_SM), palette.faint),
+    );
+    let tally = ui.painter().layout_job(job);
+    right -= tally.size().x;
+    ui.painter().galley(
+        egui::pos2(right, mid - tally.size().y / 2.0),
+        tally,
+        palette.ink_strong,
+    );
+    right -= CHANGES_GAP;
+    if counts.live() {
+        let mut live = format!("{} running", counts.running);
+        if counts.paused > 0 {
+            live.push_str(&format!(", {} limited", counts.paused));
+        }
+        let width = status_width(ui, &live);
+        paint_status(
+            ui,
+            right - width,
+            mid,
+            crate::icons::Icon::LoaderCircle,
+            &live,
+            palette.accent,
+        );
+        right -= width + CHANGES_GAP;
+    }
+    let x = badge.right() + CHANGES_GAP;
+    let text_top = mid - (title_h + note_h) / 2.0;
+    let heading = head::one_line(
+        ui,
+        description.to_owned(),
+        egui::TextFormat::simple(
+            egui::FontId::new(FS_SM, family(FAMILY_BODY_SEMIBOLD)),
+            palette.ink_strong,
+        ),
+        right - x,
+    );
+    ui.painter().galley(
+        egui::pos2(x, text_top + (title_h - heading.size().y) / 2.0),
+        heading,
+        palette.ink_strong,
+    );
+    let note = head::one_line(
+        ui,
+        sub.to_owned(),
+        egui::TextFormat::simple(body(FS_XS), palette.faint),
+        right - x,
+    );
+    ui.painter().galley(
+        egui::pos2(x, text_top + title_h + (note_h - note.size().y) / 2.0),
+        note,
+        palette.faint,
+    );
+    response
+}
+
+/// The swarm's progress bar: done, failed and live shares of the batch
+/// over the empty track.
+fn paint_progress(ui: &mut egui::Ui, counts: SwarmCounts, palette: &Palette) {
+    let (track, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 3.0), egui::Sense::hover());
+    ui.painter()
+        .rect_filled(track, egui::CornerRadius::ZERO, palette.fill);
+    if counts.total == 0 {
+        return;
+    }
+    let mut x = track.left();
+    for (n, color) in [
+        (counts.done, palette.ok),
+        (counts.failed, palette.danger),
+        (
+            counts.running + counts.paused,
+            palette.done.gamma_multiply(0.55),
+        ),
+    ] {
+        let w = track.width() * n as f32 / counts.total as f32;
+        if w > 0.0 {
+            ui.painter().rect_filled(
+                egui::Rect::from_min_size(egui::pos2(x, track.top()), egui::vec2(w, 3.0)),
+                egui::CornerRadius::ZERO,
+                color,
+            );
+            x += w;
+        }
+    }
+}
+
+/// One member row of an open swarm card: the index, the item, the
+/// latest line or result, the tokens and the state.
+fn member_row(
+    ui: &mut egui::Ui,
+    n: usize,
+    member: &AgentFacts,
+    palette: &Palette,
+) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 36.0), egui::Sense::click());
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let (item, index) = member
+        .item
+        .clone()
+        .unwrap_or_else(|| (member.name.clone(), u32::try_from(n).unwrap_or(0)));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &item));
+    if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::ZERO, palette.hover);
+    }
+    if n > 0 {
+        ui.painter().hline(
+            rect.x_range(),
+            rect.top() + 0.5,
+            egui::Stroke::new(1.0, palette.subtle),
+        );
+    }
+    let mid = rect.center().y;
+    let left = rect.left() + CHANGES_PX;
+    ui.painter().text(
+        egui::pos2(left, mid),
+        egui::Align2::LEFT_CENTER,
+        format!("{:02}", index + 1),
+        mono(11.0),
+        palette.faint,
+    );
+    let state_x = rect.right() - CHANGES_PX - MEMBER_STATE_W;
+    paint_status(
+        ui,
+        state_x,
+        mid,
+        member.phase.icon(),
+        member.phase.label(),
+        member.phase.color(palette),
+    );
+    let tokens_right = state_x - CHANGES_GAP;
+    ui.painter().text(
+        egui::pos2(tokens_right, mid),
+        egui::Align2::RIGHT_CENTER,
+        member.tokens.map(tokens).unwrap_or_default(),
+        mono(11.0),
+        palette.faint,
+    );
+    let x = left + 18.0 + CHANGES_GAP;
+    let room = (tokens_right - 44.0 - CHANGES_GAP - x).max(0.0);
+    let natural = ui
+        .painter()
+        .layout_no_wrap(item.clone(), body(FS_SM), palette.ink)
+        .size()
+        .x;
+    let item_w = natural.min(room * 0.6).max(60.0_f32.min(room));
+    let item = head::one_line(
+        ui,
+        item,
+        egui::TextFormat::simple(body(FS_SM), palette.ink),
+        item_w,
+    );
+    let line_x = x + item.size().x + CHANGES_GAP;
+    ui.painter()
+        .galley(egui::pos2(x, mid - item.size().y / 2.0), item, palette.ink);
+    let line = if member.phase.live() {
+        member
+            .reason
+            .clone()
+            .or_else(|| member.last.clone())
+            .unwrap_or_else(|| "starting".to_owned())
+    } else {
+        member.result.clone().unwrap_or_default()
+    };
+    let line = head::one_line(
+        ui,
+        line,
+        egui::TextFormat::simple(mono(11.0), palette.faint),
+        (x + room - line_x).max(0.0),
+    );
+    ui.painter().galley(
+        egui::pos2(line_x, mid - line.size().y / 2.0),
+        line,
+        palette.faint,
+    );
+    response
+}
+
+/// How wide [`paint_status`] paints `label`.
+fn status_width(ui: &egui::Ui, label: &str) -> f32 {
+    let galley =
+        ui.painter()
+            .layout_no_wrap(label.to_owned(), body(FS_XS), egui::Color32::PLACEHOLDER);
+    ICON_XS + 5.0 + galley.size().x
+}
+
+/// The design's status chip from `left`, centered on `mid`: the icon and
+/// the label in one color.
+fn paint_status(
+    ui: &egui::Ui,
+    left: f32,
+    mid: f32,
+    glyph: crate::icons::Icon,
+    label: &str,
+    color: egui::Color32,
+) {
+    crate::icons::themed_image(glyph, ICON_XS, color).paint_at(
+        ui,
+        egui::Rect::from_min_size(
+            egui::pos2(left, mid - ICON_XS / 2.0),
+            egui::vec2(ICON_XS, ICON_XS),
+        ),
+    );
+    ui.painter().text(
+        egui::pos2(left + ICON_XS + 5.0, mid),
+        egui::Align2::LEFT_CENTER,
+        label,
+        body(FS_XS),
+        color,
+    );
 }
 
 #[cfg(test)]

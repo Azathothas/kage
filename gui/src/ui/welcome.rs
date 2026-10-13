@@ -578,65 +578,86 @@ fn project_row(
     dir: &str,
     checked: bool,
 ) -> bool {
-    let hovered = ui.ctx().read_response(id).is_some_and(|r| r.hovered());
-    let frame = egui::Frame::NONE
-        .fill(if hovered {
-            palette.selected
-        } else {
-            egui::Color32::TRANSPARENT
-        })
-        .corner_radius(egui::CornerRadius::same(R_MD as u8))
-        .inner_margin(egui::Margin::symmetric(9, 7))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 10.0;
-                crate::icons::icon(ui, Icon::Folder, 14.0, palette.muted);
-                ui.vertical(|ui| {
-                    ui.label(
-                        egui::RichText::new(crate::ui::sidebar::project_name(Some(dir)))
-                            .size(FS_SM)
-                            .color(palette.ink),
-                    );
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(dir.to_owned())
-                                .size(FS_XS)
-                                .color(palette.faint),
-                        )
-                        .truncate(),
-                    );
-                });
-                if checked {
-                    crate::ui::transcript::tool_rows::trailing(ui, |ui| {
-                        crate::icons::icon(ui, Icon::Check, 14.0, palette.accent);
-                    });
-                }
-            });
-        });
-    ui.interact(frame.response.rect, id, egui::Sense::click())
-        .clicked()
+    let name_h = FS_SM * 1.618;
+    let path_h = FS_XS * 1.618;
+    let name = crate::ui::sidebar::project_name(Some(dir));
+    let (rect, response) = menu_rect(ui, id, name_h + path_h, &name, palette);
+    let mid = rect.center().y;
+    let mut right = rect.right() - 9.0;
+    if checked {
+        right -= 14.0;
+        crate::icons::themed_image(Icon::Check, 14.0, palette.accent).paint_at(
+            ui,
+            egui::Rect::from_min_size(egui::pos2(right, mid - 7.0), egui::vec2(14.0, 14.0)),
+        );
+        right -= 10.0;
+    }
+    let x = paint_menu_icon(ui, rect, Icon::Folder, palette);
+    let top = mid - (name_h + path_h) / 2.0;
+    let lines = [
+        (name, FS_SM, palette.ink, top, name_h),
+        (dir.to_owned(), FS_XS, palette.faint, top + name_h, path_h),
+    ];
+    for (text, size, color, top, height) in lines {
+        let galley = crate::ui::transcript::head::one_line(
+            ui,
+            text,
+            egui::TextFormat::simple(egui::FontId::new(size, family(FAMILY_BODY_REGULAR)), color),
+            right - x,
+        );
+        ui.painter().galley(
+            egui::pos2(x, top + (height - galley.size().y) / 2.0),
+            galley,
+            color,
+        );
+    }
+    response.clicked()
 }
 
 /// One simple menu row: an icon and a label.
 fn menu_row(ui: &mut egui::Ui, palette: &Palette, id: egui::Id, icon: Icon, label: &str) -> bool {
-    let hovered = ui.ctx().read_response(id).is_some_and(|r| r.hovered());
-    let frame = egui::Frame::NONE
-        .fill(if hovered {
-            palette.selected
-        } else {
-            egui::Color32::TRANSPARENT
-        })
-        .corner_radius(egui::CornerRadius::same(R_MD as u8))
-        .inner_margin(egui::Margin::symmetric(9, 7))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 10.0;
-                crate::icons::icon(ui, icon, 14.0, palette.muted);
-                ui.label(egui::RichText::new(label).size(FS_SM).color(palette.ink));
-            });
-        });
-    ui.interact(frame.response.rect, id, egui::Sense::click())
-        .clicked()
+    let (rect, response) = menu_rect(ui, id, FS_SM * 1.618, label, palette);
+    let x = paint_menu_icon(ui, rect, icon, palette);
+    ui.painter().text(
+        egui::pos2(x, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
+        palette.ink,
+    );
+    response.clicked()
+}
+
+/// A menu row's rect around `content_h` of text, with its hover fill.
+fn menu_rect(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    content_h: f32,
+    label: &str,
+    palette: &Palette,
+) -> (egui::Rect, egui::Response) {
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), content_h + 14.0),
+        egui::Sense::hover(),
+    );
+    let response = ui
+        .interact(rect, id, egui::Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::same(R_MD as u8), palette.selected);
+    }
+    (rect, response)
+}
+
+/// Paints a menu row's leading icon and gives back where its text
+/// starts.
+fn paint_menu_icon(ui: &egui::Ui, rect: egui::Rect, icon: Icon, palette: &Palette) -> f32 {
+    let at = egui::pos2(rect.left() + 9.0, rect.center().y - 7.0);
+    crate::icons::themed_image(icon, 14.0, palette.muted)
+        .paint_at(ui, egui::Rect::from_min_size(at, egui::vec2(14.0, 14.0)));
+    at.x + 14.0 + 10.0
 }
 
 /// The hairline between the menu's rows and its action.

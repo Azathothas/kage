@@ -647,6 +647,7 @@ fn badge_width(ui: &egui::Ui, text: &str, mono: bool) -> f32 {
 /// One list row: its lead, a name line with badges, an optional detail
 /// line, and its trailing fact. Clickable rows hover with the soft
 /// fill; the switch answers on its own.
+#[allow(clippy::too_many_arguments)]
 fn list_row(
     ui: &mut egui::Ui,
     id: &str,
@@ -889,16 +890,55 @@ pub(crate) fn btn_sm(
     tone: BtnTone,
     palette: &Palette,
 ) -> egui::Response {
-    let galley = ui.painter().layout_no_wrap(
+    let galley = btn_sm_galley(ui, label);
+    let (rect, response) = ui.allocate_exact_size(btn_sm_size(&galley, icon), egui::Sense::click());
+    paint_btn_sm(ui, rect, response, galley, label, icon, tone, palette)
+}
+
+/// [`btn_sm`] placed by `align` against `anchor`, for rows painted at
+/// fixed heights.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn btn_sm_at(
+    ui: &mut egui::Ui,
+    anchor: egui::Pos2,
+    align: egui::Align2,
+    id: egui::Id,
+    label: &str,
+    icon: Option<crate::icons::Icon>,
+    tone: BtnTone,
+    palette: &Palette,
+) -> egui::Response {
+    let galley = btn_sm_galley(ui, label);
+    let size = btn_sm_size(&galley, icon);
+    let rect = align.anchor_size(anchor, size);
+    let response = ui.interact(rect, id, egui::Sense::click());
+    paint_btn_sm(ui, rect, response, galley, label, icon, tone, palette)
+}
+
+fn btn_sm_galley(ui: &egui::Ui, label: &str) -> std::sync::Arc<egui::Galley> {
+    ui.painter().layout_no_wrap(
         label.to_owned(),
         egui::FontId::new(FS_XS, family(FAMILY_BODY_MEDIUM)),
-        palette.ink,
-    );
+        egui::Color32::PLACEHOLDER,
+    )
+}
+
+fn btn_sm_size(galley: &egui::Galley, icon: Option<crate::icons::Icon>) -> egui::Vec2 {
     let icon_w = if icon.is_some() { 12.0 + 6.0 } else { 0.0 };
-    let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(9.0 + icon_w + galley.size().x + 9.0, 26.0),
-        egui::Sense::click(),
-    );
+    egui::vec2(9.0 + icon_w + galley.size().x + 9.0, 26.0)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn paint_btn_sm(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    response: egui::Response,
+    galley: std::sync::Arc<egui::Galley>,
+    label: &str,
+    icon: Option<crate::icons::Icon>,
+    tone: BtnTone,
+    palette: &Palette,
+) -> egui::Response {
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
     let hovered = response.hovered();
@@ -932,7 +972,7 @@ pub(crate) fn btn_sm(
             ui,
             egui::Rect::from_min_size(egui::pos2(x, rect.center().y - 6.0), egui::vec2(12.0, 12.0)),
         );
-        x += icon_w;
+        x += 12.0 + 6.0;
     }
     let text_h = galley.size().y;
     ui.painter()
@@ -1449,6 +1489,7 @@ pub fn mcp_page(
 
 /// The Permissions page: the session's mode cards, then the configured
 /// rules, editable in place.
+#[allow(clippy::too_many_arguments)]
 pub fn permissions_page(
     ui: &mut egui::Ui,
     store: &mut Store,

@@ -705,7 +705,7 @@ fn row_cell(
     let spacing = ui.spacing().item_spacing.y;
     ui.spacing_mut().item_spacing.y = 0.0;
     ui.add_space(gap(prev, row));
-    let inner = egui::Frame::NONE.show(ui, |ui| {
+    let inner = ui.scope_builder(egui::UiBuilder::new().id_salt(row.key()), |ui| {
         ui.spacing_mut().item_spacing.y = spacing;
         render_row(ui, row, ctx, events)
     });

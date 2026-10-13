@@ -14,7 +14,6 @@
 //! reaches past its own rect. The click that opens or closes a body
 //! comes back through the returned response.
 
-use std::f32::consts::TAU;
 use std::time::Duration;
 
 use kage_client::agent_text::{self, AgentText, Report};
@@ -46,8 +45,8 @@ const THINK_LINE: f32 = 20.0;
 const ICON_SM: f32 = 14.0;
 /// The icon size of the design's extra small rows.
 const ICON_XS: f32 = 12.0;
-/// One turn of the working spinner.
-const SPIN_TURN: Duration = Duration::from_millis(900);
+/// The design's line height over its font size.
+const PHI: f32 = 1.618;
 /// The steered bubble's dashed border, one dash and one gap.
 const DASH: f32 = 4.0;
 
@@ -101,13 +100,6 @@ fn icon_xs(ui: &mut egui::Ui, icon: crate::icons::Icon, color: egui::Color32) ->
     crate::icons::icon(ui, icon, ICON_XS, color)
 }
 
-/// The design's hairline: a one pixel rule in the faintest line token.
-fn rule(ui: &mut egui::Ui, palette: &Palette) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(0.0, 1.0), egui::Sense::hover());
-    ui.painter()
-        .rect_filled(rect, egui::CornerRadius::ZERO, palette.subtle);
-}
-
 /// The body an expanded row drops under its head: indented, ruled on
 /// its left edge in the design's border token.
 fn detail_frame(ui: &mut egui::Ui, palette: &Palette, contents: impl FnOnce(&mut egui::Ui)) {
@@ -133,7 +125,10 @@ fn detail_frame(ui: &mut egui::Ui, palette: &Palette, contents: impl FnOnce(&mut
 /// The steered bubble's border, drawn as dashes because egui strokes
 /// carry no dash pattern.
 pub(crate) fn dashed_rect(ui: &egui::Ui, rect: egui::Rect, radius: f32, color: egui::Color32) {
-    let r = radius.min(rect.width() / 2.0).min(rect.height() / 2.0).max(0.0);
+    let r = radius
+        .min(rect.width() / 2.0)
+        .min(rect.height() / 2.0)
+        .max(0.0);
     let quarter = std::f32::consts::FRAC_PI_2;
     let corners = [
         (egui::pos2(rect.right() - r, rect.top() + r), -quarter),
@@ -170,26 +165,6 @@ pub(crate) fn dashed_rect(ui: &egui::Ui, rect: egui::Rect, radius: f32, color: e
             }
         }
     }
-}
-
-/// The working spinner: an arc turning once every [`SPIN_TURN`], asking
-/// for the frames it turns through.
-fn spinner(ui: &mut egui::Ui, color: egui::Color32) -> egui::Response {
-    ui.ctx().request_repaint();
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(ICON_SM, ICON_SM), egui::Sense::hover());
-    let turn =
-        (ui.ctx().input(|i| i.time) % SPIN_TURN.as_secs_f64()) as f32 / SPIN_TURN.as_secs_f32();
-    let radius = ICON_SM / 2.0 - 1.0;
-    let center = rect.center();
-    let steps = 24;
-    let mut points = Vec::with_capacity(steps + 1);
-    for step in 0..=steps {
-        let angle = turn * TAU + TAU * 0.75 * (step as f32 / steps as f32);
-        points.push(center + egui::vec2(radius * angle.cos(), radius * angle.sin()));
-    }
-    ui.painter().line(points, egui::Stroke::new(2.0, color));
-    response
 }
 
 /// A user message: its attachments, a right-aligned bubble, the steered
@@ -487,39 +462,33 @@ pub fn render_notice(ui: &mut egui::Ui, ix: usize, tone: NoticeTone, text: &str)
         NoticeTone::Error => (palette.danger, true),
         NoticeTone::Success => (palette.ok, false),
     };
-    let response = ui.allocate_response(egui::Vec2::ZERO, egui::Sense::hover());
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = SP_4;
-        ui.set_min_height(ROW_H);
-        rule(ui, palette);
-        egui::Frame::NONE
-            .fill(if pill {
-                palette.danger_soft
-            } else {
-                egui::Color32::TRANSPARENT
-            })
-            .corner_radius(egui::CornerRadius::same(R_FULL as u8))
-            .inner_margin(egui::Margin::symmetric(10, SP_2 as i8))
-            .show(ui, |ui| {
-                ui.label(egui::RichText::new(text).size(FS_XS).color(color));
-            });
-        rule(ui, palette);
-    });
     let _ = ix;
-    response
+    ruled_line(ui, text, color, pill, palette)
 }
 
 /// A note the engine added as a user message, such as swarm mode
 /// switching on: one quiet line, not a bubble the user typed.
 pub fn render_engine_note(ui: &mut egui::Ui, ix: usize, note: &str) -> egui::Response {
     let palette = Palette::active_of(ui.ctx());
-    let response = ui.allocate_response(egui::Vec2::ZERO, egui::Sense::hover());
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = SP_2;
-        ui.set_min_height(ROW_H);
-        icon_xs(ui, crate::icons::Icon::Info, palette.faint);
-        ui.label(egui::RichText::new(note).size(FS_XS).color(palette.faint));
-    });
+    let x_text = ICON_XS + SP_2;
+    let galley = small_text(ui, note, palette.faint, ui.available_width() - x_text);
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), galley.size().y),
+        egui::Sense::hover(),
+    );
+    let first = rect.top() + FS_XS * PHI / 2.0;
+    crate::icons::themed_image(crate::icons::Icon::Info, ICON_XS, palette.faint).paint_at(
+        ui,
+        egui::Rect::from_min_size(
+            egui::pos2(rect.left(), first - ICON_XS / 2.0),
+            egui::vec2(ICON_XS, ICON_XS),
+        ),
+    );
+    ui.painter().galley(
+        egui::pos2(rect.left() + x_text, rect.top()),
+        galley,
+        palette.faint,
+    );
     let _ = ix;
     response
 }
@@ -534,22 +503,64 @@ pub fn render_compaction(
     after: u64,
 ) -> egui::Response {
     let palette = Palette::active_of(ui.ctx());
-    let response = ui.allocate_response(egui::Vec2::ZERO, egui::Sense::hover());
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = SP_4;
-        ui.set_min_height(ROW_H);
-        rule(ui, palette);
-        ui.label(
-            egui::RichText::new(format!(
-                "context compacted: kept {kept} turns, {before} -> {after} tokens"
-            ))
-            .size(FS_XS)
-            .color(palette.faint),
-        );
-        rule(ui, palette);
-    });
+    let text = format!("context compacted: kept {kept} turns, {before} -> {after} tokens");
     let _ = ix;
+    ruled_line(ui, &text, palette.faint, false, palette)
+}
+
+/// Small text centered between two hairlines that take the rest of the
+/// width, wrapping when it runs past it, on a danger pill when asked.
+fn ruled_line(
+    ui: &mut egui::Ui,
+    text: &str,
+    color: egui::Color32,
+    pill: bool,
+    palette: &Palette,
+) -> egui::Response {
+    let pad = if pill {
+        egui::vec2(10.0, SP_2)
+    } else {
+        egui::Vec2::ZERO
+    };
+    let width = ui.available_width();
+    let galley = small_text(ui, text, color, width - 2.0 * SP_4 - 2.0 * pad.x);
+    let body = galley.size() + 2.0 * pad;
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, body.y), egui::Sense::hover());
+    let mid = rect.center().y;
+    let body = egui::Rect::from_center_size(rect.center(), body);
+    let stroke = egui::Stroke::new(1.0, palette.subtle);
+    ui.painter()
+        .hline(rect.left()..=body.left() - SP_4, mid, stroke);
+    ui.painter()
+        .hline(body.right() + SP_4..=rect.right(), mid, stroke);
+    if pill {
+        ui.painter().rect_filled(
+            body,
+            egui::CornerRadius::same(R_FULL as u8),
+            palette.danger_soft,
+        );
+    }
+    ui.painter().galley(body.min + pad, galley, color);
     response
+}
+
+/// `text` at the small size and the design's line height, wrapped at
+/// `width`.
+fn small_text(
+    ui: &egui::Ui,
+    text: &str,
+    color: egui::Color32,
+    width: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let format = egui::TextFormat {
+        font_id: egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR)),
+        color,
+        line_height: Some(FS_XS * PHI),
+        ..Default::default()
+    };
+    let mut job = egui::text::LayoutJob::single_section(text.to_owned(), format);
+    job.wrap.max_width = width.max(0.0);
+    ui.painter().layout_job(job)
 }
 
 /// The one-line record of an answered permission ask: what the ask was
@@ -570,29 +581,68 @@ pub fn render_decision(
     } else {
         crate::icons::Icon::ShieldX
     };
-    let response = ui.allocate_response(egui::Vec2::ZERO, egui::Sense::hover());
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = SP_4;
-        ui.set_min_height(ROW_H);
-        icon_xs(ui, glyph, color);
-        ui.label(egui::RichText::new(label).size(FS_XS).color(palette.muted));
-        ui.add(
-            egui::Label::new(
-                egui::RichText::new(subject)
-                    .font(mono(12.0))
-                    .color(palette.ink),
-            )
-            .truncate(),
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), ROW_H),
+        egui::Sense::hover(),
+    );
+    let aria = match feedback {
+        Some(feedback) => format!("{label} {subject} \"{feedback}\""),
+        None => format!("{label} {subject}"),
+    };
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &aria));
+    let mid = rect.center().y;
+    let mut x = rect.left() + SP_3;
+    crate::icons::themed_image(glyph, ICON_XS, color).paint_at(
+        ui,
+        egui::Rect::from_min_size(
+            egui::pos2(x, mid - ICON_XS / 2.0),
+            egui::vec2(ICON_XS, ICON_XS),
+        ),
+    );
+    x += ICON_XS + SP_4;
+    let small = egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR));
+    let label = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), small.clone(), palette.muted);
+    let label_w = label.size().x;
+    ui.painter().galley(
+        egui::pos2(x, mid - label.size().y / 2.0),
+        label,
+        palette.muted,
+    );
+    x += label_w + SP_4;
+    let mut right = rect.right() - SP_3;
+    if let Some(feedback) = feedback {
+        let quote = ui
+            .painter()
+            .layout_job(egui::text::LayoutJob::single_section(
+                format!("\"{feedback}\""),
+                egui::TextFormat {
+                    font_id: small,
+                    color: palette.faint,
+                    italics: true,
+                    ..Default::default()
+                },
+            ));
+        right -= quote.size().x;
+        ui.painter().galley(
+            egui::pos2(right, mid - quote.size().y / 2.0),
+            quote,
+            palette.faint,
         );
-        if let Some(feedback) = feedback {
-            ui.label(
-                egui::RichText::new(format!("\"{feedback}\""))
-                    .size(FS_XS)
-                    .color(palette.faint)
-                    .italics(),
-            );
-        }
-    });
+        right -= SP_4;
+    }
+    let subject = head::one_line(
+        ui,
+        subject.to_owned(),
+        egui::TextFormat::simple(mono(12.0), palette.ink),
+        right - x,
+    );
+    ui.painter().galley(
+        egui::pos2(x, mid - subject.size().y / 2.0),
+        subject,
+        palette.ink,
+    );
     let _ = ix;
     response
 }
@@ -601,17 +651,28 @@ pub fn render_decision(
 /// with nothing streaming yet.
 pub fn render_waiting(ui: &mut egui::Ui) -> egui::Response {
     let palette = Palette::active_of(ui.ctx());
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = SP_4;
-        ui.set_min_height(ROW_H);
-        spinner(ui, palette.accent);
-        ui.label(
-            egui::RichText::new("Working")
-                .size(FS_SM)
-                .color(palette.muted),
-        );
-    })
-    .response
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), ROW_H),
+        egui::Sense::hover(),
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Working"));
+    let mid = rect.center().y;
+    head::paint_spinner(
+        ui,
+        egui::Rect::from_min_size(
+            egui::pos2(rect.left(), mid - ICON_SM / 2.0),
+            egui::vec2(ICON_SM, ICON_SM),
+        ),
+        palette.accent,
+    );
+    ui.painter().text(
+        egui::pos2(rect.left() + ICON_SM + SP_4, mid),
+        egui::Align2::LEFT_CENTER,
+        "Working",
+        egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
+        palette.muted,
+    );
+    response
 }
 
 /// What one prompt delivered as agent text, for the rows that read it:
@@ -647,9 +708,7 @@ pub fn attachments(session: &Session, ix: usize) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        BUBBLE_MAX, DASH, ICON_SM, ROW_H, SPIN_TURN, THINK_LINE, UserAction, attachment_names, mono,
-    };
+    use super::{BUBBLE_MAX, DASH, ICON_SM, ROW_H, THINK_LINE, UserAction, attachment_names, mono};
     use kage_client::wire::{BlobContent, ContentBlock};
 
     #[test]
@@ -699,7 +758,6 @@ mod tests {
         assert_eq!(ROW_H, 28.0);
         assert_eq!(ICON_SM, 14.0);
         assert_eq!(THINK_LINE, 20.0);
-        assert_eq!(SPIN_TURN.as_millis(), 900);
         assert_eq!(DASH, 4.0);
         assert_eq!(mono(12.0).size, 12.0);
     }
