@@ -927,9 +927,11 @@ fn agents(ui: &mut egui::Ui, store: &Store, palette: &Palette, events: &mut Vec<
                 let Some(option) = find(name) else {
                     continue;
                 };
-                row(
+                let badge = option.configured.then_some("set in config");
+                row_with(
                     ui,
                     label,
+                    badge,
                     &option.doc,
                     |ui| option_control(ui, option, palette, events),
                     palette,
@@ -945,34 +947,121 @@ fn agents(ui: &mut egui::Ui, store: &Store, palette: &Palette, events: &mut Vec<
 }
 
 /// The control of one engine option: segments for a choice, a stepper
-/// for a number or a fraction.
+/// for a number or a fraction, and the raw value for anything else.
 fn option_control(
     ui: &mut egui::Ui,
     option: &kage_client::wire::OptionEntry,
     palette: &Palette,
     events: &mut Vec<SettingsEvent>,
 ) {
-    if option.kind == "choice" {
-        let current = option.value.as_str().unwrap_or_default();
-        for value in option.values.iter().rev() {
-            let label = match value.as_str() {
-                "" => "Auto".to_owned(),
-                "xhigh" => "Max".to_owned(),
-                other => {
-                    let mut word = other.to_owned();
-                    word.get_mut(0..1).map(|first| first.make_ascii_uppercase());
-                    word
-                }
-            };
-            if ui.selectable_label(current == value, label).clicked() {
+    match option.kind.as_str() {
+        "choice" => {
+            let current = option.value.as_str().unwrap_or_default();
+            if let Some(value) = choice_segments(ui, &option.values, current, palette) {
                 events.push(SettingsEvent::EngineOption(
                     option.name.clone(),
-                    serde_json::Value::from(value.as_str()),
+                    serde_json::Value::from(value),
                 ));
             }
         }
-        return;
+        "int" | "fraction" => {
+            if let Some(value) = stepper(ui, option, palette) {
+                events.push(SettingsEvent::EngineOption(option.name.clone(), value));
+            }
+        }
+        _ => badge(ui, &option.value.to_string(), palette),
     }
+}
+
+/// The label a choice value reads as in its segment.
+fn choice_label(value: &str) -> String {
+    match value {
+        "" => "Auto".to_owned(),
+        "xhigh" => "Max".to_owned(),
+        other => {
+            let mut word = other.to_owned();
+            if let Some(first) = word.get_mut(0..1) {
+                first.make_ascii_uppercase();
+            }
+            word
+        }
+    }
+}
+
+/// A segmented choice on the soft fill, the chosen segment raised.
+/// Gives back the value a click picked.
+fn choice_segments(
+    ui: &mut egui::Ui,
+    values: &[String],
+    current: &str,
+    palette: &Palette,
+) -> Option<String> {
+    let font = egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR));
+    let galleys: Vec<_> = values
+        .iter()
+        .map(|value| {
+            let ink = if value == current {
+                palette.ink_strong
+            } else {
+                palette.muted
+            };
+            ui.painter()
+                .layout_no_wrap(choice_label(value), font.clone(), ink)
+        })
+        .collect();
+    let width: f32 = galleys
+        .iter()
+        .map(|galley| galley.size().x + 18.0)
+        .sum::<f32>()
+        + 2.0 * (values.len() as f32 + 1.0);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 28.0), egui::Sense::hover());
+    ui.painter()
+        .rect_filled(rect, egui::CornerRadius::same(R_MD as u8), palette.fill);
+    let mut x = rect.left() + 2.0;
+    let mut picked = None;
+    for (value, galley) in values.iter().zip(galleys) {
+        let seg = egui::Rect::from_min_size(
+            egui::pos2(x, rect.top() + 2.0),
+            egui::vec2(galley.size().x + 18.0, 24.0),
+        );
+        x = seg.right() + 2.0;
+        let on = value == current;
+        let response = ui
+            .interact(seg, ui.id().with(("segment", value)), egui::Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::WidgetType::SelectableLabel,
+                true,
+                on,
+                choice_label(value),
+            )
+        });
+        if on {
+            ui.painter()
+                .rect_filled(seg, egui::CornerRadius::same(6), palette.raised);
+        }
+        let ink = if on {
+            palette.ink_strong
+        } else {
+            palette.muted
+        };
+        ui.painter()
+            .galley(seg.center() - galley.size() / 2.0, galley, ink);
+        if response.clicked() && !on {
+            picked = Some(value.clone());
+        }
+    }
+    picked
+}
+
+/// A number's stepper: minus and plus around the value, in a hairline
+/// box. Gives back the value a click set.
+fn stepper(
+    ui: &mut egui::Ui,
+    option: &kage_client::wire::OptionEntry,
+    palette: &Palette,
+) -> Option<serde_json::Value> {
     let fraction = option.kind == "fraction";
     let current = option.value.as_f64().unwrap_or(0.0);
     let (step, shown) = match (fraction, option.name.as_str()) {
@@ -997,54 +1086,71 @@ fn option_control(
             option.max.unwrap_or(i64::MAX) as f64,
         )
     };
-    let down = (current - step).clamp(min, max);
-    let up = (current + step).clamp(min, max);
-    let mut set = |next: f64| {
-        let value = if fraction {
-            serde_json::Value::from((next * 100.0).round() / 100.0)
-        } else {
-            serde_json::Value::from(next as i64)
-        };
-        events.push(SettingsEvent::EngineOption(option.name.clone(), value));
-    };
-    if stepper_button(ui, crate::icons::Icon::Plus, up != current, palette) {
-        set(up);
-    }
-    ui.label(
-        egui::RichText::new(shown)
-            .size(FS_XS)
-            .family(family(FAMILY_MONO_REGULAR))
-            .color(palette.ink),
+    let value = ui.painter().layout_no_wrap(
+        shown,
+        egui::FontId::new(FS_XS, family(FAMILY_MONO_REGULAR)),
+        palette.ink,
     );
-    if stepper_button(ui, crate::icons::Icon::Minus, down != current, palette) {
-        set(down);
+    let value_w = value.size().x.max(64.0);
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(26.0 + 4.0 + value_w + 4.0 + 26.0 + 2.0, 28.0),
+        egui::Sense::hover(),
+    );
+    let radius = egui::CornerRadius::same(R_MD as u8);
+    ui.painter().rect_filled(rect, radius, palette.bg);
+    ui.painter().rect_stroke(
+        rect,
+        radius,
+        egui::Stroke::new(1.0, palette.line),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter().galley(
+        egui::pos2(
+            rect.center().x - value.size().x / 2.0,
+            rect.center().y - value.size().y / 2.0,
+        ),
+        value,
+        palette.ink,
+    );
+    let mut set = None;
+    for (delta, icon, at) in [
+        (-step, crate::icons::Icon::Minus, rect.left() + 1.0),
+        (step, crate::icons::Icon::Plus, rect.right() - 1.0 - 26.0),
+    ] {
+        let next = (current + delta).clamp(min, max);
+        let live = (next - current).abs() > f64::EPSILON;
+        let button =
+            egui::Rect::from_min_size(egui::pos2(at, rect.top() + 1.0), egui::vec2(26.0, 26.0));
+        let response = ui.interact(
+            button,
+            ui.id().with(("step", &option.name, delta.to_bits())),
+            if live {
+                egui::Sense::click()
+            } else {
+                egui::Sense::hover()
+            },
+        );
+        let label = if delta < 0.0 { "Less" } else { "More" };
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, live, label));
+        let tint = if live { palette.muted } else { palette.ghost };
+        crate::icons::themed_image(icon, 12.0, tint).paint_at(
+            ui,
+            egui::Rect::from_center_size(button.center(), egui::vec2(12.0, 12.0)),
+        );
+        if live && response.clicked() {
+            set = Some(if fraction {
+                serde_json::Value::from((next * 100.0).round() / 100.0)
+            } else {
+                serde_json::Value::from(next as i64)
+            });
+        }
     }
+    set
 }
 
 /// `text` for a value, or "Off" when the value is zero.
 fn off_or(value: f64, text: String) -> String {
     if value == 0.0 { "Off".to_owned() } else { text }
-}
-
-/// One stepper arrow, dimmed and inert when it would not move the value.
-fn stepper_button(
-    ui: &mut egui::Ui,
-    icon: crate::icons::Icon,
-    enabled: bool,
-    palette: &Palette,
-) -> bool {
-    let tint = if enabled {
-        palette.muted
-    } else {
-        palette.faint
-    };
-    ui.add_enabled(
-        enabled,
-        egui::Button::image(crate::icons::themed_image(icon, 12.0, tint))
-            .fill(egui::Color32::TRANSPARENT)
-            .min_size(egui::vec2(26.0, 26.0)),
-    )
-    .clicked()
 }
 
 /// The row naming the theme System draws on a dark or a light
@@ -2009,6 +2115,7 @@ pub(crate) fn row_rule(ui: &egui::Ui, rect: egui::Rect, palette: &Palette) {
 fn row_frame(
     ui: &mut egui::Ui,
     label: &str,
+    badge: Option<&str>,
     hint: &str,
     reserve: f32,
     sense: egui::Sense,
@@ -2035,8 +2142,19 @@ fn row_frame(
     row_rule(ui, rect, palette);
     let mut y = rect.center().y - text_h / 2.0;
     let name_h = name.size().y;
+    let name_w = name.size().x;
     ui.painter()
         .galley(egui::pos2(rect.left() + 16.0, y), name, palette.ink);
+    if let Some(badge) = badge {
+        paint_badge(
+            ui,
+            egui::pos2(rect.left() + 16.0 + name_w + 8.0, y + name_h / 2.0),
+            badge,
+            10.5,
+            palette.muted,
+            palette,
+        );
+    }
     y += name_h;
     if let Some(help) = help {
         ui.painter()
@@ -2059,9 +2177,29 @@ pub(crate) fn row(
     control: impl FnOnce(&mut egui::Ui),
     palette: &Palette,
 ) {
+    row_with(ui, label, None, hint, control, palette);
+}
+
+/// A row as [`row`] draws it, with an optional badge after its label.
+pub(crate) fn row_with(
+    ui: &mut egui::Ui,
+    label: &str,
+    badge: Option<&str>,
+    hint: &str,
+    control: impl FnOnce(&mut egui::Ui),
+    palette: &Palette,
+) {
     let id = ui.id().with(("settings-row", label));
     let reserve = ui.data(|data| data.get_temp::<f32>(id)).unwrap_or(120.0);
-    let (response, slot) = row_frame(ui, label, hint, reserve, egui::Sense::hover(), palette);
+    let (response, slot) = row_frame(
+        ui,
+        label,
+        badge,
+        hint,
+        reserve,
+        egui::Sense::hover(),
+        palette,
+    );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label));
     let used = ui
         .scope_builder(
@@ -2106,7 +2244,7 @@ pub(crate) fn toggle_row(
     on: &mut bool,
     palette: &Palette,
 ) {
-    let (response, slot) = row_frame(ui, label, hint, 36.0, egui::Sense::click(), palette);
+    let (response, slot) = row_frame(ui, label, None, hint, 36.0, egui::Sense::click(), palette);
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     let state = *on;
     response

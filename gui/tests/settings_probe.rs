@@ -436,6 +436,12 @@ fn the_agent_page_draws_the_engine_options() {
     harness.state_mut().1.open(Section::Agents);
     harness.run();
     harness.run();
+    if std::env::var_os("KAGE_PROBE_PNG").is_some() {
+        let image = harness.render().expect("the page renders");
+        image
+            .save("/tmp/settings-agents-options.png")
+            .expect("the page image saves");
+    }
     assert!(
         harness.query_all_by_label("Max depth").count() > 0,
         "the page draws the engine's agent options"
