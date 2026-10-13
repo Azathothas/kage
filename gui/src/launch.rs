@@ -911,6 +911,9 @@ impl ShellApp {
             );
             workbench_events.borrow_mut().extend(events);
         };
+        let topbar_events: std::cell::RefCell<Vec<crate::ui::topbar::TopbarEvent>> =
+            std::cell::RefCell::new(Vec::new());
+        let sidebar_hidden = !self.shell.panels.sidebar_visible;
         let chat = |ui: &mut egui::Ui| {
             // The column is the transcript above and the composer
             // below: the transcript takes what is left, and the
@@ -925,6 +928,12 @@ impl ShellApp {
             // over a live transcript forever.
             let store = &mut store.borrow_mut();
             ui.vertical(|ui| {
+                crate::ui::topbar::show(
+                    ui,
+                    store,
+                    sidebar_hidden,
+                    &mut topbar_events.borrow_mut(),
+                );
                 // The vim bar sits under the composer, so the column
                 // reserves its height the way the old shell hung the
                 // bar below the bottom band.
@@ -1025,6 +1034,12 @@ impl ShellApp {
             });
         };
         crate::ui::shell::show(ui, &mut panels, sidebar_draw, chat, workbench);
+        for event in topbar_events.into_inner() {
+            match event {
+                crate::ui::topbar::TopbarEvent::ShowSidebar => panels.toggle_sidebar(),
+                crate::ui::topbar::TopbarEvent::ToggleWorkbench => panels.toggle_workbench(),
+            }
+        }
         self.shell.sidebar = sidebar.into_inner();
         self.shell.store = store.into_inner();
         self.shell.workbench = workbench_state.into_inner();
