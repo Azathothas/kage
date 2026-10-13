@@ -239,3 +239,21 @@ fn the_skip_button_answers_with_the_offered_reject() {
         "skip answers the offered reject"
     );
 }
+
+/// Renders the ask and question cards to `/tmp/approval-*.png` for a
+/// side-by-side against the reference, when `KAGE_PROBE_PNG` is set.
+#[test]
+fn the_cards_render_for_review() {
+    if std::env::var_os("KAGE_PROBE_PNG").is_none() {
+        return;
+    }
+    for (name, store) in [("ask", asked()), ("question", questioned())] {
+        let mut harness = harness_for(store);
+        harness.run();
+        harness.run();
+        let image = harness.render().expect("the card renders");
+        image
+            .save(format!("/tmp/approval-{name}.png"))
+            .expect("the card image saves");
+    }
+}

@@ -261,10 +261,21 @@ impl Approval {
             None => (palette.ok_bd, palette.surface),
         };
         let mut answer: Option<PermissionDecision> = None;
+        let ring = if ask.question.is_some() {
+            egui::Shadow::NONE
+        } else {
+            egui::Shadow {
+                offset: [0, 0],
+                blur: 0,
+                spread: 4,
+                color: palette.ok_soft,
+            }
+        };
         egui::Frame::NONE
             .fill(fill)
             .stroke(egui::Stroke::new(1.0, border))
             .corner_radius(egui::CornerRadius::same(R_XL as u8))
+            .shadow(ring)
             .inner_margin(egui::Margin::symmetric(14, 12))
             .show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
@@ -402,7 +413,10 @@ impl Approval {
             let field = egui::TextEdit::singleline(&mut text)
                 .hint_text("Reject with feedback...")
                 .desired_width(f32::INFINITY)
-                .font(egui::FontId::new(FS_SM, family(FAMILY_BODY_SEMIBOLD)))
+                .font(egui::FontId::new(
+                    FS_SM,
+                    family(crate::theme::FAMILY_BODY_REGULAR),
+                ))
                 .margin(egui::Margin::symmetric(10, 8));
             let response = ui.add(field);
             if response.changed() {
@@ -606,23 +620,36 @@ fn option_button(
     fill: egui::Color32,
     border: egui::Color32,
 ) -> egui::Response {
-    let response = ui.add(
-        egui::Button::new(
-            egui::RichText::new(label)
-                .size(FS_XS)
-                .family(family(FAMILY_BODY_SEMIBOLD))
-                .color(fg),
-        )
-        .fill(fill)
-        .stroke(egui::Stroke::new(1.0, border))
-        .corner_radius(egui::CornerRadius::same(R_MD as u8))
-        .min_size(egui::vec2(0.0, 26.0)),
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::FontId::new(FS_XS, family(crate::theme::FAMILY_BODY_MEDIUM)),
+        fg,
+    );
+    let cap = if digit > 0 { 6.0 + 16.0 } else { 0.0 };
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(9.0 + galley.size().x + cap + 9.0, 26.0),
+        egui::Sense::click(),
+    );
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    let radius = egui::CornerRadius::same(R_MD as u8);
+    ui.painter().rect_filled(rect, radius, fill);
+    ui.painter().rect_stroke(
+        rect,
+        radius,
+        egui::Stroke::new(1.0, border),
+        egui::StrokeKind::Inside,
+    );
+    let text_w = galley.size().x;
+    ui.painter().galley(
+        egui::pos2(rect.left() + 9.0, rect.center().y - galley.size().y / 2.0),
+        galley,
+        fg,
     );
     if digit > 0 {
-        let rect = response.rect;
         key_cap(
             ui,
-            egui::pos2(rect.right() - 12.0, rect.center().y),
+            egui::pos2(rect.left() + 9.0 + text_w + 6.0 + 8.0, rect.center().y),
             digit,
             fg,
         );
