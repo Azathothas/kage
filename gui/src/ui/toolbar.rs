@@ -23,6 +23,10 @@ const MENU_W: f32 = 440.0;
 /// The model picker's surface width.
 const MODEL_W: f32 = 400.0;
 
+/// The gauge card's height, for deciding which side of its pill it
+/// opens on.
+const GAUGE_H: f32 = 320.0;
+
 /// The model picker's card width, as the reference draws it.
 const PICKER_W: f32 = 380.0;
 
@@ -153,6 +157,11 @@ impl Toolbar {
     /// Toggles the context gauge.
     pub fn toggle_gauge(&mut self) {
         self.gauge_open = !self.gauge_open;
+    }
+
+    /// Closes the context gauge.
+    pub fn close_gauge(&mut self) {
+        self.gauge_open = false;
     }
 
     /// The mode picker's highlighted row.
@@ -319,6 +328,23 @@ fn picker_anchor(ctx: &egui::Context, pill: egui::Rect, height: f32) -> (egui::P
     }
 }
 
+/// Where the gauge card opens from its pill: its right edge on the
+/// pill's, above the pill, or below it when the window has no room
+/// above.
+fn gauge_anchor(ctx: &egui::Context, pill: egui::Rect) -> (egui::Pos2, egui::Align2) {
+    if pill.top() - GAUGE_H - SP_2 < ctx.content_rect().top() {
+        (
+            pill.right_bottom() + egui::vec2(0.0, SP_2),
+            egui::Align2::RIGHT_TOP,
+        )
+    } else {
+        (
+            pill.right_top() - egui::vec2(0.0, SP_2),
+            egui::Align2::RIGHT_BOTTOM,
+        )
+    }
+}
+
 /// Closes an open picker when the pointer clicks outside its card. A
 /// click on the pill that opened it is not outside, since the pill
 /// toggles the picker itself.
@@ -450,7 +476,7 @@ pub fn show(
             send_button(ui, running, has_text, &mut events);
             model_button(ui, toolbar, store, &mut events);
             compact_button(ui, store, running, &mut events);
-            context_ring(ui, toolbar, store, &mut events);
+            context_ring(ui, toolbar, store, running, &mut events);
         });
     });
     events
@@ -1506,6 +1532,7 @@ fn context_ring(
     ui: &mut egui::Ui,
     toolbar: &mut Toolbar,
     store: &Store,
+    running: bool,
     events: &mut Vec<ToolbarEvent>,
 ) -> Option<()> {
     let session = store.active_session()?;
@@ -1549,118 +1576,126 @@ fn context_ring(
         .iter()
         .filter(|item| matches!(item, kage_client::TranscriptItem::User { .. }))
         .count();
+    let messages = session
+        .items
+        .iter()
+        .filter(|item| {
+            matches!(
+                item,
+                kage_client::TranscriptItem::User { .. }
+                    | kage_client::TranscriptItem::Assistant { .. }
+            )
+        })
+        .count();
     let cost = store
         .active_id()
         .and_then(|id| store.tree_cost(id))
         .map(|cost| format!("{} {:.2}", cost.currency, cost.amount))
         .unwrap_or_else(|| "unknown".to_owned());
-    let model = crate::modes::select_option(session, "model").and_then(|option| {
-        option
-            .options
-            .iter()
-            .find(|choice| choice.value == option.current_value)
-            .map(|choice| choice.name.clone())
-    });
-    egui::Window::new("context-gauge")
+    let model = crate::modes::select_option(session, "model")
+        .and_then(|option| {
+            option
+                .options
+                .iter()
+                .find(|choice| choice.value == option.current_value)
+                .map(|choice| choice.name.clone())
+        })
+        .unwrap_or_else(|| "unknown".to_owned());
+    let mut rows = vec![vec![
+        ("Spent", cost),
+        ("Model", model),
+        ("Turns", turns.to_string()),
+    ]];
+    match session.usage.tokens {
+        Some(totals) => {
+            rows.push(vec![
+                ("Messages", messages.to_string()),
+                ("Input", pickers::tokens(totals.input)),
+                ("Output", pickers::tokens(totals.output)),
+            ]);
+            rows.push(vec![
+                ("Cache read", pickers::tokens(totals.cache_read)),
+                ("Cache write", pickers::tokens(totals.cache_write)),
+                ("Cache hits", cache_hits(&totals)),
+            ]);
+        }
+        None => rows.push(vec![("Messages", messages.to_string())]),
+    }
+    let (at, pivot) = gauge_anchor(ui.ctx(), response.rect);
+    let card = egui::Window::new("context-gauge")
+        .id(egui::Id::new("context-gauge"))
         .title_bar(false)
         .collapsible(false)
         .resizable(false)
-        .fixed_pos(response.rect.left_bottom() + egui::vec2(0.0, SP_2))
+        .fixed_pos(at)
+        .pivot(pivot)
         .min_width(MODEL_W)
         .order(egui::Order::Foreground)
         .frame(egui::Frame::NONE)
         .show(ui.ctx(), |ui| {
             surface(ui, palette, MODEL_W, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new("Context")
-                            .size(FS_XS + 1.0)
-                            .family(family(FAMILY_BODY_SEMIBOLD))
-                            .color(palette.ink_strong),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "{} / {}",
-                                pickers::tokens(used),
-                                pickers::tokens(size)
-                            ))
-                            .size(FS_XS)
-                            .family(family(FAMILY_MONO_REGULAR))
-                            .color(palette.muted),
-                        );
-                    });
-                    let (bg, fg) = if hot {
-                        (palette.warn_soft, palette.warn)
-                    } else {
-                        (palette.fill, palette.muted)
-                    };
-                    egui::Frame::NONE
-                        .fill(bg)
-                        .corner_radius(egui::CornerRadius::same(R_FULL as u8))
-                        .inner_margin(egui::Margin::symmetric(7, 3))
-                        .show(ui, |ui| {
-                            ui.label(
-                                egui::RichText::new(format!("{percent}%"))
-                                    .size(FS_2XS)
-                                    .color(fg),
-                            );
-                        });
-                });
-                ui.add_space(SP_2);
-                gauge_cells(ui, fill, hot, palette);
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new("0").size(FS_2XS).color(palette.faint));
-                    ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-                        ui.label(
-                            egui::RichText::new("compacts at 80%")
-                                .size(FS_2XS)
-                                .color(palette.faint),
-                        );
-                    });
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(
-                            egui::RichText::new(pickers::tokens(size))
-                                .size(FS_2XS)
-                                .color(palette.faint),
-                        );
-                    });
-                });
-                ui.add_space(SP_4);
                 egui::Frame::NONE
-                    .stroke(egui::Stroke::new(1.0, palette.subtle))
+                    .inner_margin(egui::Margin::symmetric(14, 12))
                     .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            gauge_stat(ui, "Spent", cost, palette);
-                            gauge_stat(
-                                ui,
-                                "Model",
-                                model.unwrap_or_else(|| "unknown".to_owned()),
-                                palette,
+                        ui.spacing_mut().item_spacing.y = 10.0;
+                        gauge_head(ui, used, size, percent, hot, palette);
+                        gauge_cells(ui, fill, hot, palette);
+                        gauge_legend(ui, size, palette);
+                        let (rule, _) = ui.allocate_exact_size(
+                            egui::vec2(ui.available_width(), 1.0),
+                            egui::Sense::hover(),
+                        );
+                        ui.painter()
+                            .rect_filled(rule, egui::CornerRadius::ZERO, palette.subtle);
+                        for row in &rows {
+                            gauge_stats(ui, row, palette);
+                        }
+                        let row = egui::vec2(ui.available_width(), 28.0);
+                        let rtl = egui::Layout::right_to_left(egui::Align::Center);
+                        ui.allocate_ui_with_layout(row, rtl, |ui| {
+                            ui.spacing_mut().item_spacing.x = 8.0;
+                            let compact = ui.add_enabled(
+                                !running,
+                                egui::Button::image_and_text(
+                                    crate::icons::themed_image(Icon::Layers, 12.0, palette.ink),
+                                    egui::RichText::new("Compact now")
+                                        .size(FS_XS)
+                                        .color(palette.ink),
+                                )
+                                .fill(palette.fill)
+                                .stroke(egui::Stroke::new(1.0, palette.line))
+                                .corner_radius(egui::CornerRadius::same(R_MD as u8))
+                                .min_size(egui::vec2(0.0, 26.0)),
                             );
-                            gauge_stat(ui, "Turns", turns.to_string(), palette);
+                            if compact.clicked() {
+                                events.push(ToolbarEvent::Compact);
+                            }
+                            let note = ui.available_width();
+                            let layout = egui::Layout::top_down(egui::Align::Min);
+                            ui.allocate_ui_with_layout(egui::vec2(note, 0.0), layout, |ui| {
+                                ui.set_width(note);
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(
+                                            "The engine compacts on its own at 80%, \
+                                             summarizing older turns.",
+                                        )
+                                        .size(FS_2XS)
+                                        .color(palette.faint),
+                                    )
+                                    .wrap(),
+                                );
+                            });
                         });
                     });
-                ui.add_space(SP_2);
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new(
-                            "The engine compacts on its own at 80%, summarizing older turns.",
-                        )
-                        .size(FS_2XS)
-                        .color(palette.faint),
-                    );
-                    if ui
-                        .add(egui::Button::new(
-                            egui::RichText::new("Compact now").size(FS_2XS),
-                        ))
-                        .clicked()
-                    {
-                        events.push(ToolbarEvent::Compact);
-                    }
-                });
             });
         });
+    let escape = ui.input(|input| input.key_pressed(egui::Key::Escape));
+    if let Some(card) = card
+        && (escape || (card.response.clicked_elsewhere() && !response.clicked()))
+    {
+        toolbar.close_gauge();
+    }
     let _ = response.on_hover_text(tip);
     Some(())
 }
@@ -1694,16 +1729,115 @@ fn gauge_cells(ui: &mut egui::Ui, fill: f64, hot: bool, palette: &Palette) {
     }
 }
 
-/// One gauge stat: a faint label over its value.
-fn gauge_stat(ui: &mut egui::Ui, label: &str, value: String, palette: &Palette) {
-    ui.vertical(|ui| {
-        ui.label(egui::RichText::new(label).size(FS_2XS).color(palette.faint));
-        ui.label(
-            egui::RichText::new(value)
-                .size(FS_XS + 1.0)
-                .color(palette.ink),
+/// The gauge's head: the title, the tokens in use over the window,
+/// and the percent chip, warm once compaction is near.
+fn gauge_head(ui: &mut egui::Ui, used: u64, size: u64, percent: i64, hot: bool, palette: &Palette) {
+    let (rect, head) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 20.0), egui::Sense::hover());
+    head.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Context"));
+    let mid = rect.center().y;
+    let title = ui.painter().layout_no_wrap(
+        "Context".to_owned(),
+        egui::FontId::new(FS_SM, family(FAMILY_BODY_SEMIBOLD)),
+        palette.ink_strong,
+    );
+    ui.painter().galley(
+        egui::pos2(rect.left(), mid - title.size().y / 2.0),
+        title,
+        palette.ink_strong,
+    );
+    let (bg, fg) = if hot {
+        (palette.warn_soft, palette.warn)
+    } else {
+        (palette.fill, palette.muted)
+    };
+    let chip_text = ui.painter().layout_no_wrap(
+        format!("{percent}%"),
+        egui::FontId::new(FS_2XS, family(FAMILY_BODY_REGULAR)),
+        fg,
+    );
+    let chip = egui::Rect::from_min_max(
+        egui::pos2(rect.right() - chip_text.size().x - 14.0, mid - 9.0),
+        egui::pos2(rect.right(), mid + 9.0),
+    );
+    ui.painter()
+        .rect_filled(chip, egui::CornerRadius::same(R_FULL as u8), bg);
+    ui.painter()
+        .galley(chip.center() - chip_text.size() / 2.0, chip_text, fg);
+    let totals = ui.painter().layout_no_wrap(
+        format!("{} / {}", pickers::tokens(used), pickers::tokens(size)),
+        egui::FontId::new(FS_XS, family(FAMILY_MONO_REGULAR)),
+        palette.muted,
+    );
+    ui.painter().galley(
+        egui::pos2(
+            chip.left() - 8.0 - totals.size().x,
+            mid - totals.size().y / 2.0,
+        ),
+        totals,
+        palette.muted,
+    );
+}
+
+/// The scale under the gauge cells: empty, the compaction mark, full.
+fn gauge_legend(ui: &mut egui::Ui, size: u64, palette: &Palette) {
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 14.0), egui::Sense::hover());
+    let font = egui::FontId::new(FS_2XS, family(FAMILY_BODY_REGULAR));
+    for (text, align) in [
+        ("0".to_owned(), egui::Align2::LEFT_CENTER),
+        ("compacts at 80%".to_owned(), egui::Align2::CENTER_CENTER),
+        (pickers::tokens(size), egui::Align2::RIGHT_CENTER),
+    ] {
+        let at = match align {
+            egui::Align2::LEFT_CENTER => rect.left_center(),
+            egui::Align2::RIGHT_CENTER => rect.right_center(),
+            _ => rect.center(),
+        };
+        ui.painter()
+            .text(at, align, text, font.clone(), palette.faint);
+    }
+}
+
+/// One row of gauge stats in equal columns: a faint label over its
+/// value, the value cut short when it runs out of room.
+fn gauge_stats(ui: &mut egui::Ui, stats: &[(&str, String)], palette: &Palette) {
+    let gap = 8.0;
+    let width = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, 34.0), egui::Sense::hover());
+    let column = (width - gap * 2.0) / 3.0;
+    for (n, (label, value)) in stats.iter().enumerate() {
+        let left = rect.left() + n as f32 * (column + gap);
+        ui.painter().text(
+            egui::pos2(left, rect.top()),
+            egui::Align2::LEFT_TOP,
+            *label,
+            egui::FontId::new(FS_2XS, family(FAMILY_BODY_REGULAR)),
+            palette.faint,
         );
-    });
+        let mut job = egui::text::LayoutJob::simple_singleline(
+            value.clone(),
+            egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
+            palette.ink,
+        );
+        job.wrap.max_width = column;
+        job.wrap.max_rows = 1;
+        job.wrap.break_anywhere = true;
+        job.wrap.overflow_character = Some('\u{2026}');
+        let galley = ui.painter().layout_job(job);
+        ui.painter()
+            .galley(egui::pos2(left, rect.top() + 16.0), galley, palette.ink);
+    }
+}
+
+/// The share of the prompt the provider served from its cache, as a
+/// percent, or `none` before any prompt went out.
+fn cache_hits(totals: &kage_client::wire::UsageTokens) -> String {
+    let prompt = totals.input + totals.cache_read + totals.cache_write;
+    if prompt == 0 {
+        return "none".to_owned();
+    }
+    format!("{:.0}%", totals.cache_read as f64 * 100.0 / prompt as f64)
 }
 
 /// The send and stop control: a 32px circle that interrupts while a
