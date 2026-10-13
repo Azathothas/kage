@@ -209,7 +209,11 @@ fn clickable_row(
     let mut rect = inner.response.rect;
     rect.min.x = left;
     rect.max.x = right.max(rect.max.x);
-    let response = ui.interact(rect, ui.id().with("row"), egui::Sense::click());
+    let response = ui.interact(
+        rect,
+        ui.id().with(("row", ui.next_auto_id())),
+        egui::Sense::click(),
+    );
     if response.hovered() {
         ui.painter()
             .set(background, egui::Shape::rect_filled(rect, radius, hover));

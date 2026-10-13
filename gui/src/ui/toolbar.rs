@@ -32,6 +32,12 @@ const MODE_PICKER_W: f32 = 440.0;
 /// The model list's tallest scroll, as the reference caps it.
 const PICKER_LIST_H: f32 = 360.0;
 
+/// The model card's height below its list: the thinking level and the notes.
+const PICKER_FOOT_H: f32 = 200.0;
+
+/// The mode card's height, for picking the side it opens on.
+const MODE_PICKER_H: f32 = 420.0;
+
 /// Which picker popover shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Picker {
@@ -258,6 +264,7 @@ fn pill(
         .inner_margin(egui::Margin::symmetric(9, 0))
         .show(ui, |ui| {
             ui.set_min_height(PILL_H);
+            ui.style_mut().interaction.selectable_labels = false;
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
                 body(ui);
@@ -269,7 +276,9 @@ fn pill(
     let id = egui::Id::new("toolbar-pill")
         .with(rect.left().to_bits())
         .with(rect.top().to_bits());
-    let response = ui.interact(rect, id, egui::Sense::click());
+    let response = ui
+        .interact(rect, id, egui::Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
     if response.hovered() {
         ui.painter()
             .rect_filled(rect, egui::CornerRadius::same(R_FULL as u8), palette.hover);
@@ -292,6 +301,31 @@ fn dimmed_pill(ui: &mut egui::Ui, label: &str, palette: &Palette, tip: &str) -> 
         })
         .response
         .on_hover_text(tip)
+}
+
+/// Where a picker card of `height` pixels opens from its pill: below
+/// the pill, or above it when the card would run off the screen.
+fn picker_anchor(ctx: &egui::Context, pill: egui::Rect, height: f32) -> (egui::Pos2, egui::Align2) {
+    if pill.bottom() + height + SP_2 > ctx.content_rect().bottom() {
+        (
+            pill.left_top() - egui::vec2(0.0, SP_2),
+            egui::Align2::LEFT_BOTTOM,
+        )
+    } else {
+        (
+            pill.left_bottom() + egui::vec2(0.0, SP_2),
+            egui::Align2::LEFT_TOP,
+        )
+    }
+}
+
+/// Closes an open picker when the pointer clicks outside its card. A
+/// click on the pill that opened it is not outside, since the pill
+/// toggles the picker itself.
+fn dismiss_outside(toolbar: &mut Toolbar, card: &egui::Response, pill: &egui::Response) {
+    if card.clicked_elsewhere() && !pill.clicked() {
+        toolbar.close_pickers();
+    }
 }
 
 /// A small mono chip, as the picker rows and the gauge carry.
@@ -372,8 +406,12 @@ pub(crate) fn surface(
         .inner_margin(egui::Margin::same(5))
         .shadow(palette.shadow_menu)
         .show(ui, |ui| {
-            ui.set_width(width);
-            body(ui);
+            ui.style_mut().interaction.selectable_labels = false;
+            ui.allocate_ui_with_layout(
+                egui::vec2(width, 0.0),
+                egui::Layout::top_down(egui::Align::Min),
+                body,
+            );
         });
 }
 
@@ -614,7 +652,9 @@ fn plus_row_button(
         .inner;
     let rect = inner.rect;
     let id = egui::Id::new("plus-row").with(rect.top().to_bits());
-    let response = ui.interact(rect, id, egui::Sense::click());
+    let response = ui
+        .interact(rect, id, egui::Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
     if response.hovered() {
         ui.painter()
             .rect_filled(rect, egui::CornerRadius::same(R_MD as u8), palette.selected);
@@ -714,15 +754,21 @@ fn mode_button(
     let Some(session_id) = store.active_id().map(str::to_owned) else {
         return Some(());
     };
-    egui::Window::new("mode-picker")
+    let (at, pivot) = picker_anchor(ui.ctx(), response.rect, MODE_PICKER_H);
+    let card = egui::Window::new("mode-picker")
         .title_bar(false)
         .collapsible(false)
         .resizable(false)
-        .fixed_pos(response.rect.left_bottom() + egui::vec2(0.0, SP_2))
+        .fixed_pos(at)
+        .pivot(pivot)
         .min_width(MODE_PICKER_W)
         .order(egui::Order::Foreground)
         .frame(egui::Frame::NONE)
         .show(ui.ctx(), |ui| {
+            if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+                toolbar.close_pickers();
+                return;
+            }
             surface(ui, palette, MODE_PICKER_W, |ui| {
                 let query = ui.add(
                     egui::TextEdit::singleline(toolbar.mode_query())
@@ -805,6 +851,7 @@ fn mode_button(
                         .inner;
                     if ui
                         .interact(inner.rect, row_id, egui::Sense::click())
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .clicked()
                     {
                         store.set_permission(&row.value);
@@ -820,6 +867,9 @@ fn mode_button(
                 }
             });
         });
+    if let Some(card) = card {
+        dismiss_outside(toolbar, &card.response, &response);
+    }
     Some(())
 }
 
@@ -968,11 +1018,13 @@ fn model_button(
     // The picker card: the search row over a scrolling list, the
     // thinking level and its notes under a separator, as the reference
     // picker stacks them.
-    egui::Window::new("model-picker")
+    let (at, pivot) = picker_anchor(ui.ctx(), response.rect, PICKER_LIST_H + PICKER_FOOT_H);
+    let card = egui::Window::new("model-picker")
         .title_bar(false)
         .collapsible(false)
         .resizable(false)
-        .fixed_pos(response.rect.left_bottom() + egui::vec2(0.0, SP_2))
+        .fixed_pos(at)
+        .pivot(pivot)
         .min_width(PICKER_W)
         .order(egui::Order::Foreground)
         .frame(egui::Frame::NONE)
@@ -1062,6 +1114,7 @@ fn model_button(
                 // The list scrolls; the card around it keeps its size.
                 egui::ScrollArea::vertical()
                     .max_height(PICKER_LIST_H)
+                    .min_scrolled_height(PICKER_LIST_H)
                     .show(ui, |ui| {
                         egui::Frame::NONE
                             .inner_margin(egui::Margin::same(5))
@@ -1138,6 +1191,7 @@ fn model_button(
                         let id = egui::Id::new("model-providers");
                         if ui
                             .interact(providers.rect, id, egui::Sense::click())
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
                             .clicked()
                         {
                             toolbar.close_pickers();
@@ -1152,6 +1206,9 @@ fn model_button(
                 );
             });
         });
+    if let Some(card) = card {
+        dismiss_outside(toolbar, &card.response, &response);
+    }
     Some(())
 }
 
@@ -1274,6 +1331,7 @@ fn model_row(
                     let star_id = egui::Id::new("model-star").with(row.id.as_str());
                     if ui
                         .interact(star.rect, star_id, egui::Sense::click())
+                        .on_hover_cursor(egui::CursorIcon::PointingHand)
                         .clicked()
                     {
                         star_asked = true;
@@ -1298,6 +1356,7 @@ fn model_row(
     }
     if ui
         .interact(frame.rect, row_id, egui::Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
     {
         return RowAsk::Choose;
@@ -1372,6 +1431,7 @@ fn thinking_row(ui: &mut egui::Ui, store: &mut Store, palette: &Palette, current
                 .corner_radius(egui::CornerRadius::same(6))
                 .show(ui, |ui| {
                     ui.set_min_width(seg_w);
+                    ui.set_max_width(seg_w);
                     ui.set_min_height(24.0);
                     ui.centered_and_justified(|ui| {
                         ui.label(
@@ -1383,7 +1443,13 @@ fn thinking_row(ui: &mut egui::Ui, store: &mut Store, palette: &Palette, current
                 })
                 .response;
             let id = egui::Id::new("thinking-segment").with(level.value.as_str());
-            if enabled && !on && ui.interact(seg.rect, id, egui::Sense::click()).clicked() {
+            if enabled
+                && !on
+                && ui
+                    .interact(seg.rect, id, egui::Sense::click())
+                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                    .clicked()
+            {
                 store.set_option("thinking", &level.value);
             }
         }
