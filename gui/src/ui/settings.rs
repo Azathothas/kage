@@ -885,7 +885,7 @@ fn option_control(
 ) {
     if option.kind == "choice" {
         let current = option.value.as_str().unwrap_or_default();
-        for value in &option.values {
+        for value in option.values.iter().rev() {
             let label = match value.as_str() {
                 "" => "Auto".to_owned(),
                 "xhigh" => "Max".to_owned(),
@@ -1095,7 +1095,10 @@ fn theme_card(
             egui::pos2(rect.left() + 10.0, rect.top() + 80.0),
             egui::Align2::LEFT_CENTER,
             choice.label(),
-            egui::FontId::new(FS_XS, crate::theme::family(crate::theme::FAMILY_BODY_REGULAR)),
+            egui::FontId::new(
+                FS_XS,
+                crate::theme::family(crate::theme::FAMILY_BODY_REGULAR),
+            ),
             palette.ink,
         );
     });
@@ -1609,9 +1612,9 @@ fn group(ui: &mut egui::Ui, text: &str, palette: &Palette) {
 /// A muted note under a page section.
 fn note(ui: &mut egui::Ui, text: &str, palette: &Palette) {
     ui.add_space(8.0);
-    ui.horizontal_wrapped(|ui| {
+    ui.horizontal(|ui| {
         ui.add_space(32.0);
-        ui.label(egui::RichText::new(text).size(FS_XS).color(palette.faint));
+        ui.add(egui::Label::new(egui::RichText::new(text).size(FS_XS).color(palette.faint)).wrap());
     });
     ui.add_space(8.0);
 }

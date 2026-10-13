@@ -249,3 +249,100 @@ fn the_terminal_pane_folds_each_run_to_its_command() {
         "the pane names its section"
     );
 }
+
+fn store_with_agent() -> Store {
+    let mut store = store_with_edit();
+    for frame in items_frame(
+        "s1",
+        &[serde_json::json!({
+            "sessionUpdate": "subagent_update",
+            "subagentSessionId": "child-1",
+            "name": "reviewer",
+            "task": "Check the null handling in parse_config",
+            "state": "running",
+        })],
+    ) {
+        store.absorb(frame);
+    }
+    store
+}
+
+#[test]
+fn the_agent_detail_shows_the_task_and_its_name() {
+    let mut harness = harness_for(store_with_agent());
+    harness.state_mut().1.open_agent("child-1".to_owned());
+    harness.run();
+    harness.run();
+    assert!(
+        harness.query_all_by_label("Check the null handling in parse_config").count() > 0,
+        "the detail draws the agent's task"
+    );
+    harness.render().expect("renders").save("/tmp/workbench-agent.png").expect("save");
+}
+
+#[test]
+fn an_agent_missing_from_the_session_reads_not_found() {
+    let mut harness = harness_for(store_with_edit());
+    harness.state_mut().1.open_agent("ghost".to_owned());
+    harness.run();
+    harness.run();
+    assert!(
+        harness.query_all_by_label("Agent not found.").count() > 0,
+        "the detail names a missing agent"
+    );
+}
+
+fn answer_last_fs_request(store: &mut Store, result: serde_json::Value) {
+    let id = store
+        .take_outgoing()
+        .into_iter()
+        .rev()
+        .find_map(|frame| match frame {
+            kage_client::Frame::Request { id, .. } => Some(id),
+            _ => None,
+        })
+        .expect("an fs request went out");
+    store.absorb(kage_client::Frame::Success { id, result });
+}
+
+fn store_with_preview() -> Store {
+    let mut store = store_with_edit();
+    store.fs_list("");
+    answer_last_fs_request(
+        &mut store,
+        serde_json::json!({
+            "op": "list",
+            "entries": [
+                {"path": "src/main.rs", "kind": "file", "size": 120},
+                {"path": "logo.png", "kind": "file", "size": 4096}
+            ],
+            "truncated": false
+        }),
+    );
+    store.fs_read("src/main.rs");
+    answer_last_fs_request(
+        &mut store,
+        serde_json::json!({
+            "op": "read",
+            "content": "fn main() {\n    println!(\"hi\");\n}\n",
+            "truncated": false,
+            "binary": false
+        }),
+    );
+    store
+}
+
+#[test]
+fn the_file_preview_draws_its_path_and_numbered_lines() {
+    let mut harness = harness_for(store_with_preview());
+    harness.state_mut().1.set_tab(Tab::Files);
+    harness.state_mut().1.mark_listing_asked("s1");
+    harness.state_mut().1.set_file(Some("src/main.rs".to_owned()));
+    harness.run();
+    harness.run();
+    assert!(
+        harness.query_all_by_label("src/main.rs").count() > 0,
+        "the preview header names the file"
+    );
+    harness.render().expect("renders").save("/tmp/workbench-preview.png").expect("save");
+}

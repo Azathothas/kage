@@ -407,3 +407,52 @@ fn an_empty_archive_says_so() {
         "an empty archive says so"
     );
 }
+
+fn option(name: &str, kind: &str, value: serde_json::Value, extra: serde_json::Value) -> serde_json::Value {
+    let mut entry = serde_json::json!({
+        "name": name,
+        "toml": format!("agent.{name}"),
+        "doc": format!("The {name} option."),
+        "kind": kind,
+        "default": value,
+        "value": value,
+    });
+    if let serde_json::Value::Object(extra) = extra {
+        entry.as_object_mut().expect("an object").extend(extra);
+    }
+    entry
+}
+
+#[test]
+fn the_agent_page_draws_the_engine_options() {
+    let mut store = booted();
+    store.ask_engine_options();
+    let id = store
+        .take_outgoing()
+        .into_iter()
+        .rev()
+        .find_map(|frame| match frame {
+            kage_client::Frame::Request { id, .. } => Some(id),
+            _ => None,
+        })
+        .expect("the options request went out");
+    store.absorb(kage_client::Frame::Success {
+        id,
+        result: serde_json::json!({ "options": [
+            option("thinking_level", "choice", serde_json::json!("medium"), serde_json::json!({"values": ["low", "medium", "xhigh"]})),
+            option("compaction_threshold", "fraction", serde_json::json!(0.8), serde_json::json!({})),
+            option("agent_max_depth", "int", serde_json::json!(3), serde_json::json!({"min": 1, "max": 8})),
+            option("agent_max_turns", "int", serde_json::json!(0), serde_json::json!({"min": 0, "max": 500})),
+            option("swarm_timeout_ms", "int", serde_json::json!(600000), serde_json::json!({"min": 60000, "max": 3600000})),
+        ]}),
+    });
+    let mut harness = harness_for(store);
+    harness.state_mut().1.open(Section::Agents);
+    harness.run();
+    harness.run();
+    assert!(
+        harness.query_all_by_label("Max depth").count() > 0,
+        "the page draws the engine's agent options"
+    );
+    harness.render().expect("renders").save("/tmp/settings-agents.png").expect("save");
+}
