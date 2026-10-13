@@ -853,6 +853,8 @@ impl ShellApp {
     /// status bar under them, and the chrome (splash, palette,
     /// toasts) over the top.
     fn draw(&mut self, ui: &mut egui::Ui) {
+        let link = self.shell.link();
+        self.shell.store.set_link(link);
         let active = self.shell.store.active_id().map(str::to_owned);
         if self.shell.composer_focus_for.as_ref() != Some(&active) {
             if !self.shell.store.prefs().vim {

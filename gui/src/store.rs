@@ -322,6 +322,11 @@ impl Store {
         self
     }
 
+    /// Follows the transport's link, which changes when the engine does.
+    pub fn set_link(&mut self, link: Link) {
+        self.link = link;
+    }
+
     /// What the transport connects to.
     #[must_use]
     pub fn link(&self) -> &Link {
