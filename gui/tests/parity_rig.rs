@@ -231,7 +231,8 @@ fn assert_the_real_shell_drew(harness: &Harness<'_, Rig>) {
     // once; neither survives these.
     let welcome = harness
         .query_all_by(|node| {
-            node.value().is_some_and(|v| v.contains("commands and sessions"))
+            node.value()
+                .is_some_and(|v| v.contains("commands and sessions"))
         })
         .count();
     assert_eq!(
@@ -271,7 +272,7 @@ fn the_dawn_shell_histograms_against_the_palette() {
 }
 
 /// The snapshot baselines. Re-baseline with
-/// `KITTEST_SNAPSHOT=overwrite cargo test --test parity_rig`.
+/// `UPDATE_SNAPSHOTS=1 cargo test --test parity_rig`.
 #[test]
 fn the_shadow_shell_snapshot_baseline() {
     let mut harness = harness_for("kage-shadow");

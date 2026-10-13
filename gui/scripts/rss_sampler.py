@@ -5,7 +5,7 @@ NFR-02 asks for idle RSS with a 5,000-row transcript: the number must
 be flat, not just small, because a transcript that grows its memory
 every frame fails the budget no matter where it starts. This script
 reads `/proc/<pid>/status` VmRSS on an interval (the same method the
-GPUI spike used) and prints the series summary: the peak, the first and
+E00 spike used) and prints the series summary: the peak, the first and
 last reading, and the growth across the run.
 
 Usage:

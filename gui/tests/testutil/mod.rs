@@ -1,7 +1,7 @@
 //! The harness the headless probes share: a themed egui context and
 //! the one-frame install every probe needs before its widgets draw.
 //!
-//! The GPUI suite got this from `cx.add_window_view` plus
+//! The old desktop suite got this from `cx.add_window_view` plus
 //! `VisualTestContext`, which installed the fonts and the theme for
 //! the window and let a test drive widgets by label. The egui harness
 //! replaces that with one helper: [`theme_installed`] installs the

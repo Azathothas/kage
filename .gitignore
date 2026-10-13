@@ -9,10 +9,3 @@ target/
 node_modules
 /docs/.vitepress/cache
 /docs/.vitepress/dist
-# Generated egui-spike web glue and wasm (rebuild with wasm-bindgen, see specs/epics/E00-spike.md)
-gui/spike-web/spike*.js
-gui/spike-web/spike*_bg.wasm
-gui/spike-web/*.d.ts
-gui/spike/tests/snapshots/*.diff.png
-gui/spike/tests/snapshots/*.new.png
-gui/spike/tests/snapshots/*.old.png

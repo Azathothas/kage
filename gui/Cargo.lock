@@ -4146,22 +4146,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "spike"
-version = "0.1.0"
-dependencies = [
- "eframe",
- "egui",
- "egui_commonmark",
- "egui_kittest",
- "egui_virtual_list",
- "log",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
- "web-time",
-]
-
-[[package]]
 name = "spirv"
 version = "0.4.0+sdk-1.4.341.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

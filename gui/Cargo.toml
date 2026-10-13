@@ -1,14 +1,12 @@
 [workspace]
 resolver = "3"
-# `spike` is the throwaway egui probe for the GPUI exit spike
-# (specs/epics/E00-spike.md); deleted at cutover.
-members = [".", "spike"]
+members = ["."]
 
 [package]
 name = "kage-desktop"
 version = "0.3.0"
 edition = "2024"
-# Kept at 1.95 from the GPUI days; the msrv gui leg in CI enforces
+# Pinned to 1.95.0 stable; the msrv gui leg in CI enforces
 # this floor.
 rust-version = "1.95"
 description = "The kage desktop client"
@@ -81,8 +79,10 @@ fontique = { version = "0.9", default-features = false, features = [
 ] }
 # Plain WebSocket client, no TLS: kage serves loopback ws:// only.
 tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
-# Decodes the embedded brand art for the window icon.
+# Decodes the embedded brand art for the window icon. Native only: the
+# browser takes the favicon from the served bundle.
 image = { version = "0.25", default-features = false, features = ["png"] }
+
 # Fetches the release list and the engine binary for the update
 # check and the setup screen download; rustls, so no system OpenSSL.
 ureq = "2.10"
@@ -106,9 +106,13 @@ wasm-bindgen-futures = "=0.4.79"
 js-sys = "=0.3.106"
 web-sys = { version = "=0.3.106", features = [
     "BinaryType",
+    "CssStyleDeclaration",
     "Document",
+    "Element",
+    "HtmlCanvasElement",
     "Location",
     "MessageEvent",
+    "Node",
     "Storage",
     "WebSocket",
     "Window",
