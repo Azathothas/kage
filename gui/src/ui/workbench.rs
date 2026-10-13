@@ -974,7 +974,12 @@ fn agents_pane(
         .collect();
     cards.sort_by_key(|facts| facts.item.as_ref().map(|(_, ix)| *ix).unwrap_or(u32::MAX));
     if cards.is_empty() {
-        empty_block(ui, crate::icons::Icon::Users, "No agents yet", palette);
+        let text = if agents.is_empty() {
+            "No agents yet"
+        } else {
+            "No agents match this filter."
+        };
+        empty_block(ui, crate::icons::Icon::Users, text, palette);
         return;
     }
     for facts in &cards {
