@@ -724,10 +724,6 @@ fn show_suggestion_menu(
 /// The suggestion surface's width.
 const SUGGEST_W: f32 = 460.0;
 
-/// The width the composer's toolbar row takes, so the field beside it
-/// knows how much of the row is left.
-const TOOLBAR_W: f32 = 320.0;
-
 /// The suggestion surface's max height, before it scrolls.
 const SUGGEST_MAX_H: f32 = 300.0;
 
@@ -801,6 +797,7 @@ impl Composer {
         let mut goal = false;
         let mut confirm_swarm = false;
         let has_text = !self.draft.text.trim().is_empty();
+        self.sync_placeholder(store, running);
 
         // The suggestion menu, over the field: the slash rows or the
         // mention rows the draft points at.
@@ -809,84 +806,127 @@ impl Composer {
         let menu_top = ui.next_widget_position().y - 6.0;
         let menu_left = ui.next_widget_position().x;
 
-        // The field: a framed multiline text edit that grows with its
-        // text, at the content column's width.
+        // The card: the field over the toolbar row, the way the
+        // reference composer stacks them. The border names the state:
+        // plan, then swarm, then focus, then rest.
+        let focused = ui
+            .ctx()
+            .memory(|memory| memory.has_focus(egui::Id::new("composer-input")));
+        let border = if store.plan_on() {
+            palette.accent_bd
+        } else if store.swarm_on() {
+            palette.done_bd
+        } else if focused {
+            palette.composer_focus_line
+        } else {
+            palette.composer_line
+        };
         let frame = egui::Frame::NONE
             .fill(palette.composer_bg)
-            .stroke(egui::Stroke::new(1.0, palette.composer_line))
+            .stroke(egui::Stroke::new(1.0, border))
             .corner_radius(egui::CornerRadius::same(crate::theme::R_COMPOSER as u8))
-            .inner_margin(egui::Margin::symmetric(
-                crate::theme::SP_6 as i8,
-                crate::theme::SP_4 as i8,
-            ));
+            .shadow(palette.shadow_input)
+            .outer_margin(egui::Margin::ZERO);
         let response = frame.show(ui, |ui| {
-            ui.horizontal_top(|ui| {
-                // The field takes the row's remainder: the toolbar's
-                // controls sit to its right, so the field's width is
-                // the row's minus the toolbar's own row.
-                let field_w = (ui.available_width() - TOOLBAR_W).max(120.0);
-                ui.vertical(|ui| {
-                    ui.set_width(field_w);
-                    let edit = egui::TextEdit::multiline(&mut self.draft.text)
-                        .id(egui::Id::new("composer-input"))
-                        .hint_text(self.placeholder.as_str())
-                        .desired_width(field_w)
-                        .lock_focus(true);
-                    let output = edit.show(ui);
-                    if let Some(range) = output.cursor_range {
-                        // The caret is a char index; the draft's caret
-                        // is a byte offset, so it converts.
-                        self.draft.caret = self
-                            .draft
-                            .text
-                            .char_indices()
-                            .nth(range.primary.index.0)
-                            .map_or(self.draft.text.len(), |(at, _)| at);
-                    }
-                    output.response
-                });
-                // The toolbar carries the send or stop control.
-                let toolbar_events =
-                    crate::ui::toolbar::show(ui, &mut self.toolbar, store, running, has_text);
-                for asked in toolbar_events {
-                    match asked {
-                        crate::ui::toolbar::ToolbarEvent::Submit => {
-                            event = ComposerEvent::Send { steer: false };
+            ui.vertical(|ui| {
+                // The field: frameless over the card's fill, its own
+                // 14/16/16/4 padding, and the reference's 60px floor.
+                egui::Frame::NONE
+                    .inner_margin(egui::Margin {
+                        left: 16,
+                        right: 16,
+                        top: 14,
+                        bottom: 4,
+                    })
+                    .show(ui, |ui| {
+                        let width = ui.available_width();
+                        let edit = egui::TextEdit::multiline(&mut self.draft.text)
+                            .id(egui::Id::new("composer-input"))
+                            .hint_text(self.placeholder.as_str())
+                            .desired_width(width)
+                            .min_size(egui::vec2(width, 60.0))
+                            .frame(egui::Frame::NONE)
+                            .margin(egui::Margin::ZERO)
+                            .lock_focus(true);
+                        let output = edit.show(ui);
+                        if !store.prefs().vim && ui.ctx().memory(|m| m.focused().is_none()) {
+                            output.response.request_focus();
                         }
-                        crate::ui::toolbar::ToolbarEvent::Cancel => {
-                            event = ComposerEvent::Stop;
+                        if let Some(range) = output.cursor_range {
+                            // The caret is a char index; the draft's caret
+                            // is a byte offset, so it converts.
+                            self.draft.caret = self
+                                .draft
+                                .text
+                                .char_indices()
+                                .nth(range.primary.index.0)
+                                .map_or(self.draft.text.len(), |(at, _)| at);
                         }
-                        crate::ui::toolbar::ToolbarEvent::OpenGoal => {
-                            goal = true;
-                        }
-                        crate::ui::toolbar::ToolbarEvent::TogglePlan => {
-                            if store.plan_on() {
-                                store.exit_plan();
-                            } else {
-                                store.enter_plan();
+                        output.response
+                    });
+                // The toolbar row under the field, the reference's
+                // 6/8/8 padding around it.
+                egui::Frame::NONE
+                    .inner_margin(egui::Margin {
+                        left: 8,
+                        right: 8,
+                        top: 6,
+                        bottom: 8,
+                    })
+                    .show(ui, |ui| {
+                        let toolbar_events = crate::ui::toolbar::show(
+                            ui,
+                            &mut self.toolbar,
+                            store,
+                            running,
+                            has_text,
+                        );
+                        for asked in toolbar_events {
+                            match asked {
+                                crate::ui::toolbar::ToolbarEvent::Submit => {
+                                    event = ComposerEvent::Send { steer: false };
+                                }
+                                crate::ui::toolbar::ToolbarEvent::Cancel => {
+                                    event = ComposerEvent::Stop;
+                                }
+                                crate::ui::toolbar::ToolbarEvent::OpenGoal => {
+                                    goal = true;
+                                }
+                                crate::ui::toolbar::ToolbarEvent::TogglePlan => {
+                                    if store.plan_on() {
+                                        store.exit_plan();
+                                    } else {
+                                        store.enter_plan();
+                                    }
+                                }
+                                crate::ui::toolbar::ToolbarEvent::ConfirmSwarm => {
+                                    confirm_swarm = true;
+                                }
+                                crate::ui::toolbar::ToolbarEvent::SwarmOff => {
+                                    store.set_option("swarm", "off");
+                                }
+                                crate::ui::toolbar::ToolbarEvent::SeedMention => {
+                                    self.draft.insert(" @");
+                                }
+                                crate::ui::toolbar::ToolbarEvent::SeedSlash => {
+                                    self.draft.text = "/".to_owned();
+                                    self.draft.caret = 1;
+                                }
+                                crate::ui::toolbar::ToolbarEvent::Compact => {
+                                    store.compact();
+                                }
+                                crate::ui::toolbar::ToolbarEvent::OpenProviders => {
+                                    event = ComposerEvent::OpenProviders;
+                                }
                             }
                         }
-                        crate::ui::toolbar::ToolbarEvent::ConfirmSwarm => {
-                            confirm_swarm = true;
-                        }
-                        crate::ui::toolbar::ToolbarEvent::SwarmOff => {
-                            store.set_option("swarm", "off");
-                        }
-                        crate::ui::toolbar::ToolbarEvent::SeedMention => {
-                            self.draft.insert(" @");
-                        }
-                        crate::ui::toolbar::ToolbarEvent::SeedSlash => {
-                            self.draft.text = "/".to_owned();
-                            self.draft.caret = 1;
-                        }
-                        crate::ui::toolbar::ToolbarEvent::Compact => {
-                            store.compact();
-                        }
-                    }
-                }
+                    });
             })
-            .inner
         });
+
+        // The hint line under the card: the key table on the left, the
+        // session's cost on the right, as the reference draws it.
+        hint_line(ui, store, running, enter_sends);
 
         // The token chip: the active `/command` or `@mention` drawn as
         // a badge on the input's top edge. The stored text stays plain;
@@ -968,6 +1008,27 @@ impl Composer {
         event
     }
 
+    /// Keeps the field's placeholder on the per-state phrasing: queueing
+    /// while a run is in flight, then swarm, then plan, then an open
+    /// ask, then the default.
+    fn sync_placeholder(&mut self, store: &crate::store::Store, running: bool) {
+        let wanted = if running {
+            "Queue a follow-up, or Ctrl+Enter to steer the running turn"
+        } else if store.swarm_on() {
+            "Describe work to split across parallel agents..."
+        } else if store.plan_on() {
+            "Describe what to plan..."
+        } else if store
+            .active_session()
+            .is_some_and(|session| !session.permissions.is_empty())
+        {
+            "Answer the request above first, or type to queue"
+        } else {
+            "Ask kage anything, @ to mention, / for commands"
+        };
+        self.set_placeholder(wanted);
+    }
+
     /// Replaces the draft with `text`, the caret at its end. The dock's
     /// edit action uses this, so the caret stays a valid byte offset.
     pub fn set_draft(&mut self, text: String) {
@@ -1004,6 +1065,74 @@ impl Composer {
     }
 }
 
+/// The hint line under the card: the key table on the left, the
+/// session's cost on the right. The phrasing follows the run state and
+/// the Enter-sends preference, as the reference's `hint_line` does.
+fn hint_line(ui: &mut egui::Ui, store: &crate::store::Store, running: bool, enter_sends: bool) {
+    let palette = crate::theme::Palette::active_of(ui.ctx());
+    let chip = |ui: &mut egui::Ui, keys: &str| crate::ui::palette::kbd_chip(ui, keys, palette);
+    let word = |ui: &mut egui::Ui, text: &str| {
+        ui.label(
+            egui::RichText::new(text)
+                .size(crate::theme::FS_2XS)
+                .color(palette.faint),
+        )
+    };
+    egui::Frame::NONE
+        .inner_margin(egui::Margin {
+            left: 6,
+            right: 6,
+            top: 6,
+            bottom: 0,
+        })
+        .show(ui, |ui| {
+            ui.set_min_height(16.0);
+            ui.horizontal(|ui| {
+                if !enter_sends {
+                    chip(ui, "Ctrl Enter");
+                    word(ui, if running { "queue" } else { "send" });
+                    ui.add_space(6.0);
+                    chip(ui, "Enter");
+                    word(ui, "newline");
+                } else if running {
+                    let steer = store.state().steer_available();
+                    chip(ui, "Enter");
+                    word(ui, "queue");
+                    if steer {
+                        ui.add_space(6.0);
+                        chip(ui, "Ctrl Enter");
+                        word(ui, "steer");
+                    }
+                    ui.add_space(6.0);
+                    chip(ui, "Esc Esc");
+                    word(ui, "interrupt");
+                    if !steer {
+                        ui.add_space(6.0);
+                        word(ui, "steering not advertised");
+                    }
+                } else {
+                    chip(ui, "Enter");
+                    word(ui, "send");
+                    ui.add_space(6.0);
+                    chip(ui, "Shift Enter");
+                    word(ui, "newline");
+                }
+                // The cost at the row's right edge, as the reference's
+                // justify-between does.
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let cost = store
+                        .active_id()
+                        .and_then(|id| store.tree_cost(id))
+                        .map(|cost| format!("{} {:.4}", cost.currency, cost.amount))
+                        .unwrap_or_default();
+                    if !cost.is_empty() {
+                        word(ui, &cost);
+                    }
+                });
+            });
+        });
+}
+
 /// What the composer's frame asked the shell for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComposerEvent {
@@ -1024,6 +1153,8 @@ pub enum ComposerEvent {
     /// Leave the composer for vim normal mode: vim mode's Escape in
     /// the field.
     LeaveInsert,
+    /// Open the providers section of settings, from the model picker.
+    OpenProviders,
 }
 
 #[cfg(test)]
