@@ -639,7 +639,7 @@ fn changes_pane(
     store: &mut Store,
     palette: &Palette,
     items: &[TranscriptItem],
-    _events: &mut Vec<WorkbenchEvent>,
+    events: &mut Vec<WorkbenchEvent>,
 ) {
     let Some(session) = store.active_session() else {
         return;
@@ -665,7 +665,7 @@ fn changes_pane(
                     egui::Color32::TRANSPARENT
                 })
                 .corner_radius(egui::CornerRadius::same(R_MD as u8))
-                .min_size(egui::vec2(0.0, 30.0)),
+                .min_size(egui::vec2(ui.available_width(), 30.0)),
         );
         let rect = response.rect;
         ui.painter().text(
@@ -683,6 +683,20 @@ fn changes_pane(
             egui::FontId::new(FS_2XS, family(FAMILY_MONO_REGULAR)),
             palette.faint,
         );
+        if selected {
+            let open = egui::Rect::from_center_size(
+                egui::pos2(rect.right() - 100.0, rect.center().y),
+                egui::vec2(84.0, 22.0),
+            );
+            if ui
+                .put(open, egui::Button::new("Open file").small())
+                .clicked()
+            {
+                workbench.set_tab(Tab::Files);
+                workbench.set_file(Some(entry.path.clone()));
+                events.push(WorkbenchEvent::ReadFile(entry.path.clone()));
+            }
+        }
         if response.clicked() {
             if selected {
                 workbench.select(None);
