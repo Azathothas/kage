@@ -866,6 +866,13 @@ impl ShellApp {
         let sidebar_palette = crate::theme::Palette::active_of(ui.ctx());
         let (dot, halo) = crate::ui::sidebar::connect_dot(sidebar_palette, &self.shell.store);
         let sidebar_link = (link_name, link_status, dot, halo);
+        let sidebar_version = self
+            .shell
+            .store
+            .state()
+            .agent
+            .as_ref()
+            .and_then(|agent| agent.version.clone());
         let sidebar_events: std::cell::RefCell<Vec<crate::ui::sidebar::SidebarEvent>> =
             std::cell::RefCell::new(Vec::new());
         // The workbench and the store ride in cells the way the
@@ -892,6 +899,7 @@ impl ShellApp {
                     sidebar_link.2,
                     sidebar_link.3,
                 ),
+                sidebar_version.as_deref(),
             );
             sidebar_events.borrow_mut().extend(events);
         };
@@ -932,12 +940,18 @@ impl ShellApp {
                 };
                 if store.active_id().is_some() {
                     // The transcript takes what is left of the column;
-                    // the dock and the composer keep their own height
-                    // under it, so the field sits on the column's
-                    // bottom edge the way the old shell pinned it.
+                    // the dock, the approval card and the composer keep
+                    // their own height under it, so the field sits on
+                    // the column's bottom edge the way the old shell
+                    // pinned it. The card's band is the height it drew
+                    // last frame, so an ask shortens the transcript the
+                    // way the reference band's flex_none card pushes it.
                     let composer_h = COMPOSER_H;
                     let dock_h = DOCK_H;
-                    let top_h = (ui.available_height() - composer_h - dock_h - vim_h).max(0.0);
+                    let approval_h = self.shell.approval.band();
+                    let top_h =
+                        (ui.available_height() - composer_h - dock_h - vim_h - approval_h)
+                            .max(0.0);
                     let (top_rect, _) = ui.allocate_at_least(
                         egui::vec2(ui.available_width(), top_h),
                         egui::Sense::hover(),
@@ -951,26 +965,38 @@ impl ShellApp {
                     self.shell.transcript.show(&mut top, store, &mut events);
                     self.row_actions.extend(events);
                 } else {
-                    // The welcome pane: the wordmark over the glow,
-                    // the project pill, the cards and the hint. The
-                    // dock and the approval row only concern a live
-                    // session, so they stay in the session branch;
-                    // the composer below stays mounted, so a draft
-                    // survives the move. The pane reserves the
-                    // composer's band, so the field sits on the
-                    // column's bottom edge as it does over a
-                    // transcript.
-                    let pane_h = (ui.available_height() - COMPOSER_H - vim_h).max(0.0);
-                    let (rect, _) = ui.allocate_at_least(
-                        egui::vec2(ui.available_width(), pane_h),
-                        egui::Sense::hover(),
+                    // The welcome pane: the whole column, wordmark over
+                    // glow, and the composer hosted inside the stack
+                    // between the pill and the cards, as the reference
+                    // pane mounts it. There is no dock and no vim bar
+                    // here; a draft survives the move because the same
+                    // composer renders in both columns.
+                    let running = store
+                        .active_session()
+                        .is_some_and(|session| session.running);
+                    let enter_sends = store.prefs().enter_sends;
+                    let commands = store.composer_commands().to_vec();
+                    let listing = store
+                        .active_id()
+                        .and_then(|id| store.fs_listing(id))
+                        .cloned();
+                    self.shell.composer.set_listing(listing);
+                    let crate::launch::Shell {
+                        welcome, composer, ..
+                    } = &mut self.shell;
+                    let (events, composer_event) = welcome.show(
+                        &mut ui.new_child(
+                            egui::UiBuilder::new()
+                                .max_rect(ui.available_rect_before_wrap())
+                                .layout(egui::Layout::top_down(egui::Align::Min)),
+                        ),
+                        store,
+                        composer,
+                        &commands,
+                        running,
+                        enter_sends,
                     );
-                    let mut pane = ui.new_child(
-                        egui::UiBuilder::new()
-                            .max_rect(rect)
-                            .layout(egui::Layout::top_down(egui::Align::Min)),
-                    );
-                    for event in self.shell.welcome.show(&mut pane, store) {
+                    for event in events {
                         match event {
                             crate::ui::welcome::WelcomeEvent::Fill { text, option } => {
                                 if let Some((id, value)) = option {
@@ -988,13 +1014,14 @@ impl ShellApp {
                             }
                         }
                     }
+                    self.handle_composer_event(ui, store, composer_event, running);
                 }
                 if store.active_id().is_some() {
                     self.show_dock(ui, store);
                     self.show_approval(ui, store);
+                    self.show_composer(ui, store);
+                    self.show_vim_bar(ui, store);
                 }
-                self.show_composer(ui, store);
-                self.show_vim_bar(ui, store);
             });
         };
         crate::ui::shell::show(ui, &mut panels, sidebar_draw, chat, workbench);
@@ -1247,6 +1274,7 @@ impl ShellApp {
     /// the digit keys while it holds them.
     fn show_approval(&mut self, ui: &mut egui::Ui, store: &mut crate::store::Store) {
         let open = store.active_asks().len();
+        eprintln!("DBG show_approval open={open}");
         let events = self.shell.approval.show(ui, store);
         self.carry_approval(store, events);
         // A first ask takes the digit keys; the last one closing hands
@@ -1519,11 +1547,24 @@ impl ShellApp {
             .and_then(|id| store.fs_listing(id))
             .cloned();
         self.shell.composer.set_listing(listing);
-        let steer_available = store.state().steer_available();
         let event = self
             .shell
             .composer
             .show(ui, store, &commands, running, enter_sends);
+        self.handle_composer_event(ui, store, event, running);
+    }
+
+    /// Carries out what the composer's frame asked: dialogs, focus,
+    /// and the send path, shared by the docked composer and the
+    /// welcome pane's hosted one.
+    fn handle_composer_event(
+        &mut self,
+        ui: &mut egui::Ui,
+        store: &mut crate::store::Store,
+        event: crate::ui::composer::ComposerEvent,
+        running: bool,
+    ) {
+        let steer_available = store.state().steer_available();
         match event {
             crate::ui::composer::ComposerEvent::OpenGoal => {
                 self.shell
@@ -1539,6 +1580,11 @@ impl ShellApp {
                 ui.ctx().memory_mut(|memory| {
                     memory.surrender_focus(egui::Id::new("composer-input"));
                 });
+            }
+            crate::ui::composer::ComposerEvent::OpenProviders => {
+                self.shell
+                    .settings
+                    .open(crate::ui::settings::Section::Providers);
             }
             _ => {}
         }

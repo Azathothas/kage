@@ -21,6 +21,8 @@ use crate::theme::{
     FS_BASE, FS_SM, FS_XS, PANEL_HEAD_H, Palette, R_MD, family,
 };
 
+const FOOTER_H: f32 = 52.0;
+
 /// The days from 1970-01-01 to a civil date.
 #[must_use]
 pub fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
@@ -428,7 +430,8 @@ pub fn show(ui: &mut egui::Ui, sidebar: &mut Sidebar, store: &Store) -> Vec<Side
     let (name, status) = connect_lines(store);
     let palette = Palette::active_of(ui.ctx());
     let (dot, halo) = connect_dot(palette, store);
-    show_rows(ui, sidebar, &rows, grouped, (&name, &status, dot, halo))
+    let version = store.state().agent.as_ref().and_then(|agent| agent.version.clone());
+    show_rows(ui, sidebar, &rows, grouped, (&name, &status, dot, halo), version.as_deref())
 }
 
 /// Draws the sidebar over `rows`, which the caller read from the store
@@ -440,6 +443,7 @@ pub fn show_rows(
     rows: &[RowItem],
     grouped: bool,
     link: (&str, &str, egui::Color32, bool),
+    version: Option<&str>,
 ) -> Vec<SidebarEvent> {
     let palette = Palette::active_of(ui.ctx());
     let mut events = Vec::new();
@@ -448,7 +452,7 @@ pub fn show_rows(
     let (name, status, dot, halo) = link;
     ui.vertical(|ui| {
         ui.set_width(ui.available_width());
-        brand_row(ui, &mut events);
+        brand_row(ui, version, &mut events);
         nav_rows(ui, &mut events);
         list_header(ui, grouped, &mut events);
         list_body(ui, sidebar, rows, grouped, now, &mut events);
@@ -459,15 +463,13 @@ pub fn show_rows(
 
 /// The brand row: the eclipse mark, the wordmark, the engine version
 /// and the collapse control.
-fn brand_row(ui: &mut egui::Ui, events: &mut Vec<SidebarEvent>) {
+fn brand_row(ui: &mut egui::Ui, version: Option<&str>, events: &mut Vec<SidebarEvent>) {
     let palette = Palette::active_of(ui.ctx());
     let (rect, _) = ui.allocate_at_least(
         egui::vec2(ui.available_width(), PANEL_HEAD_H),
         egui::Sense::hover(),
     );
     let painter = ui.painter();
-    // The eclipse mark: a gradient disc with a backdrop-colored disc
-    // across its upper right.
     let mark = 22.0;
     let center = egui::pos2(rect.left() + 14.0 + mark / 2.0, rect.center().y);
     painter.rect_filled(
@@ -484,20 +486,34 @@ fn brand_row(ui: &mut egui::Ui, events: &mut Vec<SidebarEvent>) {
         egui::CornerRadius::same((inner / 2.0) as u8),
         palette.sidebar,
     );
-    painter.text(
+    let wordmark = painter.text(
         egui::pos2(center.x + mark / 2.0 + 9.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         "kage",
         egui::FontId::new(15.0, family(FAMILY_BODY_EXTRABOLD)),
         palette.ink_strong,
     );
+    if let Some(version) = version {
+        painter.text(
+            egui::pos2(wordmark.right() + 6.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            version,
+            egui::FontId::new(FS_XS, family(FAMILY_MONO_REGULAR)),
+            palette.faint,
+        );
+    }
+    let collapse = egui::Rect::from_center_size(
+        egui::pos2(rect.right() - 22.0, rect.center().y),
+        egui::vec2(28.0, 28.0),
+    );
     if ui
-        .add(
-            egui::Button::new(
-                egui::RichText::new("\u{2630}")
-                    .size(FS_BASE)
-                    .color(palette.muted),
-            )
+        .put(
+            collapse,
+            egui::Button::image(crate::icons::themed_image(
+                crate::icons::Icon::PanelLeft,
+                16.0,
+                palette.muted,
+            ))
             .fill(egui::Color32::TRANSPARENT)
             .corner_radius(egui::CornerRadius::same(R_MD as u8)),
         )
@@ -511,44 +527,65 @@ fn brand_row(ui: &mut egui::Ui, events: &mut Vec<SidebarEvent>) {
 /// The New session and Search nav rows.
 fn nav_rows(ui: &mut egui::Ui, events: &mut Vec<SidebarEvent>) {
     let palette = Palette::active_of(ui.ctx());
-    ui.horizontal(|ui| {
-        ui.add_space(8.0);
-        if ui
-            .add(
-                egui::Button::new(
-                    egui::RichText::new("New session")
-                        .size(FS_BASE)
-                        .color(palette.ink),
-                )
-                .fill(egui::Color32::TRANSPARENT)
-                .corner_radius(egui::CornerRadius::same(R_MD as u8))
-                .min_size(egui::vec2(0.0, 34.0)),
-            )
-            .on_hover_text("Start a new session")
-            .clicked()
-        {
-            events.push(SidebarEvent::NewSession(None));
-        }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.add_space(8.0);
-            if ui
-                .add(
-                    egui::Button::new(
-                        egui::RichText::new("Search")
-                            .size(FS_BASE)
-                            .color(palette.ink),
-                    )
-                    .fill(egui::Color32::TRANSPARENT)
-                    .corner_radius(egui::CornerRadius::same(R_MD as u8))
-                    .min_size(egui::vec2(0.0, 34.0)),
-                )
-                .on_hover_text("Search sessions")
-                .clicked()
-            {
-                events.push(SidebarEvent::OpenPalette);
-            }
-        });
-    });
+    if nav_row(ui, palette, crate::icons::Icon::Plus, "New session", "Ctrl N") {
+        events.push(SidebarEvent::NewSession(None));
+    }
+    if nav_row(ui, palette, crate::icons::Icon::Search, "Search", "Ctrl K") {
+        events.push(SidebarEvent::OpenPalette);
+    }
+}
+
+/// One full-width nav row: the icon, the label and the shortcut chip.
+/// Reports whether it was clicked.
+fn nav_row(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    icon: crate::icons::Icon,
+    label: &str,
+    keys: &str,
+) -> bool {
+    let (rect, response) = ui.allocate_at_least(
+        egui::vec2(ui.available_width(), 34.0),
+        egui::Sense::click(),
+    );
+    let painter = ui.painter();
+    if response.hovered() {
+        painter.rect_filled(rect, egui::CornerRadius::same(R_MD as u8), palette.hover);
+    }
+    let icon_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.left() + 8.0 + 8.0, rect.center().y),
+        egui::vec2(16.0, 16.0),
+    );
+    crate::icons::themed_image(icon, 16.0, palette.ink).paint_at(ui, icon_rect);
+    let painter = ui.painter();
+    painter.text(
+        egui::pos2(rect.left() + 32.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        label,
+        egui::FontId::new(FS_BASE, family(FAMILY_BODY_REGULAR)),
+        palette.ink,
+    );
+    let chip_text = painter.layout_no_wrap(
+        keys.to_owned(),
+        egui::FontId::new(FS_2XS, family(FAMILY_MONO_REGULAR)),
+        palette.faint,
+    );
+    let chip = egui::Rect::from_min_size(
+        egui::pos2(
+            rect.right() - chip_text.size().x - 20.0,
+            rect.center().y - 9.0,
+        ),
+        egui::vec2(chip_text.size().x + 12.0, 18.0),
+    );
+    painter.rect_filled(chip, egui::CornerRadius::same(5), palette.fill);
+    painter.rect_stroke(
+        chip,
+        egui::CornerRadius::same(5),
+        egui::Stroke::new(1.0, palette.line),
+        egui::StrokeKind::Inside,
+    );
+    painter.galley(chip.center() - chip_text.size() / 2.0, chip_text, palette.faint);
+    response.clicked()
 }
 
 /// The list header: the SESSIONS label and the grouping toggle.
@@ -598,7 +635,9 @@ fn list_body(
 ) {
     let palette = Palette::active_of(ui.ctx());
     let filtered = filter_rows(rows, &sidebar.query().clone());
+    let body_height = (ui.available_height() - FOOTER_H).max(0.0);
     egui::ScrollArea::vertical()
+        .max_height(body_height)
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -854,7 +893,7 @@ fn connect_footer(
     events: &mut Vec<SidebarEvent>,
 ) {
     let (rect, _) =
-        ui.allocate_at_least(egui::vec2(ui.available_width(), 52.0), egui::Sense::hover());
+        ui.allocate_at_least(egui::vec2(ui.available_width(), FOOTER_H), egui::Sense::hover());
     ui.painter().hline(
         rect.x_range(),
         rect.top(),
@@ -879,13 +918,18 @@ fn connect_footer(
         egui::FontId::new(11.0, family(FAMILY_BODY_REGULAR)),
         palette.faint,
     );
+    let gear = egui::Rect::from_center_size(
+        egui::pos2(rect.right() - 24.0, rect.center().y),
+        egui::vec2(28.0, 28.0),
+    );
     if ui
-        .add(
-            egui::Button::new(
-                egui::RichText::new("\u{2699}")
-                    .size(FS_BASE)
-                    .color(palette.muted),
-            )
+        .put(
+            gear,
+            egui::Button::image(crate::icons::themed_image(
+                crate::icons::Icon::Settings,
+                16.0,
+                palette.muted,
+            ))
             .fill(egui::Color32::TRANSPARENT)
             .corner_radius(egui::CornerRadius::same(R_MD as u8)),
         )
