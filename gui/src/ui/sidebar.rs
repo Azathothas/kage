@@ -17,7 +17,7 @@ use kage_client::wire::StopReason;
 use crate::clock::unix_seconds;
 use crate::store::Store;
 use crate::theme::{
-    FAMILY_BODY_EXTRABOLD, FAMILY_BODY_REGULAR, FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_2XS,
+    FAMILY_BODY_BOLD, FAMILY_BODY_REGULAR, FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_2XS,
     FS_BASE, FS_SM, FS_XS, Palette, R_MD, family,
 };
 
@@ -489,12 +489,17 @@ fn brand_row(ui: &mut egui::Ui, version: Option<&str>, events: &mut Vec<SidebarE
     let radius = 11.0;
     let center = egui::pos2(rect.left() + 6.0 + radius, rect.center().y);
     painter.add(orb(center, radius, palette.orb_1, palette.orb_2));
-    painter.circle_filled(center + egui::vec2(4.1, 0.2), 6.8, palette.sidebar);
+    painter.circle_filled(center + egui::vec2(5.12, -1.75), 7.79, palette.sidebar);
+    painter.circle_stroke(
+        center,
+        radius - 0.5,
+        egui::Stroke::new(1.0, palette.line_strong),
+    );
     let wordmark = painter.text(
         egui::pos2(center.x + radius + 9.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
         "kage",
-        egui::FontId::new(15.0, family(FAMILY_BODY_EXTRABOLD)),
+        egui::FontId::new(15.0, family(FAMILY_BODY_BOLD)),
         palette.ink_strong,
     );
     if let Some(version) = version {

@@ -20,6 +20,13 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+/// The field's height floor, its insets included, as the reference
+/// composer's textarea sits.
+const FIELD_H: f32 = 60.0;
+
+/// The field's top inset: the reference's padding plus the textarea's
+/// own, so the first line sits where the reference draws it.
+const FIELD_TOP: f32 = 26.0;
 /// How long the first Esc of an interrupt gesture stays armed.
 pub const ESC_WINDOW: Duration = Duration::from_millis(1500);
 
@@ -829,13 +836,12 @@ impl Composer {
             .outer_margin(egui::Margin::ZERO);
         let response = frame.show(ui, |ui| {
             ui.vertical(|ui| {
-                // The field: frameless over the card's fill, its own
-                // 14/16/16/4 padding, and the reference's 60px floor.
+                ui.spacing_mut().item_spacing.y = 0.0;
                 egui::Frame::NONE
                     .inner_margin(egui::Margin {
-                        left: 16,
-                        right: 16,
-                        top: 14,
+                        left: 20,
+                        right: 20,
+                        top: FIELD_TOP as i8,
                         bottom: 4,
                     })
                     .show(ui, |ui| {
@@ -844,7 +850,8 @@ impl Composer {
                             .id(egui::Id::new("composer-input"))
                             .hint_text(self.placeholder.as_str())
                             .desired_width(width)
-                            .min_size(egui::vec2(width, 60.0))
+                            .desired_rows(1)
+                            .min_size(egui::vec2(width, FIELD_H - FIELD_TOP - 4.0))
                             .frame(egui::Frame::NONE)
                             .margin(egui::Margin::ZERO)
                             .lock_focus(true);
@@ -1062,12 +1069,38 @@ impl Composer {
     }
 }
 
+/// A key cap as the hint line draws it: 16px tall, a hairline border,
+/// mono at 10px, with 2px either side.
+fn hint_kbd(ui: &mut egui::Ui, label: &str, palette: &crate::theme::Palette) {
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::FontId::new(
+            10.0,
+            crate::theme::family(crate::theme::FAMILY_MONO_REGULAR),
+        ),
+        palette.faint,
+    );
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(galley.size().x + 14.0, 16.0),
+        egui::Sense::hover(),
+    );
+    let cap = rect.shrink2(egui::vec2(2.0, 0.0));
+    ui.painter().rect_stroke(
+        cap,
+        egui::CornerRadius::same(5),
+        egui::Stroke::new(1.0, palette.line),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter()
+        .galley(cap.center() - galley.size() / 2.0, galley, palette.faint);
+}
+
 /// The hint line under the card: the key table on the left, the
 /// session's cost on the right. The phrasing follows the run state and
 /// the Enter-sends preference, as the reference's `hint_line` does.
 fn hint_line(ui: &mut egui::Ui, store: &crate::store::Store, running: bool, enter_sends: bool) {
     let palette = crate::theme::Palette::active_of(ui.ctx());
-    let chip = |ui: &mut egui::Ui, keys: &str| crate::ui::palette::kbd_chip(ui, keys, palette);
+    let chip = |ui: &mut egui::Ui, keys: &str| hint_kbd(ui, keys, palette);
     let word = |ui: &mut egui::Ui, text: &str| {
         ui.label(
             egui::RichText::new(text)
@@ -1085,10 +1118,10 @@ fn hint_line(ui: &mut egui::Ui, store: &crate::store::Store, running: bool, ente
         .show(ui, |ui| {
             ui.set_min_height(16.0);
             ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
                 if !enter_sends {
                     chip(ui, "Ctrl Enter");
                     word(ui, if running { "queue" } else { "send" });
-                    ui.add_space(6.0);
                     chip(ui, "Enter");
                     word(ui, "newline");
                 } else if running {
@@ -1096,11 +1129,9 @@ fn hint_line(ui: &mut egui::Ui, store: &crate::store::Store, running: bool, ente
                     chip(ui, "Enter");
                     word(ui, "queue");
                     if steer {
-                        ui.add_space(6.0);
                         chip(ui, "Ctrl Enter");
                         word(ui, "steer");
                     }
-                    ui.add_space(6.0);
                     chip(ui, "Esc Esc");
                     word(ui, "interrupt");
                     if !steer {
@@ -1110,7 +1141,6 @@ fn hint_line(ui: &mut egui::Ui, store: &crate::store::Store, running: bool, ente
                 } else {
                     chip(ui, "Enter");
                     word(ui, "send");
-                    ui.add_space(6.0);
                     chip(ui, "Shift Enter");
                     word(ui, "newline");
                 }

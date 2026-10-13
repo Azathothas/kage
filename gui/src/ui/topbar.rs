@@ -44,9 +44,18 @@ fn start_rename(ui: &mut egui::Ui, title: String) {
 /// control that brings the sidebar back.
 pub fn show(ui: &mut egui::Ui, store: &Store, sidebar_hidden: bool, events: &mut Vec<TopbarEvent>) {
     let palette = Palette::active_of(ui.ctx());
-    ui.allocate_ui_with_layout(
+    let (bar, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), PANEL_HEAD_H),
-        egui::Layout::left_to_right(egui::Align::Center),
+        egui::Sense::hover(),
+    );
+    let inner = egui::Rect::from_min_max(
+        bar.min + egui::vec2(14.0, 0.0),
+        bar.max - egui::vec2(10.0, 0.0),
+    );
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .max_rect(inner)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
         |ui| {
             ui.spacing_mut().item_spacing.x = SP_4;
             if sidebar_hidden
@@ -57,14 +66,17 @@ pub fn show(ui: &mut egui::Ui, store: &Store, sidebar_hidden: bool, events: &mut
                 events.push(TopbarEvent::ShowSidebar);
             }
             if let Some(session) = store.active_session() {
-                ui.label(
-                    egui::RichText::new(project_name(session.cwd.as_deref()))
-                        .size(FS_SM)
-                        .color(palette.muted),
-                );
-                ui.label(egui::RichText::new("/").size(FS_SM).color(palette.faint));
-                let title = store.display_title(&session.id);
-                rename_or_title(ui, palette, title, events);
+                ui.scope(|ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    ui.label(
+                        egui::RichText::new(project_name(session.cwd.as_deref()))
+                            .size(FS_SM)
+                            .color(palette.muted),
+                    );
+                    ui.label(egui::RichText::new("/").size(FS_SM).color(palette.ghost));
+                    let title = store.display_title(&session.id);
+                    rename_or_title(ui, palette, title, events);
+                });
                 if store.fork_parent(&session.id).is_some() {
                     pill(ui, palette, |ui| {
                         ui.label(egui::RichText::new("fork").size(FS_XS).color(palette.muted));
@@ -179,7 +191,7 @@ fn session_menu(
             16.0,
             palette.muted,
         ))
-        .fill(egui::Color32::TRANSPARENT)
+        .frame_when_inactive(false)
         .corner_radius(egui::CornerRadius::same(R_MD as u8)),
     )
     .ui(ui, |ui| {

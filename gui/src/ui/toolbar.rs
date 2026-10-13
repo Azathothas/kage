@@ -9,8 +9,8 @@
 use crate::icons::Icon;
 use crate::store::Store;
 use crate::theme::{
-    FAMILY_BODY_MEDIUM, FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_2XS, FS_SM, FS_XS, Palette,
-    R_FULL, R_LG, R_MD, SP_2, SP_4, family,
+    FAMILY_BODY_MEDIUM, FAMILY_BODY_REGULAR, FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_2XS,
+    FS_SM, FS_XS, Palette, R_FULL, R_LG, R_MD, SP_2, SP_4, family,
 };
 use crate::ui::pickers;
 
@@ -466,21 +466,20 @@ fn plus_button(
 ) -> Option<()> {
     let palette = Palette::active_of(ui.ctx());
     let open = toolbar.plus_open();
-    let response = ui.add(
-        egui::Button::new(
-            egui::RichText::new("+")
-                .size(16.0)
-                .family(family(FAMILY_BODY_MEDIUM))
-                .color(palette.muted),
-        )
-        .fill(if open {
-            palette.hover
-        } else {
-            egui::Color32::TRANSPARENT
-        })
-        .corner_radius(egui::CornerRadius::same(R_FULL as u8))
-        .min_size(egui::vec2(PILL_H, PILL_H)),
-    );
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(PILL_H, PILL_H), egui::Sense::click());
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let lit = open || response.hovered();
+    if lit {
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::same(R_FULL as u8), palette.hover);
+    }
+    let glyph = egui::Rect::from_center_size(rect.center(), egui::vec2(16.0, 16.0));
+    crate::icons::themed_image(
+        Icon::Plus,
+        16.0,
+        if lit { palette.ink } else { palette.muted },
+    )
+    .paint_at(ui, glyph);
     let response = response.on_hover_text("Add");
     if response.clicked() {
         toolbar.toggle_plus();
@@ -980,25 +979,22 @@ fn model_button(
     }
     let label = model_label(store);
     let level = thinking_label(store);
-    // The level label trails a middle dot and drops when thinking is
-    // off, as the web client's label does.
-    let text = match &level {
-        Some(level) => format!("{label} \u{b7} {level}"),
-        None => label,
-    };
     let ink = if level.is_some() {
         palette.ink
     } else {
         palette.muted
     };
+    let font = egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR));
     let response = pill(ui, open, palette, |ui| {
-        crate::icons::icon(ui, Icon::ChevronDown, 12.0, palette.faint);
-        ui.label(
-            egui::RichText::new(text)
-                .size(FS_XS + 1.0)
-                .family(family(FAMILY_BODY_MEDIUM))
-                .color(ink),
-        );
+        crate::icons::icon(ui, Icon::ChevronDown, 12.0, ink.gamma_multiply(0.7));
+        if let Some(level) = &level {
+            ui.label(
+                egui::RichText::new(format!("\u{b7} {level}"))
+                    .font(font.clone())
+                    .color(palette.faint),
+            );
+        }
+        ui.label(egui::RichText::new(label).font(font).color(ink));
     });
     let response = response.on_hover_text("Model and thinking");
     if response.clicked() {
@@ -1477,6 +1473,33 @@ fn compact_button(
     Some(())
 }
 
+/// The context ring's outer diameter.
+const RING_D: f32 = 16.0;
+
+/// Paints the context ring into `rect`: a faint track in `color` and
+/// the used share over it, clockwise from twelve o'clock.
+fn paint_ring(ui: &egui::Ui, rect: egui::Rect, fill: f64, color: egui::Color32) {
+    let stroke = 2.0;
+    let center = rect.center();
+    let radius = RING_D / 2.0 - stroke / 2.0;
+    ui.painter().circle_stroke(
+        center,
+        radius,
+        egui::Stroke::new(stroke, color.gamma_multiply(0.25)),
+    );
+    let steps = 48;
+    let lit = ((fill.clamp(0.0, 1.0) * f64::from(steps)).round() as usize).max(1);
+    let points: Vec<egui::Pos2> = (0..=lit)
+        .map(|step| {
+            let angle =
+                std::f32::consts::TAU * step as f32 / steps as f32 - std::f32::consts::FRAC_PI_2;
+            center + radius * egui::vec2(angle.cos(), angle.sin())
+        })
+        .collect();
+    ui.painter()
+        .add(egui::Shape::line(points, egui::Stroke::new(stroke, color)));
+}
+
 /// The context ring with its percent. The ring turns warn at 80
 /// percent, where the engine compacts on its own.
 fn context_ring(
@@ -1492,6 +1515,7 @@ fn context_ring(
     let percent = pickers::fill_percent(used, size);
     let hot = pickers::compacts_soon(used, size);
     let ring = if hot { palette.warn } else { palette.accent };
+    let mut ring_rect = egui::Rect::NOTHING;
     let response = pill(ui, false, palette, |ui| {
         ui.label(
             egui::RichText::new(format!("{percent}%"))
@@ -1499,27 +1523,12 @@ fn context_ring(
                 .family(family(FAMILY_MONO_REGULAR))
                 .color(palette.faint),
         );
+        ring_rect = ui
+            .allocate_exact_size(egui::vec2(RING_D, RING_D), egui::Sense::hover())
+            .0;
     })
     .on_hover_text("Context");
-    let rect = response.rect;
-    let center = rect.left_center() + egui::vec2(9.0, 0.0);
-    let radius = 9.0;
-    ui.painter()
-        .circle_stroke(center, radius, egui::Stroke::new(2.0, palette.fill_hover));
-    let points: Vec<egui::Pos2> = (0..=32)
-        .map(|step| {
-            let angle = std::f64::consts::TAU * step as f64 / 32.0 - std::f64::consts::FRAC_PI_2;
-            egui::pos2(
-                center.x + radius * angle.cos() as f32,
-                center.y + radius * angle.sin() as f32,
-            )
-        })
-        .collect();
-    let lit = (fill * 32.0).round() as usize;
-    ui.painter().add(egui::Shape::line(
-        points[..=lit.min(32)].to_vec(),
-        egui::Stroke::new(2.0, ring),
-    ));
+    paint_ring(ui, ring_rect, fill, ring);
     if store.prefs().fuel && response.clicked() {
         toolbar.toggle_gauge();
     }
