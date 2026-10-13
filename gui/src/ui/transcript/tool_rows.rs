@@ -2106,6 +2106,11 @@ fn swarm_card(
                         }
                     });
             }
+            // A closed card ends at its field or bar, as the reference's
+            // does: the template and the footer belong to the open card.
+            if !open {
+                return;
+            }
             if template_open && let Some(template) = template {
                 hairline(ui, palette);
                 let mut job = egui::text::LayoutJob::default();
@@ -2448,7 +2453,9 @@ fn member_row(
         egui::TextFormat::simple(body(FS_SM), palette.ink),
         item_w,
     );
-    let line_x = x + item.size().x + CHANGES_GAP;
+    // The item takes at least its 60px column, so the lines start
+    // together, as the reference's flex column sets them.
+    let line_x = x + item.size().x.max(item_w) + CHANGES_GAP;
     ui.painter()
         .galley(egui::pos2(x, mid - item.size().y / 2.0), item, palette.ink);
     let line = if member.phase.live() {
