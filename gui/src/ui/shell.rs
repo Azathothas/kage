@@ -131,11 +131,7 @@ pub fn show(
             .resizable(true)
             .default_size(panels.workbench_width)
             .size_range(200.0..=f32::MAX)
-            .frame(
-                egui::Frame::side_top_panel(ui.style())
-                    .fill(palette.well)
-                    .inner_margin(egui::Margin::symmetric(SP_4 as i8, SP_4 as i8)),
-            )
+            .frame(egui::Frame::NONE.fill(palette.sidebar))
             .show(ui, |ui| {
                 workbench(ui);
             });
@@ -167,7 +163,7 @@ pub fn show(
                 egui::Panel::left("side-float")
                     .resizable(false)
                     .exact_size(width)
-                    .frame(egui::Frame::NONE.fill(palette.bg).inner_margin(SP_4))
+                    .frame(egui::Frame::NONE.fill(palette.sidebar))
                     .show(ui, |ui| {
                         sidebar(ui);
                     });
@@ -187,7 +183,7 @@ pub fn show(
                 egui::Panel::right("workbench-float-panel")
                     .resizable(false)
                     .exact_size(width)
-                    .frame(egui::Frame::NONE.fill(palette.bg).inner_margin(SP_4))
+                    .frame(egui::Frame::NONE.fill(palette.sidebar))
                     .show(ui, |ui| {
                         workbench(ui);
                     });

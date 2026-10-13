@@ -10,9 +10,9 @@ use kage_client::{ToolCallItem, TranscriptItem};
 
 use crate::store::Store;
 use crate::theme::{
-    FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_2XS, FS_SM, FS_XS, Palette, R_FULL, R_MD, family,
+    FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_2XS, FS_SM, FS_XS, Palette, R_MD, family,
 };
-use crate::ui::agents::{self, AgentEvent};
+use crate::ui::agents;
 use crate::ui::transcript::model::{DiffLine, diff_lines};
 use crate::ui::transcript::tool_rows::RowAction;
 use crate::ui::transcript::view::TranscriptView;
@@ -119,6 +119,60 @@ pub fn session_changes(store: &Store, session: &kage_client::Session) -> Vec<Cha
             entry.by = agent.name.clone();
             out.push(entry);
         }
+    }
+    out
+}
+
+/// The tool call `id` of `session` or of a child under it.
+fn find_call<'a>(
+    store: &'a Store,
+    session: &'a kage_client::Session,
+    id: &str,
+) -> Option<&'a ToolCallItem> {
+    let own = std::iter::once(session);
+    let children = session
+        .agents
+        .keys()
+        .filter_map(|child| store.state().session(child));
+    own.chain(children).find_map(|session| {
+        session.items.iter().find_map(|item| match item {
+            TranscriptItem::ToolCall(call) if call.tool_call_id == id => Some(call),
+            _ => None,
+        })
+    })
+}
+
+/// How many shell calls `session` and the subagents under it ran.
+fn session_run_count(store: &Store, session: &kage_client::Session) -> usize {
+    let shells = |items: &[TranscriptItem]| {
+        items
+            .iter()
+            .filter(|item| {
+                matches!(item, TranscriptItem::ToolCall(call) if call.kind == ToolKind::Execute)
+            })
+            .count()
+    };
+    shells(&session.items)
+        + session
+            .agents
+            .keys()
+            .filter_map(|id| store.state().session(id))
+            .map(|child| shells(&child.items))
+            .sum::<usize>()
+}
+
+/// The shell calls `session` and the subagents under it ran: the
+/// session's own, then each child's, named by its agent.
+fn session_runs(store: &Store, session: &kage_client::Session) -> Vec<TermEntry> {
+    let mut out = term_entries(&session.items);
+    for (id, agent) in &session.agents {
+        let Some(child) = store.state().session(id) else {
+            continue;
+        };
+        out.extend(term_entries(&child.items).into_iter().map(|mut run| {
+            run.who = agent.name.clone();
+            run
+        }));
     }
     out
 }
@@ -413,16 +467,6 @@ pub fn bytes(n: usize) -> String {
     }
 }
 
-/// The mono count a tab carries beside its label.
-fn tab_count(ui: &mut egui::Ui, count: &str, palette: &Palette) {
-    ui.label(
-        egui::RichText::new(count)
-            .size(FS_2XS)
-            .family(family(FAMILY_MONO_REGULAR))
-            .color(palette.faint),
-    );
-}
-
 /// The uppercase section label between panes.
 fn section_head(ui: &mut egui::Ui, text: &str, palette: &Palette) {
     ui.add_space(12.0);
@@ -453,6 +497,9 @@ pub struct Workbench {
     agent: Option<String>,
     /// The subagent's transcript, pinned to `agent`.
     agent_view: Option<TranscriptView>,
+    /// Whether the subagent's detail tab shows, rather than the tab
+    /// the head left behind it.
+    agent_on: bool,
     /// The pane the tabs show.
     tab: Tab,
     /// The file the files pane previews.
@@ -487,6 +534,7 @@ impl Workbench {
     /// Switches to `tab`.
     pub fn set_tab(&mut self, tab: Tab) {
         self.tab = tab;
+        self.agent_on = false;
     }
 
     /// The filter the agents pane narrows with.
@@ -564,18 +612,28 @@ impl Workbench {
         self.tab = Tab::Agents;
         self.agent_view = Some(TranscriptView::pinned(id.clone()));
         self.agent = Some(id);
+        self.agent_on = true;
     }
 
     /// Returns from a subagent's detail to the agents list.
     pub fn close_agent(&mut self) {
         self.agent = None;
         self.agent_view = None;
+        self.agent_on = false;
+    }
+
+    /// Whether the subagent's detail tab is the one that shows.
+    #[must_use]
+    pub fn agent_on(&self) -> bool {
+        self.agent.is_some() && self.agent_on
     }
 }
 
 /// What the workbench asks the shell to carry out.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkbenchEvent {
+    /// Close the workbench.
+    Close,
     /// The user picked a file in the files pane; the shell mentions it
     /// in the composer.
     Mention(String),
@@ -599,89 +657,291 @@ pub fn show(
 ) -> Vec<WorkbenchEvent> {
     let palette = Palette::active_of(ui.ctx());
     let mut events = Vec::new();
-    let session_id = store.active_id().map(str::to_owned);
-
-    ui.vertical(|ui| {
-        ui.set_width(ui.available_width());
-        tab_strip(ui, workbench, palette);
-        let Some(session) = store.active_session() else {
-            empty_block(
-                ui,
-                crate::icons::Icon::Folder,
-                "Start a session to see its changes, agents and output here.",
-                palette,
-            );
-            return;
-        };
-        // The panes read the session by value, so the store stays free
-        // for the panes that write to it.
-        let items = session.items.clone();
-        let agents = session.agents.clone();
-        if workbench.agent().is_some() {
-            agent_detail(ui, workbench, store, palette, &mut events);
-            return;
-        }
-        egui::ScrollArea::vertical()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                match workbench.tab() {
-                    Tab::Changes => {
-                        changes_pane(ui, workbench, store, palette, &items, &mut events)
-                    }
-                    Tab::Files => files_pane(ui, workbench, store, palette, &mut events),
-                    Tab::Agents => agents_pane(ui, workbench, store, palette, &agents, &mut events),
-                    Tab::Terminal => terminal_pane(ui, workbench, palette, &items),
-                    Tab::Browser => browser_pane(ui, palette, &items),
-                }
-            });
-        let _ = session_id;
-    });
+    let panel = ui.max_rect();
+    ui.painter().vline(
+        panel.left() + 0.5,
+        panel.y_range(),
+        egui::Stroke::new(1.0, palette.line),
+    );
+    ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
+    head(ui, workbench, store, palette, &mut events);
+    let Some(session) = store.active_session() else {
+        empty_block(
+            ui,
+            crate::icons::Icon::PanelRight,
+            "Start a session to see its changes, agents and output here.",
+            palette,
+        );
+        return events;
+    };
+    // The panes read the session by value, so the store stays free
+    // for the panes that write to it.
+    let items = session.items.clone();
+    let agents = session.agents.clone();
+    if workbench.agent_on() {
+        agent_detail(ui, workbench, store, palette, &mut events);
+        return events;
+    }
+    // One scroll area per tab, so a long tab's position never lands
+    // past the end of a shorter one.
+    egui::ScrollArea::vertical()
+        .id_salt(("workbench-body", workbench.tab().label()))
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            match workbench.tab() {
+                Tab::Changes => changes_pane(ui, workbench, store, palette, &mut events),
+                Tab::Files => files_pane(ui, workbench, store, palette, &mut events),
+                Tab::Agents => agents_pane(ui, workbench, store, palette, &agents, &mut events),
+                Tab::Terminal => terminal_pane(ui, workbench, store, palette),
+                Tab::Browser => browser_pane(ui, palette, &items),
+            }
+            ui.add_space(16.0);
+        });
     events
 }
 
-/// The tab strip: the five tabs, the active one filled.
-fn tab_strip(ui: &mut egui::Ui, workbench: &mut Workbench, palette: &Palette) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 2.0;
-        for tab in Tab::ALL {
-            let active = workbench.tab() == tab;
-            let response = ui.add(
-                egui::Button::new(
-                    egui::RichText::new(tab.label())
-                        .size(FS_XS)
-                        .color(if active { palette.ink } else { palette.muted }),
-                )
-                .fill(if active {
-                    palette.selected
+/// The head: one button per tab, the active one labeled, with the
+/// counts the session gives them; the open subagent's tab; and the
+/// close button at the far end.
+fn head(
+    ui: &mut egui::Ui,
+    workbench: &mut Workbench,
+    store: &Store,
+    palette: &Palette,
+    events: &mut Vec<WorkbenchEvent>,
+) {
+    let (bar, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), crate::theme::PANEL_HEAD_H),
+        egui::Sense::hover(),
+    );
+    ui.painter().hline(
+        bar.x_range(),
+        bar.bottom() - 0.5,
+        egui::Stroke::new(1.0, palette.line),
+    );
+    let session = store.active_session();
+    let count = |tab: Tab| -> Option<String> {
+        let session = session?;
+        match tab {
+            Tab::Changes => {
+                let entries = session_changes(store, session);
+                (!entries.is_empty()).then(|| entries.len().to_string())
+            }
+            Tab::Files => None,
+            Tab::Agents => {
+                let total = session.agents.len();
+                let live = session
+                    .agents
+                    .values()
+                    .filter(|agent| {
+                        agent.state.is_none()
+                            || agent.state == Some(kage_client::wire::SubagentState::Running)
+                    })
+                    .count();
+                if live > 0 {
+                    Some(format!("{live} live"))
                 } else {
-                    egui::Color32::TRANSPARENT
-                })
-                .corner_radius(egui::CornerRadius::same(R_MD as u8))
-                .min_size(egui::vec2(0.0, crate::theme::TAB_H)),
-            );
-            if response.clicked() {
-                workbench.set_tab(tab);
+                    (total > 0).then(|| total.to_string())
+                }
+            }
+            Tab::Terminal => {
+                let runs = session_run_count(store, session);
+                (runs > 0).then(|| runs.to_string())
+            }
+            Tab::Browser => {
+                let pages = fetch_entries(&session.items);
+                (!pages.is_empty()).then(|| pages.len().to_string())
             }
         }
+    };
+    let mut x = bar.left() + 8.0;
+    let mid = bar.center().y;
+    let agent_on = workbench.agent_on();
+    for tab in Tab::ALL {
+        let on = workbench.tab() == tab && !agent_on;
+        let label = on.then_some(tab.label());
+        let (rect, response) = tab_button(
+            ui,
+            egui::pos2(x, mid),
+            tab.icon(),
+            label,
+            count(tab).as_deref(),
+            on,
+            tab.label(),
+            palette,
+        );
+        x = rect.right() + 2.0;
+        if response.clicked() {
+            workbench.set_tab(tab);
+        }
+    }
+    if let Some(id) = workbench.agent().map(str::to_owned) {
+        let name = session
+            .and_then(|session| session.agents.get(&id))
+            .and_then(|agent| agent.name.clone())
+            .unwrap_or_else(|| "agent".to_owned());
+        let (rect, response) = tab_button(
+            ui,
+            egui::pos2(x, mid),
+            crate::icons::Icon::Bot,
+            Some(&name),
+            None,
+            agent_on,
+            &name,
+            palette,
+        );
+        let close = egui::Rect::from_min_size(
+            egui::pos2(rect.right() - 8.0 - 15.0, mid - 7.5),
+            egui::vec2(15.0, 15.0),
+        );
+        let close_response = ui
+            .interact(close, ui.id().with("wb-agent-close"), egui::Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        if close_response.hovered() {
+            ui.painter()
+                .rect_filled(close, egui::CornerRadius::same(8), palette.fill_hover);
+        }
+        crate::icons::themed_image(crate::icons::Icon::X, 11.0, palette.muted).paint_at(
+            ui,
+            egui::Rect::from_center_size(close.center(), egui::vec2(11.0, 11.0)),
+        );
+        if close_response.clicked() {
+            workbench.close_agent();
+        } else if response.clicked() {
+            workbench.agent_on = true;
+        }
+    }
+    let close = egui::Rect::from_min_size(
+        egui::pos2(bar.right() - 4.0 - 24.0, mid - 12.0),
+        egui::vec2(24.0, 24.0),
+    );
+    let close_response = ui.scope_builder(egui::UiBuilder::new().max_rect(close), |ui| {
+        crate::ui::forms::icon_btn(
+            ui,
+            "Close workbench",
+            crate::icons::Icon::X,
+            24.0,
+            14.0,
+            R_MD,
+            crate::ui::forms::IconTones {
+                fill: egui::Color32::TRANSPARENT,
+                hover_fill: palette.hover,
+                ink: palette.muted,
+                hover_ink: palette.ink,
+            },
+        )
+        .on_hover_text("Close workbench (Ctrl B)")
     });
+    if close_response.inner.clicked() {
+        events.push(WorkbenchEvent::Close);
+    }
 }
 
-/// The changes pane: one row per changed file, with its add and delete
-/// counts, opening a diff for the selected one.
+/// One head tab: its icon, its label when given, and its count, 30px
+/// tall from `at` (left edge, vertical center), filled when on. A tab
+/// with room for the agent's close mark carries it at its end.
+#[allow(clippy::too_many_arguments)]
+fn tab_button(
+    ui: &mut egui::Ui,
+    at: egui::Pos2,
+    icon: crate::icons::Icon,
+    label: Option<&str>,
+    count: Option<&str>,
+    on: bool,
+    name: &str,
+    palette: &Palette,
+) -> (egui::Rect, egui::Response) {
+    let ink = if on {
+        palette.ink_strong
+    } else {
+        palette.muted
+    };
+    let label = label.map(|label| {
+        ui.painter().layout_no_wrap(
+            label.to_owned(),
+            egui::FontId::new(FS_SM, family(crate::theme::FAMILY_BODY_REGULAR)),
+            ink,
+        )
+    });
+    let count = count.map(|count| {
+        ui.painter().layout_no_wrap(
+            count.to_owned(),
+            egui::FontId::new(FS_2XS, family(FAMILY_MONO_REGULAR)),
+            palette.faint,
+        )
+    });
+    let closer = icon == crate::icons::Icon::Bot;
+    let mut width = 10.0 + 14.0 + 10.0;
+    if let Some(label) = &label {
+        width += 6.0 + label.size().x;
+    }
+    if let Some(count) = &count {
+        width += 6.0 + count.size().x;
+    }
+    if closer {
+        width += 6.0 + 15.0;
+    }
+    let rect = egui::Rect::from_min_size(egui::pos2(at.x, at.y - 15.0), egui::vec2(width, 30.0));
+    let response = ui
+        .interact(rect, ui.id().with(("wb-tab", name)), egui::Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(name);
+    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, name));
+    let fill = match (on, response.hovered()) {
+        (true, true) => Some(palette.selected_hover),
+        (true, false) => Some(palette.selected),
+        (false, true) => Some(palette.hover),
+        (false, false) => None,
+    };
+    if let Some(fill) = fill {
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::same(R_MD as u8), fill);
+    }
+    let ink = if !on && response.hovered() {
+        palette.ink
+    } else {
+        ink
+    };
+    let mut x = rect.left() + 10.0;
+    crate::icons::themed_image(icon, 14.0, ink).paint_at(
+        ui,
+        egui::Rect::from_min_size(egui::pos2(x, at.y - 7.0), egui::vec2(14.0, 14.0)),
+    );
+    x += 14.0;
+    if let Some(label) = label {
+        x += 6.0;
+        let w = label.size().x;
+        ui.painter()
+            .galley(egui::pos2(x, at.y - label.size().y / 2.0), label, ink);
+        x += w;
+    }
+    if let Some(count) = count {
+        x += 6.0;
+        ui.painter().galley(
+            egui::pos2(x, at.y - count.size().y / 2.0),
+            count,
+            palette.faint,
+        );
+    }
+    (rect, response)
+}
+
+/// The changes pane: the count and line totals, one row per changed
+/// file with its author when a subagent made it, then the selected
+/// file's diff under its path and Open file.
 fn changes_pane(
     ui: &mut egui::Ui,
     workbench: &mut Workbench,
     store: &mut Store,
     palette: &Palette,
-    items: &[TranscriptItem],
     events: &mut Vec<WorkbenchEvent>,
 ) {
     let Some(session) = store.active_session() else {
         return;
     };
-    let changes = session_changes(store, session);
-    if changes.is_empty() {
+    let entries = session_changes(store, session);
+    if entries.is_empty() {
         empty_block(
             ui,
             crate::icons::Icon::FileDiff,
@@ -690,95 +950,215 @@ fn changes_pane(
         );
         return;
     }
-    section_head(ui, "Changed files", palette);
-    for entry in &changes {
-        let selected = workbench.selected() == Some(entry.call_id.as_str());
-        let response = ui.add(
-            egui::Button::new("")
-                .fill(if selected {
-                    palette.selected
-                } else {
-                    egui::Color32::TRANSPARENT
-                })
-                .corner_radius(egui::CornerRadius::same(R_MD as u8))
-                .min_size(egui::vec2(ui.available_width(), 30.0)),
-        );
-        let rect = response.rect;
-        ui.painter().text(
-            egui::pos2(rect.left() + 12.0, rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            entry.path.clone(),
-            egui::FontId::new(FS_SM, family(crate::theme::FAMILY_BODY_REGULAR)),
-            palette.ink,
-        );
-        let counts = format!("+{} -{}", entry.add, entry.del);
-        ui.painter().text(
-            egui::pos2(rect.right() - 12.0, rect.center().y),
-            egui::Align2::RIGHT_CENTER,
-            counts,
-            egui::FontId::new(FS_2XS, family(FAMILY_MONO_REGULAR)),
-            palette.faint,
-        );
-        if selected {
-            let open = egui::Rect::from_center_size(
-                egui::pos2(rect.right() - 100.0, rect.center().y),
-                egui::vec2(84.0, 22.0),
-            );
-            if ui
-                .put(open, egui::Button::new("Open file").small())
-                .clicked()
-            {
-                workbench.set_tab(Tab::Files);
-                workbench.set_file(Some(entry.path.clone()));
-                events.push(WorkbenchEvent::ReadFile(entry.path.clone()));
-            }
+    let add: usize = entries.iter().map(|entry| entry.add).sum();
+    let del: usize = entries.iter().map(|entry| entry.del).sum();
+    let count = entries.len();
+    let (head, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), 12.0 + 20.0 + 4.0),
+        egui::Sense::hover(),
+    );
+    let mid = head.top() + 12.0 + 10.0;
+    let title = format!("{count} FILE{} CHANGED", if count == 1 { "" } else { "S" });
+    ui.interact(head, ui.id().with("wb-changes-head"), egui::Sense::hover())
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &title));
+    ui.painter().text(
+        egui::pos2(head.left() + 14.0, mid),
+        egui::Align2::LEFT_CENTER,
+        title.clone(),
+        egui::FontId::new(FS_XS, family(FAMILY_BODY_SEMIBOLD)),
+        palette.faint,
+    );
+    let mut right = head.right() - 14.0;
+    if del > 0 {
+        right = diff_chip(ui, right, mid, &format!("-{del}"), false, palette) - 6.0;
+    }
+    diff_chip(ui, right, mid, &format!("+{add}"), true, palette);
+    let selected = workbench
+        .selected()
+        .map(str::to_owned)
+        .filter(|id| entries.iter().any(|entry| &entry.call_id == id))
+        .or_else(|| entries.first().map(|entry| entry.call_id.clone()));
+    for entry in &entries {
+        let on = selected.as_deref() == Some(entry.call_id.as_str());
+        let (rect, response) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 34.0), egui::Sense::click());
+        let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, on, &entry.path)
+        });
+        let fill = match (on, response.hovered()) {
+            (true, true) => Some(palette.selected_hover),
+            (true, false) => Some(palette.selected),
+            (false, true) => Some(palette.hover),
+            (false, false) => None,
+        };
+        if let Some(fill) = fill {
+            ui.painter()
+                .rect_filled(rect, egui::CornerRadius::ZERO, fill);
         }
+        let mid = rect.center().y;
+        let icon = if entry.created {
+            crate::icons::Icon::FilePlus
+        } else {
+            crate::icons::Icon::File
+        };
+        crate::icons::themed_image(icon, 14.0, palette.faint).paint_at(
+            ui,
+            egui::Rect::from_min_size(
+                egui::pos2(rect.left() + 14.0, mid - 7.0),
+                egui::vec2(14.0, 14.0),
+            ),
+        );
+        let mut right = rect.right() - 14.0;
+        if entry.del > 0 {
+            right = diff_chip(ui, right, mid, &format!("-{}", entry.del), false, palette) - 8.0;
+        }
+        right = diff_chip(ui, right, mid, &format!("+{}", entry.add), true, palette) - 8.0;
+        if let Some(by) = &entry.by {
+            right = by_badge(ui, right, mid, by, palette) - 8.0;
+        }
+        let x = rect.left() + 14.0 + 14.0 + 8.0;
+        let path = crate::ui::transcript::head::one_line(
+            ui,
+            entry.path.clone(),
+            egui::TextFormat::simple(
+                egui::FontId::new(FS_XS, family(FAMILY_MONO_REGULAR)),
+                palette.ink,
+            ),
+            right - x,
+        );
+        ui.painter()
+            .galley(egui::pos2(x, mid - path.size().y / 2.0), path, palette.ink);
         if response.clicked() {
-            if selected {
-                workbench.select(None);
-            } else {
-                workbench.select(Some(entry.call_id.clone()));
-            }
+            workbench.select(Some(entry.call_id.clone()));
         }
     }
-    // The selected entry's diff, when one is picked.
-    if let Some(id) = workbench.selected().map(str::to_owned) {
-        let call = items.iter().find_map(|item| match item {
-            TranscriptItem::ToolCall(call) if call.tool_call_id == id => Some(call),
-            _ => None,
-        });
-        if let Some(call) = call {
-            section_head(ui, &entry_path(call), palette);
-            if let Some(lines) = diff_lines(call) {
-                for line in lines {
-                    let (marker, color) = match line {
-                        DiffLine::Add(_) => ("+", palette.diff_add),
-                        DiffLine::Del(_) => ("-", palette.diff_del),
-                        _ => (" ", palette.muted),
-                    };
-                    ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new(marker)
-                                .size(FS_2XS)
-                                .family(family(FAMILY_MONO_REGULAR))
-                                .color(color),
-                        );
-                        ui.label(
-                            egui::RichText::new(line.body().to_owned())
-                                .size(FS_2XS)
-                                .family(family(FAMILY_MONO_REGULAR))
-                                .color(color),
-                        );
-                    });
-                }
-            }
-        }
+    let Some(call) = selected
+        .as_deref()
+        .and_then(|id| find_call(store, session, id))
+    else {
+        return;
+    };
+    let path = change_path(call);
+    ui.add_space(8.0);
+    let (bar, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 36.0), egui::Sense::hover());
+    for y in [bar.top() + 0.5, bar.bottom() - 0.5] {
+        ui.painter()
+            .hline(bar.x_range(), y, egui::Stroke::new(1.0, palette.subtle));
+    }
+    let mid = bar.center().y;
+    crate::icons::themed_image(crate::icons::Icon::FileDiff, 14.0, palette.faint).paint_at(
+        ui,
+        egui::Rect::from_min_size(
+            egui::pos2(bar.left() + 14.0, mid - 7.0),
+            egui::vec2(14.0, 14.0),
+        ),
+    );
+    let open = egui::Rect::from_min_max(
+        egui::pos2(bar.right() - 14.0 - 90.0, bar.top()),
+        egui::pos2(bar.right() - 14.0, bar.bottom()),
+    );
+    let opened = ui
+        .scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(open)
+                .layout(egui::Layout::right_to_left(egui::Align::Center)),
+            |ui| ghost_button(ui, "Open file", palette),
+        )
+        .inner;
+    let x = bar.left() + 14.0 + 14.0 + 8.0;
+    let label = crate::ui::transcript::head::one_line(
+        ui,
+        path.clone(),
+        egui::TextFormat::simple(
+            egui::FontId::new(FS_XS, family(FAMILY_MONO_REGULAR)),
+            palette.ink,
+        ),
+        opened.rect.left() - 8.0 - x,
+    );
+    ui.painter().galley(
+        egui::pos2(x, mid - label.size().y / 2.0),
+        label,
+        palette.ink,
+    );
+    if opened.clicked() {
+        workbench.set_tab(Tab::Files);
+        workbench.set_file(Some(path.clone()));
+        events.push(WorkbenchEvent::ReadFile(path));
+    }
+    if let Some(lines) = diff_lines(call) {
+        crate::ui::transcript::tool_rows::render_diff(ui, &lines, palette);
     }
 }
 
-/// The path a change entry's diff names.
-fn entry_path(call: &ToolCallItem) -> String {
-    change_path(call)
+/// A diff count chip with its right edge at `right`, centered on
+/// `mid`: green for added lines, red for deleted. Gives back its left
+/// edge.
+fn diff_chip(ui: &egui::Ui, right: f32, mid: f32, text: &str, add: bool, palette: &Palette) -> f32 {
+    let (fg, bg) = if add {
+        (palette.diff_add, palette.diff_add_bg)
+    } else {
+        (palette.diff_del, palette.diff_del_bg)
+    };
+    let width = ui
+        .painter()
+        .layout_no_wrap(
+            text.to_owned(),
+            egui::FontId::new(FS_2XS, family(FAMILY_MONO_REGULAR)),
+            fg,
+        )
+        .size()
+        .x
+        + 14.0;
+    crate::ui::transcript::head::paint_chip(ui, egui::pos2(right - width, mid), text, fg, bg).left()
+}
+
+/// The badge naming the subagent that made a change, right edge at
+/// `right`. Gives back its left edge.
+fn by_badge(ui: &egui::Ui, right: f32, mid: f32, by: &str, palette: &Palette) -> f32 {
+    let galley = ui.painter().layout_no_wrap(
+        by.to_owned(),
+        egui::FontId::new(10.5, family(crate::theme::FAMILY_BODY_REGULAR)),
+        palette.muted,
+    );
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(right - galley.size().x - 16.0, mid - 9.0),
+        egui::vec2(galley.size().x + 16.0, 18.0),
+    );
+    let radius = egui::CornerRadius::same(9);
+    ui.painter().rect_filled(rect, radius, palette.fill);
+    ui.painter().rect_stroke(
+        rect,
+        radius,
+        egui::Stroke::new(1.0, palette.line),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, palette.muted);
+    rect.left()
+}
+
+/// The design's quiet text button: no frame, the hover fill.
+fn ghost_button(ui: &mut egui::Ui, label: &str, palette: &Palette) -> egui::Response {
+    let galley = ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::FontId::new(FS_XS, family(crate::theme::FAMILY_BODY_MEDIUM)),
+        palette.ink,
+    );
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(galley.size().x + 16.0, 22.0),
+        egui::Sense::click(),
+    );
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+    if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::same(R_MD as u8), palette.hover);
+    }
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, palette.ink);
+    response
 }
 
 /// The files pane: the workdir's listing, with a preview of the
@@ -813,57 +1193,80 @@ fn files_pane(
         return;
     };
     let entries: Vec<_> = listing.entries.clone();
-    section_head(ui, "Files", palette);
+    let truncated = listing.truncated;
+    let project = crate::ui::sidebar::project_name(
+        store
+            .active_session()
+            .and_then(|session| session.cwd.as_deref()),
+    );
+    section_head(ui, &project, palette);
     for entry in &entries {
-        let picked = workbench.file() == Some(entry.path.as_str());
-        let icon = if entry.kind == kage_client::wire::FsKind::Directory {
+        let is_dir = entry.kind == kage_client::wire::FsKind::Directory;
+        let depth = entry.path.matches('/').count();
+        let name = entry.path.rsplit('/').next().unwrap_or(&entry.path);
+        let on = workbench.file() == Some(entry.path.as_str());
+        let unlisted = is_dir
+            && truncated
+            && !entries
+                .iter()
+                .any(|other| other.path.starts_with(&format!("{}/", entry.path)));
+        let (rect, response) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 26.0), egui::Sense::click());
+        let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, on, name)
+        });
+        let fill = match (on, response.hovered()) {
+            (true, true) => Some(palette.selected_hover),
+            (true, false) => Some(palette.selected),
+            (false, true) => Some(palette.hover),
+            (false, false) => None,
+        };
+        if let Some(fill) = fill {
+            ui.painter()
+                .rect_filled(rect, egui::CornerRadius::ZERO, fill);
+        }
+        let mid = rect.center().y;
+        let x = rect.left() + 14.0 + depth as f32 * 14.0;
+        let icon = if is_dir {
             crate::icons::Icon::Folder
         } else {
             crate::icons::Icon::File
         };
-        let response = ui.add(
-            egui::Button::new("")
-                .fill(if picked {
-                    palette.selected
-                } else {
-                    egui::Color32::TRANSPARENT
-                })
-                .corner_radius(egui::CornerRadius::same(R_MD as u8))
-                .min_size(egui::vec2(ui.available_width(), 28.0)),
-        );
-        let rect = response.rect;
-        paint_icon(
+        crate::icons::themed_image(icon, 12.0, palette.faint).paint_at(
             ui,
-            icon,
-            14.0,
-            palette.muted,
-            egui::pos2(rect.left() + 13.0, rect.center().y),
+            egui::Rect::from_min_size(egui::pos2(x, mid - 6.0), egui::vec2(12.0, 12.0)),
         );
-        ui.painter().text(
-            egui::pos2(rect.left() + 26.0, rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            entry.path.clone(),
-            egui::FontId::new(FS_SM, family(crate::theme::FAMILY_BODY_REGULAR)),
-            if picked { palette.ink } else { palette.muted },
+        let ink = if is_dir { palette.muted } else { palette.ink };
+        let label = crate::ui::transcript::head::one_line(
+            ui,
+            name.to_owned(),
+            egui::TextFormat::simple(
+                egui::FontId::new(FS_SM, family(crate::theme::FAMILY_BODY_REGULAR)),
+                ink,
+            ),
+            rect.right() - 14.0 - (x + 19.0) - if unlisted { 14.0 } else { 0.0 },
         );
-        if entry.kind == kage_client::wire::FsKind::File && entry.size != 0 {
+        let label_right = x + 19.0 + label.size().x;
+        ui.painter()
+            .galley(egui::pos2(x + 19.0, mid - label.size().y / 2.0), label, ink);
+        if unlisted {
             ui.painter().text(
-                egui::pos2(rect.right() - 12.0, rect.center().y),
-                egui::Align2::RIGHT_CENTER,
-                bytes(entry.size as usize),
-                egui::FontId::new(FS_2XS, family(FAMILY_MONO_REGULAR)),
+                egui::pos2(label_right + 7.0, mid),
+                egui::Align2::LEFT_CENTER,
+                "\u{2026}",
+                egui::FontId::new(FS_2XS, family(crate::theme::FAMILY_BODY_REGULAR)),
                 palette.faint,
             );
         }
         if response.clicked() {
-            if picked {
-                workbench.set_file(None);
+            if is_dir {
+                if unlisted {
+                    store.fs_list(&entry.path);
+                }
             } else {
                 workbench.set_file(Some(entry.path.clone()));
-                events.push(WorkbenchEvent::Mention(entry.path.clone()));
-                if entry.kind != kage_client::wire::FsKind::Directory {
-                    events.push(WorkbenchEvent::ReadFile(entry.path.clone()));
-                }
+                events.push(WorkbenchEvent::ReadFile(entry.path.clone()));
             }
         }
     }
@@ -891,37 +1294,63 @@ fn file_preview(
         return;
     }
     ui.add_space(10.0);
-    egui::Frame::NONE
-        .stroke(egui::Stroke::new(1.0, palette.subtle))
-        .inner_margin(egui::Margin::symmetric(14, 8))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                crate::icons::icon(ui, crate::icons::Icon::FilePlus, 14.0, palette.faint);
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(path)
-                            .size(FS_XS)
-                            .family(family(FAMILY_MONO_REGULAR))
-                            .color(palette.ink),
-                    )
-                    .truncate(),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if crate::ui::forms::icon_button(
-                        ui,
-                        "file-mention",
-                        crate::icons::Icon::AtSign,
-                        palette,
-                    )
-                    .on_hover_text("Mention in composer")
-                    .clicked()
-                    {
-                        events.push(WorkbenchEvent::Mention(path.to_owned()));
-                    }
-                });
-            });
-        });
+    let (bar, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 36.0), egui::Sense::hover());
+    for y in [bar.top() + 0.5, bar.bottom() - 0.5] {
+        ui.painter()
+            .hline(bar.x_range(), y, egui::Stroke::new(1.0, palette.subtle));
+    }
+    let mid = bar.center().y;
+    crate::icons::themed_image(crate::icons::Icon::File, 14.0, palette.faint).paint_at(
+        ui,
+        egui::Rect::from_min_size(
+            egui::pos2(bar.left() + 14.0, mid - 7.0),
+            egui::vec2(14.0, 14.0),
+        ),
+    );
+    let mention = egui::Rect::from_min_size(
+        egui::pos2(bar.right() - 14.0 - 24.0, mid - 12.0),
+        egui::vec2(24.0, 24.0),
+    );
+    let mentioned = ui
+        .scope_builder(egui::UiBuilder::new().max_rect(mention), |ui| {
+            crate::ui::forms::icon_btn(
+                ui,
+                "Mention in composer",
+                crate::icons::Icon::AtSign,
+                24.0,
+                13.0,
+                R_MD,
+                crate::ui::forms::IconTones {
+                    fill: egui::Color32::TRANSPARENT,
+                    hover_fill: palette.hover,
+                    ink: palette.muted,
+                    hover_ink: palette.ink,
+                },
+            )
+            .on_hover_text("Mention in composer")
+        })
+        .inner;
+    if mentioned.clicked() {
+        events.push(WorkbenchEvent::Mention(path.to_owned()));
+    }
+    ui.interact(bar, ui.id().with("wb-preview-head"), egui::Sense::hover())
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, path));
+    let x = bar.left() + 14.0 + 14.0 + 8.0;
+    let label = crate::ui::transcript::head::one_line(
+        ui,
+        path.to_owned(),
+        egui::TextFormat::simple(
+            egui::FontId::new(FS_XS, family(FAMILY_MONO_REGULAR)),
+            palette.ink,
+        ),
+        mention.left() - 8.0 - x,
+    );
+    ui.painter().galley(
+        egui::pos2(x, mid - label.size().y / 2.0),
+        label,
+        palette.ink,
+    );
     if read.binary {
         ui.add_space(8.0);
         ui.horizontal(|ui| {
@@ -936,28 +1365,34 @@ fn file_preview(
     }
     egui::Frame::NONE
         .fill(palette.deep)
-        .inner_margin(egui::Margin::symmetric(10, 6))
+        .inner_margin(egui::Margin::symmetric(0, 6))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
+            let font = egui::FontId::new(12.0, family(FAMILY_MONO_REGULAR));
             for (n, line) in read.content.lines().enumerate() {
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 12.0;
-                    ui.add_sized(
-                        egui::vec2(28.0, 19.0),
-                        egui::Label::new(
-                            egui::RichText::new((n + 1).to_string())
-                                .size(12.0)
-                                .family(family(FAMILY_MONO_REGULAR))
-                                .color(palette.ghost),
-                        ),
-                    );
-                    ui.label(
-                        egui::RichText::new(line)
-                            .size(12.0)
-                            .family(family(FAMILY_MONO_REGULAR))
-                            .color(palette.ink),
-                    );
-                });
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), 19.0),
+                    egui::Sense::hover(),
+                );
+                let mid = rect.center().y;
+                ui.painter().text(
+                    egui::pos2(rect.left() + 10.0 + 28.0, mid),
+                    egui::Align2::RIGHT_CENTER,
+                    (n + 1).to_string(),
+                    font.clone(),
+                    palette.ghost,
+                );
+                let text = crate::ui::transcript::head::one_line(
+                    ui,
+                    line.to_owned(),
+                    egui::TextFormat::simple(font.clone(), palette.ink),
+                    rect.right() - 10.0 - (rect.left() + 10.0 + 28.0 + 12.0),
+                );
+                ui.painter().galley(
+                    egui::pos2(rect.left() + 10.0 + 28.0 + 12.0, mid - text.size().y / 2.0),
+                    text,
+                    palette.ink,
+                );
             }
         });
     if read.truncated {
@@ -1085,7 +1520,9 @@ fn agent_detail(
     events.extend(rows.into_iter().map(WorkbenchEvent::Row));
 }
 
-/// The agents pane: the filter chips over the session's agent cards.
+/// The agents pane: the filter chips, the subagents, then each swarm's
+/// workers under its description and done count. A row opens the
+/// agent's detail tab.
 fn agents_pane(
     ui: &mut egui::Ui,
     workbench: &mut Workbench,
@@ -1094,68 +1531,366 @@ fn agents_pane(
     agents: &std::collections::BTreeMap<String, kage_client::Subagent>,
     events: &mut Vec<WorkbenchEvent>,
 ) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
-        for filter in Filter::ALL {
-            let active = workbench.filter() == filter;
-            if ui
-                .add(
-                    egui::Button::new(
-                        egui::RichText::new(filter.label())
-                            .size(FS_2XS)
-                            .color(if active { palette.ink } else { palette.muted }),
-                    )
-                    .fill(if active {
-                        palette.selected
-                    } else {
-                        palette.fill
-                    })
-                    .corner_radius(egui::CornerRadius::same(R_FULL as u8)),
-                )
-                .clicked()
-            {
-                workbench.set_filter(filter);
-            }
+    let (head, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), 12.0 + 20.0 + 4.0),
+        egui::Sense::hover(),
+    );
+    let mid = head.top() + 12.0 + 10.0;
+    ui.interact(head, ui.id().with("wb-agents-head"), egui::Sense::hover())
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "AGENTS"));
+    ui.painter().text(
+        egui::pos2(head.left() + 14.0, mid),
+        egui::Align2::LEFT_CENTER,
+        "AGENTS",
+        egui::FontId::new(FS_XS, family(FAMILY_BODY_SEMIBOLD)),
+        palette.faint,
+    );
+    let mut right = head.right() - 14.0;
+    for filter in Filter::ALL.iter().rev() {
+        let on = workbench.filter() == *filter;
+        let ink = if on {
+            palette.ink_strong
+        } else {
+            palette.faint
+        };
+        let galley = ui.painter().layout_no_wrap(
+            filter.label().to_owned(),
+            egui::FontId::new(FS_2XS, family(crate::theme::FAMILY_BODY_REGULAR)),
+            ink,
+        );
+        let chip = egui::Rect::from_min_max(
+            egui::pos2(right - galley.size().x - 16.0, mid - 10.0),
+            egui::pos2(right, mid + 10.0),
+        );
+        right = chip.left() - 2.0;
+        let response = ui
+            .interact(
+                chip,
+                ui.id().with(("wb-filter", filter.label())),
+                egui::Sense::click(),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, on, filter.label())
+        });
+        let radius = egui::CornerRadius::same(10);
+        if response.hovered() {
+            ui.painter().rect_filled(chip, radius, palette.hover);
+        } else if on {
+            ui.painter().rect_filled(chip, radius, palette.selected);
         }
-    });
+        ui.painter()
+            .galley(chip.center() - galley.size() / 2.0, galley, ink);
+        if response.clicked() {
+            workbench.set_filter(*filter);
+        }
+    }
     let Some(parent) = store.active_session() else {
         return;
     };
-    let mut cards: Vec<agents::AgentFacts> = agents
-        .iter()
-        .filter(|(_, agent)| workbench.filter().keeps(agent))
-        .map(|(id, agent)| agents::agent_facts(store, parent, id, agent))
-        .collect();
-    cards.sort_by_key(|facts| facts.item.as_ref().map(|(_, ix)| *ix).unwrap_or(u32::MAX));
-    if cards.is_empty() {
-        let text = if agents.is_empty() {
-            "No agents yet. Subagents and swarm workers show up here while they run."
-        } else {
-            "No agents match this filter."
-        };
-        empty_block(ui, crate::icons::Icon::Users, text, palette);
+    if agents.is_empty() {
+        empty_block(
+            ui,
+            crate::icons::Icon::Users,
+            "No agents yet. Subagents and swarm workers show up here while they run.",
+            palette,
+        );
         return;
     }
-    for facts in &cards {
-        for event in agents::agent_card(ui, palette, facts, parent.running) {
-            match event {
-                AgentEvent::Open(id) => events.push(WorkbenchEvent::OpenAgent(id)),
-                AgentEvent::Stop(id) => events.push(WorkbenchEvent::StopAgent(id)),
-                AgentEvent::Steer(_, _) => {}
-            }
+    let filter = workbench.filter();
+    let mut shown_any = false;
+    let solo: Vec<_> = agents
+        .iter()
+        .filter(|(_, agent)| agent.swarm.is_none() && filter.keeps(agent))
+        .collect();
+    if !solo.is_empty() {
+        agent_group(ui, crate::icons::Icon::Bot, "Subagents", None, palette);
+        for (id, agent) in solo {
+            let facts = agents::agent_facts(store, parent, id, agent);
+            agent_row(ui, &facts, palette, events);
         }
+        shown_any = true;
+    }
+    for item in &parent.items {
+        let TranscriptItem::ToolCall(call) = item else {
+            continue;
+        };
+        if call.title != "swarm" {
+            continue;
+        }
+        let members = agents::children_of(parent, &call.tool_call_id);
+        let ended = members
+            .iter()
+            .filter(|(_, agent)| Filter::Done.keeps(agent))
+            .count();
+        let total = members.len();
+        let shown: Vec<_> = members
+            .into_iter()
+            .filter(|(_, agent)| filter.keeps(agent))
+            .collect();
+        if shown.is_empty() {
+            continue;
+        }
+        let description = call
+            .input
+            .as_ref()
+            .and_then(|input| input.get("description"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("Swarm");
+        agent_group(
+            ui,
+            crate::icons::Icon::Waypoints,
+            description,
+            Some(&format!("{ended}/{total}")),
+            palette,
+        );
+        for (id, agent) in shown {
+            let facts = agents::agent_facts(store, parent, id, agent);
+            agent_row(ui, &facts, palette, events);
+        }
+        shown_any = true;
+    }
+    if !shown_any {
+        empty_block(
+            ui,
+            crate::icons::Icon::Users,
+            "No agents match this filter.",
+            palette,
+        );
     }
 }
 
-/// The terminal pane: the session's shell calls, each folded to its
-/// command until it is opened.
-fn terminal_pane(
+/// The label over one group of agent rows, with its count.
+fn agent_group(
     ui: &mut egui::Ui,
-    workbench: &mut Workbench,
+    icon: crate::icons::Icon,
+    label: &str,
+    count: Option<&str>,
     palette: &Palette,
-    items: &[TranscriptItem],
 ) {
-    let runs = term_entries(items);
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), 10.0 + 18.0 + 4.0),
+        egui::Sense::hover(),
+    );
+    let mid = rect.top() + 10.0 + 9.0;
+    crate::icons::themed_image(icon, 12.0, palette.faint).paint_at(
+        ui,
+        egui::Rect::from_min_size(
+            egui::pos2(rect.left() + 14.0, mid - 6.0),
+            egui::vec2(12.0, 12.0),
+        ),
+    );
+    let mut right = rect.right() - 14.0;
+    if let Some(count) = count {
+        let galley = ui.painter().layout_no_wrap(
+            count.to_owned(),
+            egui::FontId::new(FS_2XS, family(FAMILY_MONO_REGULAR)),
+            palette.faint,
+        );
+        right -= galley.size().x;
+        ui.painter().galley(
+            egui::pos2(right, mid - galley.size().y / 2.0),
+            galley,
+            palette.faint,
+        );
+        right -= 6.0;
+    }
+    let x = rect.left() + 14.0 + 12.0 + 6.0;
+    let text = crate::ui::transcript::head::one_line(
+        ui,
+        label.to_owned(),
+        egui::TextFormat::simple(
+            egui::FontId::new(FS_2XS, family(crate::theme::FAMILY_BODY_REGULAR)),
+            palette.faint,
+        ),
+        right - x,
+    );
+    ui.painter().galley(
+        egui::pos2(x, mid - text.size().y / 2.0),
+        text,
+        palette.faint,
+    );
+}
+
+/// One agent row: avatar, the swarm index and name, the latest tool
+/// line or the result or the task, the state with elapsed time and
+/// tokens, and Stop while it runs. A click opens the agent's detail.
+fn agent_row(
+    ui: &mut egui::Ui,
+    facts: &agents::AgentFacts,
+    palette: &Palette,
+    events: &mut Vec<WorkbenchEvent>,
+) {
+    let name_h = FS_SM * 1.618;
+    let line_h = FS_XS * 1.618;
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), 7.0 + name_h + line_h + 7.0),
+        egui::Sense::click(),
+    );
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &facts.name));
+    if response.hovered() {
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::ZERO, palette.hover);
+    }
+    let mid = rect.center().y;
+    let tile = egui::Rect::from_min_size(
+        egui::pos2(rect.left() + 14.0, mid - 13.0),
+        egui::vec2(26.0, 26.0),
+    );
+    agents::paint_avatar(ui, tile, &facts.name, palette);
+    let mut right = rect.right() - 14.0;
+    let mut stopped = false;
+    if facts.stoppable {
+        let stop =
+            egui::Rect::from_min_size(egui::pos2(right - 22.0, mid - 11.0), egui::vec2(22.0, 22.0));
+        stopped = ui
+            .scope_builder(egui::UiBuilder::new().max_rect(stop), |ui| {
+                crate::ui::forms::icon_btn(
+                    ui,
+                    "Stop",
+                    crate::icons::Icon::Square,
+                    22.0,
+                    12.0,
+                    R_MD,
+                    crate::ui::forms::IconTones {
+                        fill: egui::Color32::TRANSPARENT,
+                        hover_fill: palette.fill_hover,
+                        ink: palette.muted,
+                        hover_ink: palette.ink,
+                    },
+                )
+                .on_hover_text("Stop")
+                .clicked()
+            })
+            .inner;
+        right = stop.left() - 9.0;
+    }
+    let state_color = facts.phase.color(palette);
+    let state = ui.painter().layout_no_wrap(
+        facts.phase.label().to_owned(),
+        egui::FontId::new(FS_XS, family(crate::theme::FAMILY_BODY_REGULAR)),
+        state_color,
+    );
+    let meta = ui.painter().layout_no_wrap(
+        [
+            facts.elapsed.map(crate::clock::span),
+            facts.tokens.map(|n| format!("{} tok", agents::tokens(n))),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" \u{b7} "),
+        egui::FontId::new(11.0, family(FAMILY_MONO_REGULAR)),
+        palette.faint,
+    );
+    let column_w = (state.size().x + 17.0).max(meta.size().x);
+    let top = rect.top() + 7.0;
+    let state_w = state.size().x;
+    ui.painter().galley(
+        egui::pos2(right - state_w, top + (name_h - state.size().y) / 2.0),
+        state,
+        state_color,
+    );
+    crate::icons::themed_image(facts.phase.icon(), 12.0, state_color).paint_at(
+        ui,
+        egui::Rect::from_min_size(
+            egui::pos2(right - state_w - 5.0 - 12.0, top + name_h / 2.0 - 6.0),
+            egui::vec2(12.0, 12.0),
+        ),
+    );
+    let meta_w = meta.size().x;
+    ui.painter().galley(
+        egui::pos2(
+            right - meta_w,
+            top + name_h + (line_h - meta.size().y) / 2.0,
+        ),
+        meta,
+        palette.faint,
+    );
+    right -= column_w + 9.0;
+    let x = tile.right() + 9.0;
+    let mut nx = x;
+    let body = egui::FontId::new(FS_SM, family(crate::theme::FAMILY_BODY_REGULAR));
+    let name = match &facts.item {
+        Some((item, index)) => {
+            let galley = ui.painter().layout_no_wrap(
+                format!("{:02}", index + 1),
+                egui::FontId::new(11.0, family(FAMILY_MONO_REGULAR)),
+                palette.faint,
+            );
+            let width = galley.size().x;
+            ui.painter().galley(
+                egui::pos2(nx, top + (name_h - galley.size().y) / 2.0),
+                galley,
+                palette.faint,
+            );
+            nx += width + 6.0;
+            item.clone()
+        }
+        None => facts.name.clone(),
+    };
+    let badge_w = if facts.background { 6.0 + 22.0 } else { 0.0 };
+    let label = crate::ui::transcript::head::one_line(
+        ui,
+        name,
+        egui::TextFormat::simple(body, palette.ink),
+        right - nx - badge_w,
+    );
+    let label_w = label.size().x;
+    ui.painter().galley(
+        egui::pos2(nx, top + (name_h - label.size().y) / 2.0),
+        label,
+        palette.ink,
+    );
+    if facts.background {
+        let galley = ui.painter().layout_no_wrap(
+            "bg".to_owned(),
+            egui::FontId::new(10.0, family(crate::theme::FAMILY_BODY_REGULAR)),
+            palette.accent,
+        );
+        let pill = egui::Rect::from_min_size(
+            egui::pos2(nx + label_w + 6.0, top + name_h / 2.0 - 8.0),
+            egui::vec2(galley.size().x + 12.0, 16.0),
+        );
+        ui.painter()
+            .rect_filled(pill, egui::CornerRadius::same(8), palette.accent_soft);
+        ui.painter()
+            .galley(pill.center() - galley.size() / 2.0, galley, palette.accent);
+    }
+    let line = if facts.phase.live() {
+        facts.last.clone().unwrap_or_else(|| facts.task.clone())
+    } else {
+        facts.result.clone().unwrap_or_else(|| facts.task.clone())
+    };
+    let line = crate::ui::transcript::head::one_line(
+        ui,
+        line.replace('`', ""),
+        egui::TextFormat::simple(
+            egui::FontId::new(FS_XS, family(crate::theme::FAMILY_BODY_REGULAR)),
+            palette.faint,
+        ),
+        right - x,
+    );
+    ui.painter().galley(
+        egui::pos2(x, top + name_h + (line_h - line.size().y) / 2.0),
+        line,
+        palette.faint,
+    );
+    if stopped {
+        events.push(WorkbenchEvent::StopAgent(facts.id.clone()));
+    } else if response.clicked() {
+        events.push(WorkbenchEvent::OpenAgent(facts.id.clone()));
+    }
+}
+
+/// The terminal pane: the shell calls the session and its subagents
+/// ran, as cards; the latest and the running ones start open.
+fn terminal_pane(ui: &mut egui::Ui, workbench: &mut Workbench, store: &Store, palette: &Palette) {
+    let Some(session) = store.active_session() else {
+        return;
+    };
+    let runs = session_runs(store, session);
     if runs.is_empty() {
         empty_block(
             ui,
@@ -1165,71 +1900,162 @@ fn terminal_pane(
         );
         return;
     }
-    section_head(ui, "Shell runs", palette);
-    let latest = runs.last().map(|run| run.id.clone());
-    for run in &runs {
-        let open = workbench.run_open(&run.id, run.running, latest.as_deref() == Some(&run.id));
-        let header = ui.add(
-            egui::Button::new("")
-                .fill(egui::Color32::TRANSPARENT)
-                .corner_radius(egui::CornerRadius::same(R_MD as u8))
-                .min_size(egui::vec2(ui.available_width(), 30.0)),
-        );
-        let rect = header.rect;
-        let (icon, color) = if run.running {
-            (crate::icons::Icon::LoaderCircle, palette.accent)
-        } else if run.failed || run.exit.is_some_and(|code| code != 0) {
-            (crate::icons::Icon::CircleX, palette.danger)
-        } else {
-            (crate::icons::Icon::CircleCheck, palette.ok)
-        };
-        paint_icon(
-            ui,
-            icon,
-            14.0,
-            color,
-            egui::pos2(rect.left() + 13.0, rect.center().y),
-        );
-        ui.painter().text(
-            egui::pos2(rect.left() + 26.0, rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            run.command.clone(),
-            egui::FontId::new(FS_SM, family(FAMILY_MONO_REGULAR)),
-            palette.ink,
-        );
-        if let Some(who) = &run.who {
-            ui.painter().text(
-                egui::pos2(rect.right() - 12.0, rect.center().y),
-                egui::Align2::RIGHT_CENTER,
-                who.clone(),
-                egui::FontId::new(FS_2XS, family(FAMILY_MONO_REGULAR)),
-                palette.faint,
-            );
-        }
-        if header.clicked() {
+    let last = runs.len() - 1;
+    for (ix, run) in runs.iter().enumerate() {
+        let open = workbench.run_open(&run.id, run.running, ix == last);
+        if term_run(ui, run, open, palette) {
             workbench.flip_run(&run.id);
-        }
-        if open {
-            if run.hidden > 0 {
-                ui.label(
-                    egui::RichText::new(format!("{} earlier lines hidden", run.hidden))
-                        .size(FS_2XS)
-                        .color(palette.faint),
-                );
-            }
-            ui.add(
-                egui::TextEdit::multiline(&mut run.output.clone())
-                    .font(egui::FontId::new(FS_2XS, family(FAMILY_MONO_REGULAR)))
-                    .desired_width(f32::INFINITY),
-            );
         }
     }
 }
 
-/// The browser pane: the pages the session fetched.
+/// One shell run as a card: its state, the command's first line and
+/// who ran it on a head that folds the rest, then the whole command and
+/// the tail of its output. Answers whether the head was clicked.
+fn term_run(ui: &mut egui::Ui, run: &TermEntry, open: bool, palette: &Palette) -> bool {
+    let mono = |size: f32| egui::FontId::new(size, family(FAMILY_MONO_REGULAR));
+    let mut clicked = false;
+    ui.add_space(8.0);
+    egui::Frame::NONE
+        .outer_margin(egui::Margin::symmetric(12, 0))
+        .fill(palette.deep)
+        .stroke(egui::Stroke::new(1.0, palette.line))
+        .corner_radius(egui::CornerRadius::same(R_MD as u8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
+            let (head, response) = ui.allocate_exact_size(
+                egui::vec2(ui.available_width(), 7.0 + 18.0 + 7.0),
+                egui::Sense::click(),
+            );
+            let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &run.command)
+            });
+            if response.hovered() {
+                let radius = if open {
+                    egui::CornerRadius {
+                        nw: R_MD as u8,
+                        ne: R_MD as u8,
+                        sw: 0,
+                        se: 0,
+                    }
+                } else {
+                    egui::CornerRadius::same(R_MD as u8)
+                };
+                ui.painter().rect_filled(head, radius, palette.fill_hover);
+            }
+            clicked = response.clicked();
+            let mid = head.center().y;
+            let state = egui::Rect::from_min_size(
+                egui::pos2(head.left() + 10.0, mid - 6.0),
+                egui::vec2(12.0, 12.0),
+            );
+            let mark = match run.exit {
+                _ if run.running => None,
+                Some(0) => Some((crate::icons::Icon::Check, palette.ok)),
+                Some(_) => Some((crate::icons::Icon::X, palette.danger)),
+                None if run.failed => Some((crate::icons::Icon::X, palette.danger)),
+                None => Some((crate::icons::Icon::Minus, palette.faint)),
+            };
+            match mark {
+                Some((icon, color)) => {
+                    crate::icons::themed_image(icon, 12.0, color).paint_at(ui, state);
+                }
+                None => crate::ui::transcript::head::paint_spinner(ui, state, palette.accent),
+            }
+            let mut right = head.right() - 10.0;
+            if let Some(code) = run.exit.filter(|code| *code != 0) {
+                let text = format!("exit {code}");
+                let width = ui
+                    .painter()
+                    .layout_no_wrap(text.clone(), mono(FS_2XS), palette.danger)
+                    .size()
+                    .x
+                    + 14.0;
+                right = crate::ui::transcript::head::paint_chip(
+                    ui,
+                    egui::pos2(right - width, mid),
+                    &text,
+                    palette.danger,
+                    palette.danger_soft,
+                )
+                .left()
+                    - 8.0;
+            }
+            if let Some(who) = &run.who {
+                right = by_badge(ui, right, mid, who, palette) - 8.0;
+            }
+            let first = run.command.lines().next().unwrap_or_default().to_owned();
+            let more = run.command.lines().count() > 1;
+            let x = state.right() + 8.0;
+            let line = crate::ui::transcript::head::one_line(
+                ui,
+                if more && !open {
+                    format!("{first} \u{2026}")
+                } else {
+                    first
+                },
+                egui::TextFormat::simple(mono(FS_XS), palette.ink),
+                right - x,
+            );
+            ui.painter()
+                .galley(egui::pos2(x, mid - line.size().y / 2.0), line, palette.ink);
+            if !open {
+                return;
+            }
+            let (rule, _) =
+                ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
+            ui.painter()
+                .rect_filled(rule, egui::CornerRadius::ZERO, palette.line);
+            egui::Frame::NONE
+                .inner_margin(egui::Margin::symmetric(10, 8))
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.spacing_mut().item_spacing.y = 6.0;
+                    let text =
+                        |ui: &mut egui::Ui, body: String, size: f32, color: egui::Color32| {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(body)
+                                        .font(mono(size))
+                                        .line_height(Some(18.0))
+                                        .color(color),
+                                )
+                                .wrap(),
+                            );
+                        };
+                    let rest: Vec<&str> = run.command.lines().skip(1).collect();
+                    if !rest.is_empty() {
+                        text(ui, rest.join("\n"), 12.0, palette.muted);
+                    }
+                    if run.hidden > 0 {
+                        text(
+                            ui,
+                            format!(
+                                "\u{2026} {} earlier line{}",
+                                run.hidden,
+                                if run.hidden == 1 { "" } else { "s" }
+                            ),
+                            FS_2XS,
+                            palette.faint,
+                        );
+                    }
+                    if !run.output.is_empty() {
+                        text(ui, run.output.clone(), 12.0, palette.ink);
+                    } else if !run.running {
+                        text(ui, "(no output)".to_owned(), 12.0, palette.faint);
+                    }
+                });
+        });
+    clicked
+}
+
+/// The browser pane: the latest fetched page as reader text, its title
+/// from the first heading, its URL, its paragraphs and its size.
+/// Nothing on the page ever loads.
 fn browser_pane(ui: &mut egui::Ui, palette: &Palette, items: &[TranscriptItem]) {
-    let pages = fetch_entries(items);
-    if pages.is_empty() {
+    let Some(page) = fetch_entries(items).pop() else {
         empty_block(
             ui,
             crate::icons::Icon::Globe,
@@ -1237,25 +2063,61 @@ fn browser_pane(ui: &mut egui::Ui, palette: &Palette, items: &[TranscriptItem]) 
             palette,
         );
         return;
-    }
-    section_head(ui, "Fetched pages", palette);
-    for page in &pages {
-        ui.label(
-            egui::RichText::new(page.url.clone())
-                .size(FS_SM)
-                .family(family(FAMILY_MONO_REGULAR))
-                .color(palette.ink),
-        );
-        if !page.text.is_empty() {
-            ui.add(
-                egui::TextEdit::multiline(&mut page.text.clone())
-                    .font(egui::FontId::new(FS_2XS, family(FAMILY_MONO_REGULAR)))
-                    .desired_width(f32::INFINITY),
+    };
+    let text = strip_ansi(&page.text);
+    let title = text
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("# "))
+        .unwrap_or(page.url.as_str())
+        .to_owned();
+    egui::Frame::NONE
+        .inner_margin(egui::Margin::symmetric(18, 14))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 10.0;
+            let wrap = |ui: &mut egui::Ui, text: egui::RichText| {
+                ui.add(egui::Label::new(text).wrap());
+            };
+            wrap(
+                ui,
+                egui::RichText::new(title)
+                    .size(18.0)
+                    .family(family(FAMILY_BODY_SEMIBOLD))
+                    .color(palette.ink_strong),
             );
-        }
-        ui.add_space(8.0);
-    }
-    let _ = tab_count;
+            wrap(
+                ui,
+                egui::RichText::new(page.url.clone())
+                    .size(11.0)
+                    .family(family(FAMILY_MONO_REGULAR))
+                    .color(palette.faint),
+            );
+            for paragraph in text
+                .split("\n\n")
+                .map(str::trim)
+                .filter(|paragraph| !paragraph.is_empty())
+            {
+                wrap(
+                    ui,
+                    egui::RichText::new(paragraph)
+                        .size(FS_SM)
+                        .line_height(Some(21.0))
+                        .color(palette.ink),
+                );
+            }
+            let (rule, _) =
+                ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
+            ui.painter()
+                .rect_filled(rule, egui::CornerRadius::ZERO, palette.subtle);
+            ui.label(
+                egui::RichText::new(format!(
+                    "{} fetched \u{b7} reader text only, remote content never loads",
+                    bytes(page.text.len())
+                ))
+                .size(FS_2XS)
+                .color(palette.faint),
+            );
+        });
 }
 
 #[cfg(test)]
@@ -1553,18 +2415,4 @@ mod tests {
             params: json!({"sessionId": "s", "update": {}}),
         };
     }
-}
-
-/// Paints one icon centred on `center`, inside a row drawn before it.
-fn paint_icon(
-    ui: &mut egui::Ui,
-    icon: crate::icons::Icon,
-    size: f32,
-    color: egui::Color32,
-    center: egui::Pos2,
-) {
-    crate::icons::themed_image(icon, size, color).paint_at(
-        ui,
-        egui::Rect::from_center_size(center, egui::vec2(size, size)),
-    );
 }

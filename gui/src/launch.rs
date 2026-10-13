@@ -1062,7 +1062,14 @@ impl ShellApp {
         self.shell.store = store.into_inner();
         self.shell.workbench = workbench_state.into_inner();
         self.carry_sidebar(sidebar_events.into_inner());
-        self.carry_workbench(workbench_events.into_inner());
+        let workbench_events = workbench_events.into_inner();
+        if workbench_events
+            .iter()
+            .any(|event| matches!(event, crate::ui::workbench::WorkbenchEvent::Close))
+        {
+            panels.toggle_workbench();
+        }
+        self.carry_workbench(workbench_events);
 
         crate::ui::status::status_bar(ui, self.shell.store());
 
@@ -1294,6 +1301,7 @@ impl ShellApp {
     fn carry_workbench(&mut self, events: Vec<crate::ui::workbench::WorkbenchEvent>) {
         for event in events {
             match event {
+                crate::ui::workbench::WorkbenchEvent::Close => {}
                 crate::ui::workbench::WorkbenchEvent::Mention(path) => {
                     self.shell.composer.mention(&path);
                 }

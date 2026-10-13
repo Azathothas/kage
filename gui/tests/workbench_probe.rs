@@ -169,7 +169,7 @@ fn the_five_tabs_draw_and_the_strip_takes_a_click() {
     harness.get_by_label("Changes").click();
     harness.run();
     assert!(
-        harness.query_by_label("CHANGED FILES").is_some(),
+        harness.query_by_label("1 FILE CHANGED").is_some(),
         "the changes pane took back over"
     );
 }
@@ -180,7 +180,7 @@ fn a_change_row_paints_its_path_inside_the_section() {
     harness.run();
     harness.run();
     let head = harness
-        .query_by_label("CHANGED FILES")
+        .query_by_label("1 FILE CHANGED")
         .expect("the section head draws");
     let rect = head.rect();
     // The row sits under the section head, and paints its path there.
@@ -225,12 +225,12 @@ fn the_files_pane_reads_the_listing_the_store_holds() {
     harness.run();
     harness.get_by_label("Files").click();
     harness.run();
-    // The section head is a widget, so the a11y tree sees it; the
-    // entries under it are painted rows.
-    assert!(
-        harness.query_by_label("FILES").is_some(),
-        "the files pane names its section"
-    );
+    for name in ["src", "lib.rs"] {
+        assert!(
+            harness.query_by_label(name).is_some(),
+            "the files pane lists {name}"
+        );
+    }
 }
 
 #[test]
@@ -245,8 +245,8 @@ fn the_terminal_pane_folds_each_run_to_its_command() {
     harness.get_by_label("Terminal").click();
     harness.run();
     assert!(
-        harness.query_by_label("SHELL RUNS").is_some(),
-        "the pane names its section"
+        harness.query_by_label("cargo test").is_some(),
+        "the pane draws the run under its command"
     );
 }
 
