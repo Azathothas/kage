@@ -24,6 +24,7 @@ pub mod icon;
 #[allow(dead_code)]
 pub mod icons;
 pub mod launch;
+mod logos;
 mod modes;
 pub mod prefs;
 // The views that call the paced reveal return with E04; until then its

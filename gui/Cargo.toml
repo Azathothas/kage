@@ -79,9 +79,10 @@ fontique = { version = "0.9", default-features = false, features = [
 ] }
 # Plain WebSocket client, no TLS: kage serves loopback ws:// only.
 tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
-# Decodes the embedded brand art for the window icon. Native only: the
+# Decodes the embedded brand art for the window icon, and the favicons
+# that stand in for provider logos models.dev lacks. Native only: the
 # browser takes the favicon from the served bundle.
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "ico"] }
 
 # Fetches the release list and the engine binary for the update
 # check and the setup screen download; rustls, so no system OpenSSL.

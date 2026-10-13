@@ -560,6 +560,9 @@ enum Part {
 
 /// What a list row leads with.
 enum Lead {
+    /// A provider's logo on its white tile, by id and endpoint, or the
+    /// bot glyph while it loads or when there is none.
+    Logo(String, Option<String>),
     /// The two-letter tile of a provider without a logo.
     Initials(String),
     /// A faint icon.
@@ -700,6 +703,9 @@ fn list_row(
     let mid = rect.center().y;
     let mut x = rect.left() + 16.0;
     match lead {
+        Lead::Logo(id, site) => {
+            x = paint_logo(ui, egui::pos2(x, mid), id, site.as_deref(), 22.0, palette) + 12.0;
+        }
         Lead::Initials(text) => {
             let tile = egui::Rect::from_min_size(egui::pos2(x, mid - 14.0), egui::vec2(28.0, 28.0));
             ui.painter()
@@ -952,6 +958,48 @@ fn subgroup(ui: &mut egui::Ui, text: &str, palette: &Palette) {
     ui.add_space(6.0);
 }
 
+/// Paints provider `id`'s logo at `size` on its white tile, its left
+/// edge at `at.x` and centered on `at.y`, or the bot glyph while the
+/// logo loads or when there is none. Gives back its right edge.
+///
+/// The tile is white because models.dev draws its logos for a light
+/// page, and most carry no fill of their own.
+fn paint_logo(
+    ui: &egui::Ui,
+    at: egui::Pos2,
+    id: &str,
+    site: Option<&str>,
+    size: f32,
+    palette: &Palette,
+) -> f32 {
+    match crate::logos::ensure(ui.ctx(), id, site) {
+        Some(source) => {
+            let tile = egui::Rect::from_min_size(
+                egui::pos2(at.x, at.y - (size + 6.0) / 2.0),
+                egui::vec2(size + 6.0, size + 6.0),
+            );
+            ui.painter()
+                .rect_filled(tile, egui::CornerRadius::same(6), egui::Color32::WHITE);
+            egui::Image::new(source)
+                .fit_to_exact_size(egui::vec2(size, size))
+                .paint_at(
+                    ui,
+                    egui::Rect::from_center_size(tile.center(), egui::vec2(size, size)),
+                );
+            tile.right()
+        }
+        None => {
+            let glyph = egui::Rect::from_min_size(
+                egui::pos2(at.x, at.y - (size - 2.0) / 2.0),
+                egui::vec2(size - 2.0, size - 2.0),
+            );
+            crate::icons::themed_image(crate::icons::Icon::Bot, size - 2.0, palette.muted)
+                .paint_at(ui, glyph);
+            glyph.right()
+        }
+    }
+}
+
 /// The two letters a provider's tile carries.
 fn initials(id: &str) -> String {
     id.chars()
@@ -1097,7 +1145,7 @@ fn provider_row(
     let hit = list_row(
         ui,
         &format!("provider-{}", row.id),
-        &Lead::Initials(initials(&row.id)),
+        &Lead::Logo(row.id.clone(), row.base_url.clone()),
         &name,
         Some(&parts.join(" \u{b7} ")),
         &Trail::Badge(key.0, key.1),
@@ -1114,12 +1162,20 @@ fn provider_row(
     }
 }
 
+/// What a chooser chip leads with.
+enum ChipLead<'a> {
+    /// A catalog icon.
+    Icon(crate::icons::Icon),
+    /// A provider's logo, by id.
+    Logo(&'a str),
+}
+
 /// A rounded chip with an optional leading icon, as the chooser lists
 /// the providers to start from.
 fn pick_chip(
     ui: &mut egui::Ui,
     label: &str,
-    icon: Option<crate::icons::Icon>,
+    lead: Option<ChipLead<'_>>,
     palette: &Palette,
 ) -> egui::Response {
     let galley = ui.painter().layout_no_wrap(
@@ -1127,9 +1183,13 @@ fn pick_chip(
         egui::FontId::new(FS_XS, family(FAMILY_BODY_MEDIUM)),
         palette.ink,
     );
-    let lead = if icon.is_some() { 14.0 + 7.0 } else { 0.0 };
+    let lead_w = match lead {
+        Some(ChipLead::Icon(_)) => 14.0 + 7.0,
+        Some(ChipLead::Logo(_)) => 22.0 + 7.0,
+        None => 0.0,
+    };
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(9.0 + lead + galley.size().x + 12.0, 30.0),
+        egui::vec2(9.0 + lead_w + galley.size().x + 12.0, 30.0),
         egui::Sense::click(),
     );
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -1148,13 +1208,22 @@ fn pick_chip(
         egui::StrokeKind::Inside,
     );
     let mut x = rect.left() + 9.0;
-    if let Some(icon) = icon {
-        crate::icons::themed_image(icon, 14.0, palette.muted).paint_at(
-            ui,
-            egui::Rect::from_min_size(egui::pos2(x, rect.center().y - 7.0), egui::vec2(14.0, 14.0)),
-        );
-        x += lead;
+    match lead {
+        Some(ChipLead::Icon(icon)) => {
+            crate::icons::themed_image(icon, 14.0, palette.muted).paint_at(
+                ui,
+                egui::Rect::from_min_size(
+                    egui::pos2(x, rect.center().y - 7.0),
+                    egui::vec2(14.0, 14.0),
+                ),
+            );
+        }
+        Some(ChipLead::Logo(id)) => {
+            paint_logo(ui, egui::pos2(x, rect.center().y), id, None, 16.0, palette);
+        }
+        None => {}
     }
+    x += lead_w;
     let h = galley.size().y;
     ui.painter().galley(
         egui::pos2(x, rect.center().y - h / 2.0),
@@ -1190,7 +1259,14 @@ fn provider_chooser(
             .registered()
             .filter(|id| !rows.iter().any(|row| row.id == *id))
         {
-            if pick_chip(ui, &snapshot.provider_name(id), None, palette).clicked() {
+            if pick_chip(
+                ui,
+                &snapshot.provider_name(id),
+                Some(ChipLead::Logo(id)),
+                palette,
+            )
+            .clicked()
+            {
                 events.push(SettingsEvent::ProviderForm(Target::Registered(
                     id.to_owned(),
                 )));
@@ -1203,7 +1279,7 @@ fn provider_chooser(
         if pick_chip(
             ui,
             "From models.dev",
-            Some(crate::icons::Icon::Globe),
+            Some(ChipLead::Icon(crate::icons::Icon::Globe)),
             palette,
         )
         .clicked()
@@ -1211,7 +1287,14 @@ fn provider_chooser(
             events.push(SettingsEvent::Directory(false));
             state.choosing = false;
         }
-        if pick_chip(ui, "api.json", Some(crate::icons::Icon::File), palette).clicked() {
+        if pick_chip(
+            ui,
+            "api.json",
+            Some(ChipLead::Icon(crate::icons::Icon::File)),
+            palette,
+        )
+        .clicked()
+        {
             events.push(SettingsEvent::Directory(true));
             state.choosing = false;
         }
@@ -1226,7 +1309,14 @@ fn provider_chooser(
             events.push(SettingsEvent::ProviderForm(Target::Custom(None)));
             state.choosing = false;
         }
-        if pick_chip(ui, "ACP agent", Some(crate::icons::Icon::Bot), palette).clicked() {
+        if pick_chip(
+            ui,
+            "ACP agent",
+            Some(ChipLead::Icon(crate::icons::Icon::Bot)),
+            palette,
+        )
+        .clicked()
+        {
             events.push(SettingsEvent::AcpForm(None));
             state.choosing = false;
         }

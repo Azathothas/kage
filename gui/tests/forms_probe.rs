@@ -368,6 +368,13 @@ fn every_page_renders_for_review() {
         let mut harness = harness_for(configured());
         harness.state_mut().1.open(section);
         settle(&mut harness);
+        if section == Section::Providers {
+            // The logos land from models.dev on threads of their own.
+            for _ in 0..30 {
+                std::thread::sleep(std::time::Duration::from_millis(200));
+                harness.run();
+            }
+        }
         let name = section.label().to_lowercase().replace([' ', '&'], "-");
         let image = harness.render().expect("the page renders");
         image
