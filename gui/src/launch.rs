@@ -1163,6 +1163,9 @@ impl ShellApp {
 
     /// Carries out what the sidebar's controls asked for.
     fn carry_sidebar(&mut self, events: Vec<crate::ui::sidebar::SidebarEvent>) {
+        if !events.is_empty() {
+            self.ctx.request_repaint();
+        }
         for event in events {
             match event {
                 crate::ui::sidebar::SidebarEvent::NewSession(dir) => {
@@ -2244,6 +2247,7 @@ impl ShellApp {
     fn run_palette_entry(&mut self, entry: crate::ui::palette::PaletteEntry, ctx: &egui::Context) {
         use crate::ui::palette::{Action, PaletteEntry};
         use crate::ui::workbench::Tab;
+        ctx.request_repaint();
         match entry {
             PaletteEntry::Action { action, .. } => match action {
                 Action::NewSession => self.carry(crate::ui::keys::Action::NewSession),
