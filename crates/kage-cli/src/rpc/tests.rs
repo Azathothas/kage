@@ -3660,7 +3660,7 @@ fn only_live_servers_offer_commands_and_bare_prompts_take_no_input() {
 }
 
 #[test]
-fn usage_updates_carry_cost_only_when_priced() {
+fn usage_updates_carry_tokens_and_cost_only_when_priced() {
     let mut usage = Usage {
         context_used: 50,
         context_window: 200,
@@ -3670,6 +3670,13 @@ fn usage_updates_carry_cost_only_when_priced() {
         panic!("no usage_update");
     };
     assert_eq!((update.used, update.size, update.cost), (50, 200, None));
+    usage.total.input = 30;
+    usage.total.cache_read = 12;
+    let Some(SessionUpdate::UsageUpdate(update)) = usage_update(&usage) else {
+        panic!("no usage_update");
+    };
+    let tokens = update.meta.and_then(|meta| meta.kage).unwrap();
+    assert_eq!((tokens.input, tokens.cache_read), (30, 12));
     usage.cost = 0.25;
     let Some(SessionUpdate::UsageUpdate(update)) = usage_update(&usage) else {
         panic!("no usage_update");

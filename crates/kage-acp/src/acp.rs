@@ -45,7 +45,7 @@ pub use kage_acp_wire::schema::{
     SubagentSwarm, SubagentUpdate, SubagentUsage, Supported, SwarmMeta, SwarmResumeRequest,
     SwarmResumeResponse, TerminalRef, TextContent, ThemesRequest, ThemesResult, ToolCall,
     ToolCallContent, ToolCallMeta, ToolCallStatus, ToolCallUpdate, ToolKind, TurnPhase, TurnReason,
-    TurnUpdate, UsageUpdate, UserTheme,
+    TurnUpdate, UsageMeta, UsageTokens, UsageUpdate, UserTheme,
 };
 
 /// `_kage/config/get` result: the read-only sections a settings page

@@ -646,6 +646,7 @@ mod tests {
                 used: 1,
                 size: 2,
                 cost: None,
+                meta: None,
             }));
             ctx.update(SessionUpdate::AgentMessageChunk(MessageChunk {
                 content: ContentBlock::text("still here"),

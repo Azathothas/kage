@@ -1326,6 +1326,7 @@ impl Client {
                     used: update.used,
                     size: update.size,
                     cost: update.cost,
+                    tokens: update.meta.and_then(|meta| meta.kage),
                 };
                 vec![Change::Session {
                     id: session_id.into(),
