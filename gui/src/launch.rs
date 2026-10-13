@@ -819,7 +819,8 @@ impl ShellApp {
                 ui.set_min_size(ui.ctx().viewport_rect().size());
                 egui::Frame::NONE.fill(palette.bg).show(ui, |ui| {
                     ui.centered_and_justified(|ui| {
-                        self.shell.setup.show(ui);
+                        let installing = self.installing == Some(crate::ui::settings::Install::Engine);
+                        self.shell.setup.show(ui, installing);
                     });
                 });
             });
@@ -834,6 +835,12 @@ impl ShellApp {
             Some(crate::ui::setup::SetupEvent::Retry) => {
                 self.shell.retry_engine(saved.as_deref(), ui.ctx());
             }
+            #[cfg(not(target_arch = "wasm32"))]
+            Some(crate::ui::setup::SetupEvent::Download) => {
+                self.start_install(crate::ui::settings::Install::Engine);
+            }
+            #[cfg(target_arch = "wasm32")]
+            Some(crate::ui::setup::SetupEvent::Download) => {}
             None => {}
         }
     }

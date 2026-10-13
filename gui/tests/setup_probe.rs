@@ -20,7 +20,7 @@ fn harness_for(view: SetupView) -> Harness<'static, Probe> {
                 if testutil::theme_installed(installed, ui.ctx()) {
                     return;
                 }
-                screen.show(ui);
+                screen.show(ui, false);
                 // A single run spans several frames; only a fresh
                 // event replaces the one a button asked for.
                 if let Some(event) = screen.take_asked() {

@@ -9,7 +9,9 @@
 //! never shows this screen.
 
 use crate::gate::MINIMUM_KAGE_VERSION;
-use crate::theme::{FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_SM, FS_XS, Palette, R_LG};
+use crate::theme::{
+    FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_SM, FS_XS, Palette, R_LG, family,
+};
 use crate::ui::forms::{self, Tone};
 
 /// The ways to install `kage`, with the command or page each names.
@@ -32,6 +34,8 @@ pub enum SetupEvent {
     Use(String),
     /// Look for `kage` on the PATH again.
     Retry,
+    /// Download the newest engine release for this platform.
+    Download,
 }
 
 /// Probes `program` with `--version`: the version it reports, or why it
@@ -126,7 +130,7 @@ impl SetupView {
 
     /// Draws the screen. What the controls ask for is read once by
     /// [`SetupView::take_asked`], after the area closes.
-    pub fn show(&mut self, ui: &mut egui::Ui) {
+    pub fn show(&mut self, ui: &mut egui::Ui, installing: bool) {
         let palette = Palette::active_of(ui.ctx());
         let mut asked = None;
         ui.vertical(|ui| {
@@ -188,6 +192,40 @@ impl SetupView {
                     });
                 }
             });
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(asset) = crate::update::cli_asset() {
+                group(ui, "Or download it here", palette);
+                boxed(ui, palette, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.add_space(16.0);
+                        ui.vertical(|ui| {
+                            ui.label(
+                                egui::RichText::new(asset)
+                                    .size(FS_SM)
+                                    .family(family(FAMILY_MONO_REGULAR))
+                                    .color(palette.ink),
+                            );
+                            ui.label(
+                                egui::RichText::new(crate::update::install_hint())
+                                    .size(FS_XS)
+                                    .color(palette.muted),
+                            );
+                        });
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.add_space(16.0);
+                            let label = if installing {
+                                "Downloading\u{2026}"
+                            } else {
+                                "Download"
+                            };
+                            let tone = Tone::Primary;
+                            if forms::button(ui, label, tone, palette).clicked() && !installing {
+                                asked = Some(SetupEvent::Download);
+                            }
+                        });
+                    });
+                });
+            }
             group(ui, "Or install it yourself", palette);
             boxed(ui, palette, |ui| {
                 for (ix, (name, command)) in INSTALL.iter().enumerate() {
