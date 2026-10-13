@@ -125,6 +125,9 @@ impl Toolbar {
             Some(open) if open == which => None,
             _ => Some(which),
         };
+        if self.picker == Some(Picker::Mode) {
+            self.mode_query.clear();
+        }
     }
 
     /// Closes both pickers.
@@ -172,6 +175,12 @@ impl Toolbar {
     /// The model picker's highlighted row.
     pub const fn model_highlight(&self) -> usize {
         self.model_highlight
+    }
+
+    /// Moves the mode picker's highlight to `index`, as hovering a row
+    /// does.
+    pub fn set_mode_highlight(&mut self, index: usize) {
+        self.mode_highlight = index;
     }
 
     /// Steps the mode picker's highlight.
@@ -312,20 +321,34 @@ fn dimmed_pill(ui: &mut egui::Ui, label: &str, palette: &Palette, tip: &str) -> 
         .on_hover_text(tip)
 }
 
-/// Where a picker card of `height` pixels opens from its pill: below
-/// the pill, or above it when the card would run off the screen.
-fn picker_anchor(ctx: &egui::Context, pill: egui::Rect, height: f32) -> (egui::Pos2, egui::Align2) {
-    if pill.bottom() + height + SP_2 > ctx.content_rect().bottom() {
-        (
-            pill.left_top() - egui::vec2(0.0, SP_2),
-            egui::Align2::LEFT_BOTTOM,
-        )
+/// Where the picker card `id` opens from its pill: 6px above the
+/// pill, as the reference overlay hangs it, or below when the window
+/// has no room above. The card's height is the one it drew last
+/// frame, or `fallback` before it ever drew. Its left edge sits on the
+/// pill's, or its right edge when `right` is set.
+fn picker_anchor(
+    ctx: &egui::Context,
+    id: egui::Id,
+    pill: egui::Rect,
+    fallback: f32,
+    right: bool,
+) -> (egui::Pos2, egui::Align2) {
+    let height = ctx
+        .memory(|memory| memory.area_rect(id))
+        .map_or(fallback, |rect| rect.height());
+    let x = if right { pill.right() } else { pill.left() };
+    let above = pill.top() - height - 6.0 >= ctx.content_rect().top();
+    let (y, v) = if above {
+        (pill.top() - 6.0, egui::Align::BOTTOM)
     } else {
-        (
-            pill.left_bottom() + egui::vec2(0.0, SP_2),
-            egui::Align2::LEFT_TOP,
-        )
-    }
+        (pill.bottom() + 6.0, egui::Align::TOP)
+    };
+    let h = if right {
+        egui::Align::RIGHT
+    } else {
+        egui::Align::LEFT
+    };
+    (egui::pos2(x, y), egui::Align2([h, v]))
 }
 
 /// Where the gauge card opens from its pill: its right edge on the
@@ -416,7 +439,6 @@ fn onoff(ui: &mut egui::Ui, on: bool, palette: &Palette) {
         .show(ui, |ui| ui.label(text));
 }
 
-/// The popover surface the pickers and the plus menu render on.
 /// The menu surface every popover draws on: the raised fill, the
 /// hairline border and the flyout shadow.
 pub(crate) fn surface(
@@ -425,11 +447,24 @@ pub(crate) fn surface(
     width: f32,
     body: impl FnOnce(&mut egui::Ui),
 ) {
+    surface_in(ui, palette, palette.menu, 5, width, body);
+}
+
+/// The menu surface on `fill`: the pickers draw on the page's own
+/// background, as the reference's picker overlay does.
+fn surface_in(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    fill: egui::Color32,
+    margin: i8,
+    width: f32,
+    body: impl FnOnce(&mut egui::Ui),
+) {
     egui::Frame::NONE
-        .fill(palette.menu)
+        .fill(fill)
         .stroke(egui::Stroke::new(1.0, palette.line))
         .corner_radius(egui::CornerRadius::same(R_LG as u8))
-        .inner_margin(egui::Margin::same(5))
+        .inner_margin(egui::Margin::same(margin))
         .shadow(palette.shadow_menu)
         .show(ui, |ui| {
             ui.style_mut().interaction.selectable_labels = false;
@@ -776,8 +811,15 @@ fn mode_button(
     if !open {
         return Some(());
     }
-    let (at, pivot) = picker_anchor(ui.ctx(), response.rect, MODE_PICKER_H);
+    let (at, pivot) = picker_anchor(
+        ui.ctx(),
+        egui::Id::new("mode-picker"),
+        response.rect,
+        MODE_PICKER_H,
+        false,
+    );
     let card = egui::Window::new("mode-picker")
+        .id(egui::Id::new("mode-picker"))
         .title_bar(false)
         .collapsible(false)
         .resizable(false)
@@ -791,97 +833,45 @@ fn mode_button(
                 toolbar.close_pickers();
                 return;
             }
-            surface(ui, palette, MODE_PICKER_W, |ui| {
-                let query = ui.add(
-                    egui::TextEdit::singleline(toolbar.mode_query())
-                        .hint_text("Search modes")
-                        .desired_width(MODE_PICKER_W - 16.0)
-                        .id(egui::Id::new("mode-picker-query")),
-                );
-                if query.gained_focus() {
-                    toolbar.mode_query().clear();
-                }
+            surface_in(ui, palette, palette.bg, 0, MODE_PICKER_W, |ui| {
+                ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
+                mode_search_row(ui, toolbar, palette);
+                picker_rule(ui, palette);
                 let rows = pickers::mode_rows(&option.options, &toolbar.mode_query().clone());
-                let total = rows.len();
-                let highlight = toolbar.mode_highlight();
-                for (index, row) in rows.iter().enumerate() {
-                    let selected = index == highlight;
-                    let row_id = egui::Id::new("mode-row").with(row.value.as_str());
-                    let hovered = ui.ctx().read_response(row_id).is_some_and(|r| r.hovered());
-                    let inner = egui::Frame::NONE
-                        .fill(if selected || hovered {
-                            palette.selected
-                        } else {
-                            egui::Color32::TRANSPARENT
-                        })
-                        .corner_radius(egui::CornerRadius::same(R_MD as u8))
-                        .inner_margin(egui::Margin::symmetric(9, 7))
-                        .show(ui, |ui| {
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 10.0;
-                                let tint = pickers::mode_tone(&row.value, palette)
-                                    .unwrap_or(palette.muted);
-                                crate::icons::icon(ui, pickers::mode_icon(&row.value), 14.0, tint);
-                                ui.vertical(|ui| {
-                                    let name = egui::RichText::new(row.name.clone())
-                                        .size(FS_SM)
-                                        .color(tone.unwrap_or(palette.ink));
-                                    ui.add_sized(
-                                        [ui.available_width() - 60.0, 18.0],
-                                        egui::Label::new(name).selectable(false),
-                                    );
-                                    if let Some(description) = &row.description {
-                                        ui.label(
-                                            egui::RichText::new(description.clone())
-                                                .size(11.5)
-                                                .color(palette.faint),
-                                        );
-                                    }
-                                });
-                                // The policy strip: six dots, one per
-                                // kind of tool call, in the verdict's
-                                // tone.
-                                if let Some(verdicts) = pickers::policy(&row.value) {
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                            ui.spacing_mut().item_spacing.x = 3.0;
-                                            for verdict in verdicts {
-                                                let (rect, _) = ui.allocate_at_least(
-                                                    egui::vec2(7.0, 7.0),
-                                                    egui::Sense::hover(),
-                                                );
-                                                ui.painter().rect_filled(
-                                                    rect,
-                                                    egui::CornerRadius::same(2),
-                                                    verdict.tone(palette),
-                                                );
-                                            }
-                                        },
-                                    );
-                                }
-                                if row.value == active {
-                                    crate::icons::icon(ui, Icon::Check, 14.0, palette.accent);
-                                }
-                            })
-                            .response
-                        })
-                        .inner;
-                    if ui
-                        .interact(inner.rect, row_id, egui::Sense::click())
-                        .on_hover_cursor(egui::CursorIcon::PointingHand)
-                        .clicked()
-                    {
-                        store.set_permission(&row.value);
-                        toolbar.close_pickers();
-                    }
+                let mut chosen = None;
+                egui::Frame::NONE
+                    .inner_margin(egui::Margin::same(5))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        if rows.is_empty() {
+                            ui.label(
+                                egui::RichText::new("no modes match")
+                                    .size(FS_XS)
+                                    .color(palette.faint),
+                            );
+                        }
+                        for (index, row) in rows.iter().enumerate() {
+                            let on = row.value == active;
+                            let response =
+                                mode_row(ui, row, index == toolbar.mode_highlight(), on, palette);
+                            if response.hovered() {
+                                toolbar.set_mode_highlight(index);
+                            }
+                            if response.clicked() {
+                                chosen = Some(row.value.clone());
+                            }
+                        }
+                    });
+                if let Some(verdicts) = rows
+                    .get(toolbar.mode_highlight())
+                    .and_then(|row| pickers::policy(&row.value))
+                {
+                    picker_rule(ui, palette);
+                    policy_foot(ui, verdicts, palette);
                 }
-                if total == 0 {
-                    ui.label(
-                        egui::RichText::new("no modes match")
-                            .size(FS_XS)
-                            .color(palette.faint),
-                    );
+                if let Some(value) = chosen {
+                    store.set_permission(&value);
+                    toolbar.close_pickers();
                 }
             });
         });
@@ -889,6 +879,199 @@ fn mode_button(
         dismiss_outside(toolbar, &card.response, &response);
     }
     Some(())
+}
+
+/// The search row over the mode picker: the glyph, the query field
+/// and the key that cycles the modes.
+fn mode_search_row(ui: &mut egui::Ui, toolbar: &mut Toolbar, palette: &Palette) {
+    egui::Frame::NONE
+        .inner_margin(egui::Margin::symmetric(12, 10))
+        .show(ui, |ui| {
+            let size = egui::vec2(ui.available_width(), 20.0);
+            let layout = egui::Layout::left_to_right(egui::Align::Center);
+            ui.allocate_ui_with_layout(size, layout, |ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                crate::icons::icon(ui, Icon::Search, 14.0, palette.faint);
+                let chip_w = 64.0;
+                let query = ui.add(
+                    egui::TextEdit::singleline(toolbar.mode_query())
+                        .id(egui::Id::new("mode-picker-query"))
+                        .hint_text(egui::RichText::new("Permission mode").color(palette.faint))
+                        .text_color(palette.ink)
+                        .font(egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)))
+                        .frame(egui::Frame::NONE)
+                        .margin(egui::Margin::ZERO)
+                        .desired_width(ui.available_width() - chip_w - 8.0),
+                );
+                query.request_focus();
+                kbd(ui, "Shift Tab", palette);
+            });
+        });
+}
+
+/// A hairline across a picker, between its parts.
+fn picker_rule(ui: &mut egui::Ui, palette: &Palette) {
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 1.0), egui::Sense::hover());
+    ui.painter()
+        .rect_filled(rect, egui::CornerRadius::ZERO, palette.subtle);
+}
+
+/// One permission mode row: the glyph in its tile, the name in the
+/// mode's tone over its description, the policy dots and the check
+/// on the active mode.
+fn mode_row(
+    ui: &mut egui::Ui,
+    row: &kage_client::wire::SessionConfigSelectOption,
+    highlighted: bool,
+    on: bool,
+    palette: &Palette,
+) -> egui::Response {
+    let line = 1.618;
+    let name_h = FS_SM * line;
+    let desc_h = if row.description.is_some() {
+        11.5 * line
+    } else {
+        0.0
+    };
+    let height = 7.0 + (name_h + desc_h).max(26.0) + 7.0;
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), height),
+        egui::Sense::click(),
+    );
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, on, &row.name)
+    });
+    if highlighted {
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::same(R_MD as u8), palette.selected);
+    }
+    let tone = pickers::mode_tone(&row.value, palette);
+    let mid = rect.center().y;
+    let tile = egui::Rect::from_min_size(
+        egui::pos2(rect.left() + 9.0, mid - 13.0),
+        egui::vec2(26.0, 26.0),
+    );
+    ui.painter()
+        .rect_filled(tile, egui::CornerRadius::same(7), palette.fill);
+    crate::icons::themed_image(
+        pickers::mode_icon(&row.value),
+        14.0,
+        tone.unwrap_or(palette.muted),
+    )
+    .paint_at(
+        ui,
+        egui::Rect::from_center_size(tile.center(), egui::vec2(14.0, 14.0)),
+    );
+    let mut right = rect.right() - 9.0;
+    if on {
+        let check =
+            egui::Rect::from_min_size(egui::pos2(right - 14.0, mid - 7.0), egui::vec2(14.0, 14.0));
+        crate::icons::themed_image(Icon::Check, 14.0, palette.accent).paint_at(ui, check);
+        right = check.left() - 10.0;
+    }
+    if let Some(verdicts) = pickers::policy(&row.value) {
+        let width = 6.0 * 7.0 + 5.0 * 3.0;
+        for (n, verdict) in verdicts.iter().enumerate() {
+            let dot = egui::Rect::from_min_size(
+                egui::pos2(right - width + n as f32 * 10.0, mid - 3.5),
+                egui::vec2(7.0, 7.0),
+            );
+            let color = if *verdict == pickers::Verdict::Runs {
+                verdict.tone(palette).gamma_multiply(0.8)
+            } else {
+                verdict.tone(palette)
+            };
+            ui.painter()
+                .rect_filled(dot, egui::CornerRadius::same(2), color);
+        }
+        right -= width + 10.0;
+    }
+    let text_x = tile.right() + 10.0;
+    let top = mid - (name_h + desc_h) / 2.0;
+    let name = ui.painter().layout_no_wrap(
+        row.name.clone(),
+        egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
+        tone.unwrap_or(palette.ink),
+    );
+    ui.painter().galley(
+        egui::pos2(text_x, top + (name_h - name.size().y) / 2.0),
+        name,
+        palette.ink,
+    );
+    if let Some(description) = &row.description {
+        let format = egui::TextFormat::simple(
+            egui::FontId::new(11.5, family(FAMILY_BODY_REGULAR)),
+            palette.faint,
+        );
+        let galley =
+            crate::ui::transcript::head::one_line(ui, description.clone(), format, right - text_x);
+        ui.painter().galley(
+            egui::pos2(text_x, top + name_h + (desc_h - galley.size().y) / 2.0),
+            galley,
+            palette.faint,
+        );
+    }
+    response
+}
+
+/// What the highlighted mode does to each kind of tool call, over the
+/// note that config rules still apply.
+fn policy_foot(ui: &mut egui::Ui, verdicts: [pickers::Verdict; 6], palette: &Palette) {
+    egui::Frame::NONE
+        .fill(palette.fill)
+        .inner_margin(egui::Margin::same(12))
+        .corner_radius(egui::CornerRadius {
+            nw: 0,
+            ne: 0,
+            sw: R_LG as u8,
+            se: R_LG as u8,
+        })
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 8.0;
+            let column = ui.available_width() / 3.0;
+            for pair in pickers::KINDS
+                .iter()
+                .zip(verdicts)
+                .collect::<Vec<_>>()
+                .chunks(3)
+            {
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), 32.0),
+                    egui::Sense::hover(),
+                );
+                for (n, (kind, verdict)) in pair.iter().enumerate() {
+                    let left = rect.left() + n as f32 * column;
+                    ui.painter().text(
+                        egui::pos2(left, rect.top()),
+                        egui::Align2::LEFT_TOP,
+                        kind.to_uppercase(),
+                        egui::FontId::new(10.5, family(FAMILY_BODY_REGULAR)),
+                        palette.faint,
+                    );
+                    ui.painter().text(
+                        egui::pos2(left, rect.top() + 16.0),
+                        egui::Align2::LEFT_TOP,
+                        verdict.word(),
+                        egui::FontId::new(FS_XS, family(FAMILY_MONO_REGULAR)),
+                        verdict.tone(palette),
+                    );
+                }
+            }
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(
+                        "Rules in config.toml still apply on top, and a configured \
+                         deny refuses in every mode.",
+                    )
+                    .size(11.5)
+                    .color(palette.muted),
+                )
+                .wrap(),
+            );
+        });
 }
 
 /// The plan mode chip, shown only while plan mode is on, with the
@@ -1033,8 +1216,15 @@ fn model_button(
     // The picker card: the search row over a scrolling list, the
     // thinking level and its notes under a separator, as the reference
     // picker stacks them.
-    let (at, pivot) = picker_anchor(ui.ctx(), response.rect, PICKER_LIST_H + PICKER_FOOT_H);
+    let (at, pivot) = picker_anchor(
+        ui.ctx(),
+        egui::Id::new("model-picker"),
+        response.rect,
+        PICKER_LIST_H + PICKER_FOOT_H,
+        true,
+    );
     let card = egui::Window::new("model-picker")
+        .id(egui::Id::new("model-picker"))
         .title_bar(false)
         .collapsible(false)
         .resizable(false)
@@ -1044,7 +1234,7 @@ fn model_button(
         .order(egui::Order::Foreground)
         .frame(egui::Frame::NONE)
         .show(ui.ctx(), |ui| {
-            surface(ui, palette, PICKER_W, |ui| {
+            surface_in(ui, palette, palette.bg, 5, PICKER_W, |ui| {
                 let catalog = store.models().is_some();
                 let fallback = store
                     .composer_option("model")
