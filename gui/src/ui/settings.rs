@@ -2,7 +2,7 @@
 //! right, over the shell like the other dialogs.
 //!
 //! Pages render thin over the store. The client's own choices (theme,
-//! Enter behavior, the Lab toggles, the archive) are preferences the
+//! Enter behavior, the chat toggles, the archive) are preferences the
 //! shell stores; everything about the engine is read from what the
 //! connection reported and says unknown where it reported nothing.
 
@@ -37,8 +37,6 @@ pub enum Section {
     Connection,
     /// The shortcut table.
     Keyboard,
-    /// Experiments behind toggles.
-    Lab,
     /// Sessions taken out of the sidebar.
     Archived,
     /// The engine and protocol versions.
@@ -47,7 +45,7 @@ pub enum Section {
 
 impl Section {
     /// Every section, in nav order.
-    pub const ALL: [Section; 12] = [
+    pub const ALL: [Section; 11] = [
         Section::General,
         Section::Agents,
         Section::Providers,
@@ -57,7 +55,6 @@ impl Section {
         Section::Plugins,
         Section::Connection,
         Section::Keyboard,
-        Section::Lab,
         Section::Archived,
         Section::About,
     ];
@@ -75,7 +72,6 @@ impl Section {
             Section::Plugins => "Plugins",
             Section::Connection => "Connection",
             Section::Keyboard => "Keyboard",
-            Section::Lab => "Lab",
             Section::Archived => "Archived Sessions",
             Section::About => "About",
         }
@@ -94,7 +90,6 @@ impl Section {
             Section::Plugins => crate::icons::Icon::LayoutDashboard,
             Section::Connection => crate::icons::Icon::Network,
             Section::Keyboard => crate::icons::Icon::Command,
-            Section::Lab => crate::icons::Icon::Lightbulb,
             Section::Archived => crate::icons::Icon::Archive,
             Section::About => crate::icons::Icon::Info,
         }
@@ -690,7 +685,6 @@ fn page(
                 | Section::Plugins => config_page(ui, store, section, palette, events),
                 Section::Connection => connection(ui, store, palette),
                 Section::Keyboard => keyboard(ui, store, palette),
-                Section::Lab => lab(ui, store, palette, events),
                 Section::Archived => archived(ui, store, palette, events),
                 Section::About => about(ui, store, palette, updates, events),
             }
@@ -759,6 +753,17 @@ fn general(ui: &mut egui::Ui, store: &Store, palette: &Palette, events: &mut Vec
         events.push(SettingsEvent::Flip("confirm_swarm"));
     }
     group(ui, "Chat", palette);
+    let mut fuel = prefs.fuel;
+    toggle_row(
+        ui,
+        "Context gauge",
+        "The context ring opens a gauge with Compact now",
+        &mut fuel,
+        palette,
+    );
+    if fuel != prefs.fuel {
+        events.push(SettingsEvent::Flip("fuel"));
+    }
     let mut smooth = prefs.smooth_stream;
     toggle_row(
         ui,
@@ -780,6 +785,17 @@ fn general(ui: &mut egui::Ui, store: &Store, palette: &Palette, events: &mut Vec
     );
     if rail != prefs.rail {
         events.push(SettingsEvent::Flip("rail"));
+    }
+    let mut constellation = prefs.constellation;
+    toggle_row(
+        ui,
+        "Swarm constellation",
+        "Swarm cards draw one star per worker, lit by state",
+        &mut constellation,
+        palette,
+    );
+    if constellation != prefs.constellation {
+        events.push(SettingsEvent::Flip("constellation"));
     }
 }
 
@@ -1223,34 +1239,6 @@ fn keyboard(ui: &mut egui::Ui, store: &Store, palette: &Palette) {
         "Commands for the : line: theme <name>, model <name>, swarm on|off, plan on|off, goal <text>, new, settings, compact, noh, q, vim off.",
         palette,
     );
-}
-
-/// The Lab page: the experiments behind toggles.
-fn lab(ui: &mut egui::Ui, store: &Store, palette: &Palette, events: &mut Vec<SettingsEvent>) {
-    let prefs = store.prefs();
-    note(ui, "Experiments that may change or go away.", palette);
-    let mut constellation = prefs.constellation;
-    toggle_row(
-        ui,
-        "Swarm constellation",
-        "Swarm cards draw one star per worker, lit by state",
-        &mut constellation,
-        palette,
-    );
-    if constellation != prefs.constellation {
-        events.push(SettingsEvent::Flip("constellation"));
-    }
-    let mut fuel = prefs.fuel;
-    toggle_row(
-        ui,
-        "Context gauge",
-        "The context ring opens a gauge with Compact now",
-        &mut fuel,
-        palette,
-    );
-    if fuel != prefs.fuel {
-        events.push(SettingsEvent::Flip("fuel"));
-    }
 }
 
 /// The Archived Sessions page: the archive, with a restore each.
@@ -1759,7 +1747,7 @@ mod tests {
             assert!(!section.label().is_empty(), "{section:?} has a label");
             let _ = section.icon();
         }
-        assert_eq!(Section::ALL.len(), 12);
+        assert_eq!(Section::ALL.len(), 11);
     }
 
     #[test]
