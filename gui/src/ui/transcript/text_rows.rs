@@ -47,6 +47,9 @@ const ICON_SM: f32 = 14.0;
 const ICON_XS: f32 = 12.0;
 /// The design's line height over its font size.
 const PHI: f32 = 1.618;
+/// The user row's hover strip: the reference's extra small ghost
+/// buttons, which keep their room while hidden.
+const USER_STRIP_H: f32 = 17.0;
 /// The steered bubble's dashed border, one dash and one gap.
 const DASH: f32 = 4.0;
 
@@ -215,7 +218,7 @@ pub fn render_user(
                     ui.label(
                         egui::RichText::new(text)
                             .size(FS_BASE)
-                            .line_height(Some(FS_BASE * 1.5))
+                            .line_height(Some(FS_BASE * PHI))
                             .color(if steered {
                                 palette.ink
                             } else {
@@ -238,7 +241,7 @@ pub fn render_user(
             }
             ui.add_space(SP_2);
             let (strip, _) = ui.allocate_exact_size(
-                egui::vec2(ui.available_width(), head::ICON_BTN),
+                egui::vec2(ui.available_width(), USER_STRIP_H),
                 egui::Sense::hover(),
             );
             let over = egui::Rect::from_min_max(egui::pos2(strip.left(), top), strip.max);
@@ -267,12 +270,12 @@ pub fn render_user(
                         UserAction::Rewind,
                     ));
                 }
-                let step = head::ICON_BTN + SP_1;
+                let step = USER_STRIP_H + SP_1;
                 let mut x = strip.right() - step * buttons.len() as f32 + SP_1;
                 for (glyph, tip, action) in buttons {
                     let at = egui::Rect::from_min_size(
                         egui::pos2(x, strip.top()),
-                        egui::vec2(head::ICON_BTN, head::ICON_BTN),
+                        egui::vec2(USER_STRIP_H, USER_STRIP_H),
                     );
                     if head::icon_button(ui, at, glyph, tip, palette).clicked() {
                         actions.push(action);

@@ -960,6 +960,7 @@ impl ShellApp {
             // over a live transcript forever.
             let store = &mut store.borrow_mut();
             ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
                 crate::ui::topbar::show(ui, store, sidebar_hidden, &mut topbar_events.borrow_mut());
                 if store.active_id().is_some() {
                     if self.shell.find.is_open() {
