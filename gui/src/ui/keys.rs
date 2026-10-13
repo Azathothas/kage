@@ -232,30 +232,6 @@ pub fn bindings() -> Vec<Binding> {
             action: OpenFind,
         },
         Binding {
-            context: Context::Palette,
-            key: "ArrowUp",
-            mods: Mods::default(),
-            action: OpenPalette,
-        },
-        Binding {
-            context: Context::Palette,
-            key: "ArrowDown",
-            mods: Mods::default(),
-            action: OpenPalette,
-        },
-        Binding {
-            context: Context::Palette,
-            key: "Enter",
-            mods: Mods::default(),
-            action: OpenPalette,
-        },
-        Binding {
-            context: Context::Palette,
-            key: "Escape",
-            mods: Mods::default(),
-            action: OpenPalette,
-        },
-        Binding {
             context: Context::Dialog,
             key: "Escape",
             mods: Mods::default(),
@@ -415,7 +391,8 @@ mod tests {
 
     #[test]
     fn a_modal_context_answers_only_its_own_bindings() {
-        // Escape closes the palette, and does not also reach the shell.
+        // The palette closes itself on Escape, so no shell action runs
+        // for it, and the shell never sees the key.
         let escape = press(
             "Escape",
             Mods {
@@ -424,10 +401,7 @@ mod tests {
                 alt: false,
             },
         );
-        assert_eq!(
-            dispatch(Context::Palette, &escape),
-            Some(Action::OpenPalette)
-        );
+        assert_eq!(dispatch(Context::Palette, &escape), None);
         assert_eq!(dispatch(Context::Shell, &escape), None, "no shell escape");
     }
 
