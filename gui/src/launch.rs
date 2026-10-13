@@ -1230,6 +1230,9 @@ impl ShellApp {
                         _ => {}
                     });
                 }
+                crate::ui::settings::SettingsEvent::EngineOption(name, value) => {
+                    self.shell.store.set_engine_option(&name, value);
+                }
                 crate::ui::settings::SettingsEvent::Mode(value) => {
                     let _ = self.shell.store.set_permission(&value);
                 }

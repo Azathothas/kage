@@ -21,6 +21,8 @@ use crate::ui::settings_config as config;
 pub enum Section {
     /// Theme and input behavior.
     General,
+    /// The engine's agent and session options.
+    Agents,
     /// The providers and their models.
     Providers,
     /// The MCP servers and their status.
@@ -45,8 +47,9 @@ pub enum Section {
 
 impl Section {
     /// Every section, in nav order.
-    pub const ALL: [Section; 11] = [
+    pub const ALL: [Section; 12] = [
         Section::General,
+        Section::Agents,
         Section::Providers,
         Section::Mcp,
         Section::Acp,
@@ -64,6 +67,7 @@ impl Section {
     pub fn label(self) -> &'static str {
         match self {
             Section::General => "General",
+            Section::Agents => "Agent & Sessions",
             Section::Providers => "Model Providers",
             Section::Mcp => "MCP Servers",
             Section::Acp => "ACP Agents",
@@ -82,6 +86,7 @@ impl Section {
     pub fn icon(self) -> crate::icons::Icon {
         match self {
             Section::General => crate::icons::Icon::Settings2,
+            Section::Agents => crate::icons::Icon::Bot,
             Section::Providers => crate::icons::Icon::Zap,
             Section::Mcp => crate::icons::Icon::Server,
             Section::Acp => crate::icons::Icon::Bot,
@@ -224,6 +229,8 @@ pub enum SettingsEvent {
     Theme(crate::theme::ThemeChoice),
     /// Flip one boolean preference, named by the field it writes.
     Flip(&'static str),
+    /// Store engine option `name` in the user config with `value`.
+    EngineOption(String, serde_json::Value),
     /// Set the active session's permission mode to this value.
     Mode(String),
     /// Bring archived session `id` back to the sidebar.
@@ -527,6 +534,9 @@ impl SettingsView {
             });
         if let Some(section) = picked {
             self.settings.go(section);
+            if section == Section::Agents {
+                store.ask_engine_options();
+            }
         }
         for event in &events {
             match event {
@@ -671,6 +681,7 @@ fn page(
             ui.add_space(6.0);
             match section {
                 Section::General => general(ui, store, palette, events),
+                Section::Agents => agents(ui, store, palette, events),
                 Section::Providers
                 | Section::Mcp
                 | Section::Acp
@@ -769,6 +780,169 @@ fn general(ui: &mut egui::Ui, store: &Store, palette: &Palette, events: &mut Vec
     if rail != prefs.rail {
         events.push(SettingsEvent::Flip("rail"));
     }
+}
+
+/// The Agent & Sessions page: the engine's options, grouped as the
+/// design groups them. Each row writes its option back to the user
+/// config.
+fn agents(ui: &mut egui::Ui, store: &Store, palette: &Palette, events: &mut Vec<SettingsEvent>) {
+    let Some(options) = store.engine_options() else {
+        note(ui, "Reading the engine's options\u{2026}", palette);
+        return;
+    };
+    let find = |name: &str| options.iter().find(|option| option.name == name);
+    let groups: [(&str, &[(&str, &str)]); 4] = [
+        (
+            "Session defaults",
+            &[
+                ("thinking_level", "Thinking by default"),
+                ("compaction_threshold", "Compact at"),
+            ],
+        ),
+        (
+            "Subagents",
+            &[
+                ("agent_max_depth", "Max depth"),
+                ("agent_max_running", "Max running"),
+                ("agent_max_turns", "Turn limit"),
+                ("agent_timeout", "Run timeout"),
+                ("agent_budget", "Token budget"),
+            ],
+        ),
+        (
+            "Swarm",
+            &[
+                ("swarm_max_items", "Max items per swarm"),
+                ("swarm_timeout_ms", "Worker timeout"),
+            ],
+        ),
+        ("", &[]),
+    ];
+    for (title, rows) in groups.iter().take(3) {
+        group(ui, title, palette);
+        boxed(ui, palette, |ui| {
+            for (name, label) in rows.iter() {
+                let Some(option) = find(name) else {
+                    continue;
+                };
+                row(
+                    ui,
+                    label,
+                    &option.doc,
+                    |ui| option_control(ui, option, palette, events),
+                    palette,
+                );
+            }
+        });
+    }
+    note(
+        ui,
+        "These live in the user config.toml; a project config that sets the same key still wins. Changes apply to sessions started afterwards.",
+        palette,
+    );
+}
+
+/// The control of one engine option: segments for a choice, a stepper
+/// for a number or a fraction.
+fn option_control(
+    ui: &mut egui::Ui,
+    option: &kage_client::wire::OptionEntry,
+    palette: &Palette,
+    events: &mut Vec<SettingsEvent>,
+) {
+    if option.kind == "choice" {
+        let current = option.value.as_str().unwrap_or_default();
+        for value in &option.values {
+            let label = match value.as_str() {
+                "" => "Auto".to_owned(),
+                "xhigh" => "Max".to_owned(),
+                other => {
+                    let mut word = other.to_owned();
+                    word.get_mut(0..1).map(|first| first.make_ascii_uppercase());
+                    word
+                }
+            };
+            if ui.selectable_label(current == value, label).clicked() {
+                events.push(SettingsEvent::EngineOption(
+                    option.name.clone(),
+                    serde_json::Value::from(value.as_str()),
+                ));
+            }
+        }
+        return;
+    }
+    let fraction = option.kind == "fraction";
+    let current = option.value.as_f64().unwrap_or(0.0);
+    let (step, shown) = match (fraction, option.name.as_str()) {
+        (true, _) => (0.05, format!("{}%", (current * 100.0).round())),
+        (false, "swarm_timeout_ms") => (60_000.0, format!("{} min", current as i64 / 60_000)),
+        (false, "agent_max_turns") => (10.0, off_or(current, current.to_string())),
+        (false, "agent_timeout") => (
+            60.0,
+            off_or(current, format!("{} min", current as i64 / 60)),
+        ),
+        (false, "agent_budget") => (
+            100_000.0,
+            off_or(current, format!("{}k", current as i64 / 1000)),
+        ),
+        _ => (1.0, (current as i64).to_string()),
+    };
+    let (min, max) = if fraction {
+        (0.0, 1.0)
+    } else {
+        (
+            option.min.unwrap_or(i64::MIN) as f64,
+            option.max.unwrap_or(i64::MAX) as f64,
+        )
+    };
+    let down = (current - step).clamp(min, max);
+    let up = (current + step).clamp(min, max);
+    let mut set = |next: f64| {
+        let value = if fraction {
+            serde_json::Value::from((next * 100.0).round() / 100.0)
+        } else {
+            serde_json::Value::from(next as i64)
+        };
+        events.push(SettingsEvent::EngineOption(option.name.clone(), value));
+    };
+    if stepper_button(ui, crate::icons::Icon::Plus, up != current, palette) {
+        set(up);
+    }
+    ui.label(
+        egui::RichText::new(shown)
+            .size(FS_XS)
+            .family(family(FAMILY_MONO_REGULAR))
+            .color(palette.ink),
+    );
+    if stepper_button(ui, crate::icons::Icon::Minus, down != current, palette) {
+        set(down);
+    }
+}
+
+/// `text` for a value, or "Off" when the value is zero.
+fn off_or(value: f64, text: String) -> String {
+    if value == 0.0 { "Off".to_owned() } else { text }
+}
+
+/// One stepper arrow, dimmed and inert when it would not move the value.
+fn stepper_button(
+    ui: &mut egui::Ui,
+    icon: crate::icons::Icon,
+    enabled: bool,
+    palette: &Palette,
+) -> bool {
+    let tint = if enabled {
+        palette.muted
+    } else {
+        palette.faint
+    };
+    ui.add_enabled(
+        enabled,
+        egui::Button::image(crate::icons::themed_image(icon, 12.0, tint))
+            .fill(egui::Color32::TRANSPARENT)
+            .min_size(egui::vec2(26.0, 26.0)),
+    )
+    .clicked()
 }
 
 /// One theme card: the swatch and the name, chosen on a click.
