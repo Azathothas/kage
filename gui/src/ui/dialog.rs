@@ -381,7 +381,7 @@ impl Dialogs {
         if let Some(path) = ask.browse.take() {
             events.push(DialogEvent::Browse(path));
         }
-        if ask.close {
+        if ask.close || ask.cancelled {
             close = true;
         }
         if close {
@@ -544,12 +544,15 @@ impl Dialogs {
                     left: 15,
                     right: 12,
                     top: 10,
-                    bottom: 10,
+                    bottom: 0,
                 })
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
+                    // The quote caps at 96px with its padding, and the
+                    // text scrolls through the bottom padding, as the
+                    // reference's scrolling box does.
                     egui::ScrollArea::vertical()
-                        .max_height(96.0 - 20.0)
+                        .max_height(96.0 - 10.0)
                         .show(ui, |ui| {
                             ui.add(
                                 egui::Label::new(
@@ -560,6 +563,7 @@ impl Dialogs {
                                 )
                                 .wrap(),
                             );
+                            ui.add_space(10.0);
                         });
                 })
                 .response
@@ -688,13 +692,18 @@ impl Dialogs {
             .wrap(),
         );
         ui.add_space(FOOT_GAP);
-        footer(
+        match footer_icons(
             ui,
             palette,
-            &[("Cancel", false), ("Rewind", true)],
-            &mut ask.saved,
-            &mut ask.cancelled,
-        );
+            &[
+                ("Cancel", BtnTone::Plain, None),
+                ("Rewind", BtnTone::Primary, Some(crate::icons::Icon::Undo2)),
+            ],
+        ) {
+            Some(0) => ask.cancelled = true,
+            Some(_) => ask.saved = true,
+            None => {}
+        }
         if ask.saved {
             ask.events.push(DialogEvent::Rewind(prompt));
             ask.close = true;
@@ -949,18 +958,31 @@ fn footer_buttons(
     palette: &Palette,
     buttons: &[(&str, BtnTone)],
 ) -> Option<usize> {
+    let plain: Vec<_> = buttons
+        .iter()
+        .map(|(label, tone)| (*label, *tone, None))
+        .collect();
+    footer_icons(ui, palette, &plain)
+}
+
+/// [`footer_buttons`] with a leading icon on the buttons that carry one.
+fn footer_icons(
+    ui: &mut egui::Ui,
+    palette: &Palette,
+    buttons: &[(&str, BtnTone, Option<crate::icons::Icon>)],
+) -> Option<usize> {
     let (row, _) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 26.0), egui::Sense::hover());
     let mut right = row.right();
     let mut pressed = None;
-    for (n, (label, tone)) in buttons.iter().enumerate().rev() {
+    for (n, (label, tone, icon)) in buttons.iter().enumerate().rev() {
         let button = btn_sm_at(
             ui,
             egui::pos2(right, row.center().y),
             egui::Align2::RIGHT_CENTER,
             ui.id().with(("dialog-button", n)),
             label,
-            None,
+            *icon,
             *tone,
             palette,
         );

@@ -1443,7 +1443,29 @@ impl ShellApp {
                 self.shell.store.fork(through);
             }
             RowAction::Rewind(prompt) => {
-                self.shell.store.rewind(prompt);
+                // A rewind drops history, so it asks first, as the
+                // reference does; the dialog carries it out.
+                let running = self
+                    .shell
+                    .store
+                    .active_session()
+                    .is_some_and(|session| session.running || session.in_turn);
+                if running {
+                    self.shell.toasts.push(
+                        crate::ui::toasts::ToastDraft {
+                            tone: kage_client::wire::NoticeTone::Warn,
+                            text: "Interrupt the running turn before rewinding".to_owned(),
+                            action: crate::ui::toasts::ToastAction::None,
+                        },
+                        web_time::Instant::now(),
+                    );
+                } else {
+                    let events = self.shell.dialogs.show_dialog(
+                        crate::ui::dialog::DialogKind::Rewind(prompt),
+                        &mut self.shell.store,
+                    );
+                    self.carry_dialog(events);
+                }
             }
         }
     }

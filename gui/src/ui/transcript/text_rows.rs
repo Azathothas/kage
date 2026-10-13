@@ -205,6 +205,7 @@ pub fn render_user(
                 });
                 ui.add_space(SP_3);
             }
+            let row_w = ui.available_width();
             let bubble = egui::Frame::NONE
                 .fill(if steered {
                     egui::Color32::TRANSPARENT
@@ -214,20 +215,32 @@ pub fn render_user(
                 .corner_radius(egui::CornerRadius::same(BUBBLE_R as u8))
                 .inner_margin(egui::Margin::symmetric(BUBBLE_PX as i8, BUBBLE_PY as i8))
                 .show(ui, |ui| {
-                    ui.set_max_width((ui.available_width() * BUBBLE_MAX).max(1.0));
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(text)
-                                .size(FS_BASE)
-                                .line_height(Some(FS_BASE * PHI))
-                                .color(if steered {
-                                    palette.ink
-                                } else {
-                                    palette.ink_strong
-                                }),
-                        )
-                        .halign(egui::Align::LEFT),
-                    );
+                    // The bubble takes up to its share of the row, and
+                    // the text that share less the bubble's padding.
+                    let max_text = (row_w * BUBBLE_MAX - 2.0 * BUBBLE_PX).max(1.0);
+                    ui.set_max_width(max_text);
+                    // Text that wraps keeps the bubble at its full share,
+                    // ragged on the right, as the reference's does.
+                    let font = egui::FontId::new(FS_BASE, crate::theme::prose_family(ui.ctx()));
+                    let natural = ui
+                        .painter()
+                        .layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::PLACEHOLDER)
+                        .size()
+                        .x;
+                    if natural > max_text {
+                        ui.set_min_width(max_text);
+                    } else {
+                        ui.set_max_width(natural.ceil());
+                    }
+                    ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                        ui.add(egui::Label::new(
+                            egui::RichText::new(text).font(font).color(if steered {
+                                palette.ink
+                            } else {
+                                palette.ink_strong
+                            }),
+                        ));
+                    });
                 });
             if steered {
                 dashed_rect(ui, bubble.response.rect, BUBBLE_R, palette.line_strong);
@@ -280,7 +293,7 @@ pub fn render_user(
                         egui::pos2(x, strip.top()),
                         egui::vec2(USER_STRIP_H, USER_STRIP_H),
                     );
-                    if head::icon_button(ui, at, glyph, tip, palette).clicked() {
+                    if head::icon_button_sized(ui, at, glyph, ICON_XS, tip, palette).clicked() {
                         actions.push(action);
                     }
                     x += step;

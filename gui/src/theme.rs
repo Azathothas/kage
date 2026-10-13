@@ -437,6 +437,19 @@ fn with_line_height(font: &[u8], ratio: f32) -> Option<(Vec<u8>, f32)> {
     Some((out, ((ratio - natural) / 2.0).max(0.0)))
 }
 
+/// The prose face's family when the fonts are installed, the
+/// proportional default otherwise, for contexts that never installed
+/// them.
+#[must_use]
+pub fn prose_family(ctx: &egui::Context) -> egui::FontFamily {
+    let prose = family(FAMILY_PROSE);
+    if ctx.fonts(|fonts| fonts.definitions().families.contains_key(&prose)) {
+        prose
+    } else {
+        egui::FontFamily::Proportional
+    }
+}
+
 /// The named family a registered face renders under.
 #[must_use]
 pub fn family(name: &str) -> egui::FontFamily {

@@ -167,3 +167,19 @@ fn the_layer_draws_nothing_while_no_dialog_is_open() {
         "no swarm button draws"
     );
 }
+
+#[test]
+fn cancel_closes_the_dialog_without_an_event() {
+    let mut store = booted();
+    let mut dialogs = Dialogs::new();
+    dialogs.show_dialog(DialogKind::Goal, &mut store);
+    let mut harness = harness_for(store);
+    harness.state_mut().1 = dialogs;
+    harness.run();
+    harness.run();
+    harness.get_by_label("Cancel").click();
+    harness.run();
+    let (_, dialogs, events, _) = harness.state();
+    assert!(!dialogs.is_open(), "cancel closes the dialog");
+    assert!(events.is_empty(), "cancel asks for nothing");
+}

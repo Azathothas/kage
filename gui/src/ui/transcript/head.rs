@@ -207,6 +207,18 @@ pub(crate) fn icon_button(
     tooltip: &str,
     palette: &Palette,
 ) -> egui::Response {
+    icon_button_sized(ui, rect, glyph, ICON, tooltip, palette)
+}
+
+/// [`icon_button`] with its glyph at `size`.
+pub(crate) fn icon_button_sized(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    glyph: crate::icons::Icon,
+    size: f32,
+    tooltip: &str,
+    palette: &Palette,
+) -> egui::Response {
     let id = ui
         .id()
         .with(("icon-button", tooltip, rect.left().to_bits()));
@@ -222,9 +234,9 @@ pub(crate) fn icon_button(
     } else {
         palette.muted
     };
-    crate::icons::themed_image(glyph, ICON, color).paint_at(
+    crate::icons::themed_image(glyph, size, color).paint_at(
         ui,
-        egui::Rect::from_center_size(rect.center(), egui::vec2(ICON, ICON)),
+        egui::Rect::from_center_size(rect.center(), egui::vec2(size, size)),
     );
     response.on_hover_text(tooltip)
 }
