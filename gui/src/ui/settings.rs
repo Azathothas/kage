@@ -11,10 +11,22 @@ use kage_client::wire::SessionConfigOption;
 use crate::prefs::Prefs;
 use crate::store::Store;
 use crate::theme::{
-    FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_2XS, FS_SM, FS_XS, Palette, R_FULL, R_LG, R_MD,
-    R_XL, family,
+    FAMILY_BODY_BOLD, FAMILY_BODY_MEDIUM, FAMILY_BODY_REGULAR, FAMILY_BODY_SEMIBOLD,
+    FAMILY_MONO_REGULAR, FS_2XS, FS_SM, FS_XS, Palette, R_FULL, R_LG, R_MD, R_XL, family,
 };
 use crate::ui::settings_config as config;
+
+/// The nav column's width.
+const NAV_W: f32 = 224.0;
+/// A theme card's width.
+const THEME_CARD_W: f32 = 150.0;
+/// The theme select's width.
+const PICK_W: f32 = 220.0;
+/// The theme select menu's height cap.
+const PICK_MENU_H: f32 = 280.0;
+/// The line height the reference sets its text in, as a multiple of
+/// the font size.
+const LINE: f32 = 1.618;
 
 /// The pages of the settings dialog, in nav order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -27,8 +39,6 @@ pub enum Section {
     Providers,
     /// The MCP servers and their status.
     Mcp,
-    /// The external ACP agents.
-    Acp,
     /// The permission mode and the tool rules.
     Permissions,
     /// The plugin directory and grants.
@@ -45,12 +55,11 @@ pub enum Section {
 
 impl Section {
     /// Every section, in nav order.
-    pub const ALL: [Section; 11] = [
+    pub const ALL: [Section; 10] = [
         Section::General,
         Section::Agents,
         Section::Providers,
         Section::Mcp,
-        Section::Acp,
         Section::Permissions,
         Section::Plugins,
         Section::Connection,
@@ -67,7 +76,6 @@ impl Section {
             Section::Agents => "Agent & Sessions",
             Section::Providers => "Model Providers",
             Section::Mcp => "MCP Servers",
-            Section::Acp => "ACP Agents",
             Section::Permissions => "Permissions",
             Section::Plugins => "Plugins",
             Section::Connection => "Connection",
@@ -85,7 +93,6 @@ impl Section {
             Section::Agents => crate::icons::Icon::Bot,
             Section::Providers => crate::icons::Icon::Zap,
             Section::Mcp => crate::icons::Icon::Server,
-            Section::Acp => crate::icons::Icon::Bot,
             Section::Permissions => crate::icons::Icon::ShieldCheck,
             Section::Plugins => crate::icons::Icon::LayoutDashboard,
             Section::Connection => crate::icons::Icon::Network,
@@ -101,11 +108,7 @@ impl Section {
     pub fn reads_config(self) -> bool {
         matches!(
             self,
-            Section::Providers
-                | Section::Mcp
-                | Section::Acp
-                | Section::Permissions
-                | Section::Plugins
+            Section::Providers | Section::Mcp | Section::Permissions | Section::Plugins
         )
     }
 }
@@ -497,34 +500,25 @@ impl SettingsView {
                         .shadow(palette.shadow_2)
                         .show(ui, |ui| {
                             ui.set_min_size(card.size());
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 0.0;
-                                ui.vertical(|ui| {
-                                    nav(ui, &self.settings, palette, &mut picked);
-                                });
-                                ui.vertical(|ui| {
-                                    ui.set_width(card.width() - 224.0);
-                                    ui.set_min_height(card.height());
-                                    ui.horizontal(|ui| {
-                                        ui.add_space(ui.available_width() - 40.0);
-                                        let response = crate::ui::forms::icon_btn(
-                                            ui,
-                                            "Close",
-                                            crate::icons::Icon::X,
-                                            28.0,
-                                            14.0,
-                                            R_MD,
-                                            crate::ui::forms::IconTones {
-                                                fill: egui::Color32::TRANSPARENT,
-                                                hover_fill: palette.hover,
-                                                ink: palette.muted,
-                                                hover_ink: palette.ink,
-                                            },
-                                        );
-                                        if response.clicked() {
-                                            close = true;
-                                        }
-                                    });
+                            ui.set_max_size(card.size());
+                            let inner = ui.max_rect();
+                            let nav_rect = egui::Rect::from_min_size(
+                                inner.min,
+                                egui::vec2(NAV_W, inner.height()),
+                            );
+                            let page_rect = egui::Rect::from_min_max(
+                                egui::pos2(nav_rect.right(), inner.top()),
+                                inner.max,
+                            );
+                            let badge = store.prefs().update_badge;
+                            ui.scope_builder(egui::UiBuilder::new().max_rect(nav_rect), |ui| {
+                                nav(ui, &self.settings, badge, palette, &mut picked);
+                            });
+                            ui.scope_builder(
+                                egui::UiBuilder::new()
+                                    .max_rect(page_rect)
+                                    .layout(egui::Layout::top_down(egui::Align::Min)),
+                                |ui| {
                                     outcome = self.settings.show(
                                         ui,
                                         store,
@@ -532,7 +526,30 @@ impl SettingsView {
                                         updates,
                                         &mut events,
                                     );
-                                });
+                                },
+                            );
+                            let close_rect = egui::Rect::from_min_size(
+                                egui::pos2(page_rect.right() - 12.0 - 28.0, page_rect.top() + 12.0),
+                                egui::vec2(28.0, 28.0),
+                            );
+                            ui.scope_builder(egui::UiBuilder::new().max_rect(close_rect), |ui| {
+                                let response = crate::ui::forms::icon_btn(
+                                    ui,
+                                    "Close",
+                                    crate::icons::Icon::X,
+                                    28.0,
+                                    14.0,
+                                    R_MD,
+                                    crate::ui::forms::IconTones {
+                                        fill: egui::Color32::TRANSPARENT,
+                                        hover_fill: palette.hover,
+                                        ink: palette.muted,
+                                        hover_ink: palette.ink,
+                                    },
+                                );
+                                if response.clicked() {
+                                    close = true;
+                                }
                             });
                         });
                 });
@@ -608,55 +625,107 @@ impl SettingsView {
     }
 }
 
-/// The nav column: the title and one row per section.
-fn nav(ui: &mut egui::Ui, settings: &Settings, palette: &Palette, picked: &mut Option<Section>) {
-    ui.set_width(224.0);
-    ui.set_min_height(ui.available_height());
-    let painter = ui.painter();
-    let rect = egui::Rect::from_min_size(
-        ui.min_rect().min,
-        egui::vec2(224.0, ui.available_height().max(ui.min_rect().height())),
-    );
-    painter.rect_filled(rect, egui::CornerRadius::ZERO, palette.sidebar);
-    painter.vline(
-        rect.right(),
-        egui::Rangef::new(rect.top(), rect.bottom()),
+/// The nav column: the title and one row per section, on the sidebar
+/// fill with its hairline at the right.
+fn nav(
+    ui: &mut egui::Ui,
+    settings: &Settings,
+    badge: bool,
+    palette: &Palette,
+    picked: &mut Option<Section>,
+) {
+    let rect = ui.max_rect();
+    let corners = egui::CornerRadius {
+        nw: R_XL as u8,
+        sw: R_XL as u8,
+        ne: 0,
+        se: 0,
+    };
+    ui.painter().rect_filled(rect, corners, palette.sidebar);
+    ui.painter().vline(
+        rect.right() - 0.5,
+        rect.y_range(),
         egui::Stroke::new(1.0, palette.line),
     );
-    ui.add_space(16.0);
-    ui.horizontal(|ui| {
-        ui.add_space(10.0);
-        ui.label(
-            egui::RichText::new("Settings")
-                .size(16.0)
-                .family(family(FAMILY_BODY_SEMIBOLD))
-                .color(palette.ink_strong),
-        );
-    });
-    ui.add_space(14.0);
+    let title = ui.painter().layout_no_wrap(
+        "Settings".to_owned(),
+        egui::FontId::new(16.0, family(FAMILY_BODY_BOLD)),
+        palette.ink_strong,
+    );
+    let mut y = rect.top() + 16.0 + 4.0;
+    let title_h = 16.0 * LINE;
+    ui.painter().galley(
+        egui::pos2(rect.left() + 20.0, y + (title_h - title.size().y) / 2.0),
+        title,
+        palette.ink_strong,
+    );
+    y += title_h + 14.0;
     for section in Section::ALL {
         let on = section == settings.section();
-        let (fg, fill) = if on {
-            (palette.ink_strong, palette.selected)
+        let row = egui::Rect::from_min_size(
+            egui::pos2(rect.left() + 10.0, y),
+            egui::vec2(rect.width() - 20.0, 36.0),
+        );
+        y += 36.0 + 2.0;
+        let response = ui
+            .interact(
+                row,
+                ui.id().with(("nav", section.label())),
+                egui::Sense::click(),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, section.label())
+        });
+        if on {
+            ui.painter()
+                .rect_filled(row, egui::CornerRadius::same(R_MD as u8), palette.selected);
+        } else if response.hovered() {
+            ui.painter()
+                .rect_filled(row, egui::CornerRadius::same(R_MD as u8), palette.hover);
+        }
+        let ink = if on {
+            palette.ink_strong
         } else {
-            (palette.muted, egui::Color32::TRANSPARENT)
+            palette.muted
         };
-        let row = egui::Button::image_and_text(
-            crate::icons::themed_image(section.icon(), 14.0, fg),
-            egui::RichText::new(section.label()).size(FS_SM).color(fg),
-        )
-        .fill(fill)
-        .stroke(egui::Stroke::NONE)
-        .corner_radius(egui::CornerRadius::same(R_MD as u8))
-        .min_size(egui::vec2(204.0, 36.0));
-        let response = ui.add(row);
+        let mid = row.center().y;
+        crate::icons::themed_image(section.icon(), 14.0, ink).paint_at(
+            ui,
+            egui::Rect::from_min_size(
+                egui::pos2(row.left() + 10.0, mid - 7.0),
+                egui::vec2(14.0, 14.0),
+            ),
+        );
+        let label = ui.painter().layout_no_wrap(
+            section.label().to_owned(),
+            egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
+            ink,
+        );
+        let label_right = row.left() + 34.0 + label.size().x;
+        ui.painter().galley(
+            egui::pos2(row.left() + 34.0, mid - label.size().y / 2.0),
+            label,
+            ink,
+        );
+        if badge && section == Section::About {
+            paint_badge(
+                ui,
+                egui::pos2(label_right + 10.0, mid),
+                "new",
+                FS_XS,
+                palette.ink,
+                palette,
+            );
+        }
         if response.clicked() {
             *picked = Some(section);
         }
     }
 }
 
-/// One page of the dialog, scrolling inside the page column.
+/// One page of the dialog, scrolling inside the page column at the
+/// reference's 32px sides, 22px top and 32px foot.
 fn page(
     ui: &mut egui::Ui,
     store: &mut Store,
@@ -665,156 +734,137 @@ fn page(
     updates: &UpdateState,
     events: &mut Vec<SettingsEvent>,
 ) {
-    let width = ui.available_width() - 24.0;
     egui::ScrollArea::vertical()
-        .auto_shrink(false)
-        .max_width(width)
+        .id_salt(("settings-page", section.label()))
+        .auto_shrink([false, false])
         .show(ui, |ui| {
-            ui.set_width(width);
-            ui.add_space(22.0);
-            ui.horizontal(|ui| {
-                ui.add_space(32.0);
-                ui.label(
-                    egui::RichText::new(section.label())
-                        .size(17.0)
-                        .family(family(FAMILY_BODY_SEMIBOLD))
-                        .color(palette.ink_strong),
-                );
-            });
-            ui.add_space(6.0);
-            match section {
-                Section::General => general(ui, store, palette, events),
-                Section::Agents => agents(ui, store, palette, events),
-                Section::Providers
-                | Section::Mcp
-                | Section::Acp
-                | Section::Permissions
-                | Section::Plugins => config_page(ui, store, section, palette, events),
-                Section::Connection => connection(ui, store, palette),
-                Section::Keyboard => keyboard(ui, store, palette),
-                Section::Archived => archived(ui, store, palette, events),
-                Section::About => about(ui, store, palette, updates, events),
-            }
+            egui::Frame::NONE
+                .inner_margin(egui::Margin {
+                    left: 32,
+                    right: 32,
+                    top: 22,
+                    bottom: 32,
+                })
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.spacing_mut().item_spacing.y = 0.0;
+                    title(ui, section.label(), palette);
+                    match section {
+                        Section::General => general(ui, store, palette, events),
+                        Section::Agents => agents(ui, store, palette, events),
+                        Section::Providers
+                        | Section::Mcp
+                        | Section::Permissions
+                        | Section::Plugins => config_page(ui, store, section, palette, events),
+                        Section::Connection => connection(ui, store, palette),
+                        Section::Keyboard => keyboard(ui, store, palette),
+                        Section::Archived => archived(ui, store, palette, events),
+                        Section::About => about(ui, store, palette, updates, events),
+                    }
+                });
         });
 }
 
-/// The General page: the theme cards and the input and session toggles.
+/// The General page: the theme cards and picks, then the input, chat
+/// and session toggles, in the reference's order.
 fn general(ui: &mut egui::Ui, store: &Store, palette: &Palette, events: &mut Vec<SettingsEvent>) {
     let prefs = store.prefs();
-    group(ui, "Appearance", palette);
     let catalog = store.theme_catalog();
-    ui.horizontal(|ui| {
-        ui.add_space(32.0);
-        ui.vertical(|ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing.x = 10.0;
-                let choices = std::iter::once(crate::theme::ThemeChoice::System).chain(
-                    catalog
-                        .names()
-                        .into_iter()
-                        .map(crate::theme::ThemeChoice::Named),
-                );
-                for choice in choices {
-                    theme_card(ui, choice, prefs, &catalog, palette, events);
-                }
-            });
-        });
+    let light = ui.ctx().theme() == egui::Theme::Light;
+    group(ui, "Appearance", palette);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(10.0, 10.0);
+        let choices = std::iter::once(crate::theme::ThemeChoice::System).chain(
+            catalog
+                .names()
+                .into_iter()
+                .map(crate::theme::ThemeChoice::Named),
+        );
+        for choice in choices {
+            theme_card(ui, choice, prefs, &catalog, light, palette, events);
+        }
     });
-
+    ui.add_space(10.0);
     boxed(ui, palette, |ui| {
         system_pick_row(ui, true, &catalog, palette, events);
         system_pick_row(ui, false, &catalog, palette, events);
     });
-    group(ui, "Input", palette);
-    let mut vim = prefs.vim;
-    toggle_row(
-        ui,
-        "Vim mode",
-        "Normal-mode motions over the transcript (j k gg G za / n), a : command line and a modeline. Esc leaves the composer.",
-        &mut vim,
-        palette,
-    );
-    if vim != prefs.vim {
-        events.push(SettingsEvent::Flip("vim"));
-    }
-    let mut enter = prefs.enter_sends;
-    toggle_row(
-        ui,
-        "Enter sends",
-        "Off: Enter adds a newline and Ctrl+Enter sends",
-        &mut enter,
-        palette,
-    );
-    if enter != prefs.enter_sends {
-        events.push(SettingsEvent::Flip("enter_sends"));
-    }
-    group(ui, "Sessions", palette);
-    let mut group_by = prefs.group_by_project;
-    toggle_row(
-        ui,
-        "Group sessions by project",
-        "Show sessions under their project folder in the sidebar",
-        &mut group_by,
-        palette,
-    );
-    if group_by != prefs.group_by_project {
-        events.push(SettingsEvent::Flip("group_by_project"));
-    }
-    let mut confirm = prefs.confirm_swarm;
-    toggle_row(
-        ui,
-        "Ask before enabling swarm",
-        "Confirm when turning swarm mode on",
-        &mut confirm,
-        palette,
-    );
-    if confirm != prefs.confirm_swarm {
-        events.push(SettingsEvent::Flip("confirm_swarm"));
-    }
-    group(ui, "Chat", palette);
-    let mut fuel = prefs.fuel;
-    toggle_row(
-        ui,
-        "Context gauge",
-        "The context ring opens a gauge with Compact now",
-        &mut fuel,
-        palette,
-    );
-    if fuel != prefs.fuel {
-        events.push(SettingsEvent::Flip("fuel"));
-    }
-    let mut smooth = prefs.smooth_stream;
-    toggle_row(
-        ui,
-        "Smooth streaming",
-        "Show a reply that arrives in bursts at a steady pace, a moment behind",
-        &mut smooth,
-        palette,
-    );
-    if smooth != prefs.smooth_stream {
-        events.push(SettingsEvent::Flip("smooth_stream"));
-    }
-    let mut rail = prefs.rail;
-    toggle_row(
-        ui,
-        "Turn timeline rail",
-        "A minimap beside the transcript with ticks for turns, edits, approvals, failures and swarms",
-        &mut rail,
-        palette,
-    );
-    if rail != prefs.rail {
-        events.push(SettingsEvent::Flip("rail"));
-    }
-    let mut constellation = prefs.constellation;
-    toggle_row(
-        ui,
-        "Swarm constellation",
-        "Swarm cards draw one star per worker, lit by state",
-        &mut constellation,
-        palette,
-    );
-    if constellation != prefs.constellation {
-        events.push(SettingsEvent::Flip("constellation"));
+    let flips: [(&str, &[(&str, &str, &str, bool)]); 3] = [
+        (
+            "Input",
+            &[
+                (
+                    "Vim mode",
+                    "Normal-mode motions over the transcript (j k gg G za / n), a : command line and a modeline. Esc leaves the composer.",
+                    "vim",
+                    prefs.vim,
+                ),
+                (
+                    "Enter sends",
+                    "Off: Enter adds a newline and Ctrl+Enter sends",
+                    "enter_sends",
+                    prefs.enter_sends,
+                ),
+            ],
+        ),
+        (
+            "Chat",
+            &[
+                (
+                    "Smooth streaming",
+                    "Show a reply that arrives in bursts at a steady pace, a moment behind",
+                    "smooth_stream",
+                    prefs.smooth_stream,
+                ),
+                (
+                    "Turn timeline rail",
+                    "A minimap beside the transcript with ticks for turns, edits, approvals, failures and swarms",
+                    "rail",
+                    prefs.rail,
+                ),
+                (
+                    "Context gauge",
+                    "The context ring opens a gauge with Compact now",
+                    "fuel",
+                    prefs.fuel,
+                ),
+                (
+                    "Swarm constellation",
+                    "Swarm cards draw one star per worker, lit by state",
+                    "constellation",
+                    prefs.constellation,
+                ),
+            ],
+        ),
+        (
+            "Sessions",
+            &[
+                (
+                    "Group sessions by project",
+                    "Show sessions under their project folder in the sidebar",
+                    "group_by_project",
+                    prefs.group_by_project,
+                ),
+                (
+                    "Ask before enabling swarm",
+                    "Confirm when turning swarm mode on",
+                    "confirm_swarm",
+                    prefs.confirm_swarm,
+                ),
+            ],
+        ),
+    ];
+    for (heading, rows) in flips {
+        group(ui, heading, palette);
+        boxed(ui, palette, |ui| {
+            for &(label, hint, field, on) in rows {
+                let mut flipped = on;
+                toggle_row(ui, label, hint, &mut flipped, palette);
+                if flipped != on {
+                    events.push(SettingsEvent::Flip(field));
+                }
+            }
+        });
     }
 }
 
@@ -981,9 +1031,8 @@ fn stepper_button(
     .clicked()
 }
 
-/// One theme card: the swatch and the name, chosen on a click.
-/// The row that picks the theme System draws on a dark or a light
-/// desktop.
+/// The row naming the theme System draws on a dark or a light
+/// desktop, with its theme select.
 fn system_pick_row(
     ui: &mut egui::Ui,
     dark: bool,
@@ -1002,109 +1051,296 @@ fn system_pick_row(
             "The theme System draws when the desktop is light",
         )
     };
-    let current = catalog.system(!dark);
     row(
         ui,
         label,
         hint,
-        |ui| {
-            egui::ComboBox::from_id_salt(("system-pick", dark))
-                .selected_text(crate::themes::label(&current))
-                .show_ui(ui, |ui| {
-                    for name in catalog.names() {
-                        let on = name == current;
-                        if ui
-                            .selectable_label(on, crate::themes::label(&name))
-                            .clicked()
-                        {
-                            events.push(SettingsEvent::SystemTheme { dark, name });
-                        }
-                    }
-                });
-        },
+        |ui| theme_select(ui, dark, catalog, palette, events),
         palette,
     );
 }
 
+/// The theme select: a trigger with the current theme's swatch and
+/// name, and while open a menu of every theme hung under it. The kage
+/// theme of the desktop's mode clears the pick.
+fn theme_select(
+    ui: &mut egui::Ui,
+    dark: bool,
+    catalog: &crate::themes::Catalog,
+    palette: &Palette,
+    events: &mut Vec<SettingsEvent>,
+) {
+    let id = egui::Id::new(("theme-select", dark));
+    let mut open = ui.data(|data| data.get_temp::<bool>(id)).unwrap_or(false);
+    let current = catalog.system(!dark);
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(PICK_W, 32.0), egui::Sense::click());
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::ComboBox,
+            true,
+            crate::themes::label(&current),
+        )
+    });
+    let border = if open {
+        palette.accent
+    } else if response.hovered() {
+        palette.line_strong
+    } else {
+        palette.line
+    };
+    let radius = egui::CornerRadius::same(R_MD as u8);
+    ui.painter().rect_filled(rect, radius, palette.surface);
+    ui.painter().rect_stroke(
+        rect,
+        radius,
+        egui::Stroke::new(1.0, border),
+        egui::StrokeKind::Inside,
+    );
+    let mid = rect.center().y;
+    let mut x = rect.left() + 10.0;
+    if let Some((theme, _)) = crate::themes::resolve(&current, catalog, !dark) {
+        x = paint_swatch(ui, egui::pos2(x, mid), theme, palette) + 9.0;
+    }
+    let chevron = egui::Rect::from_min_size(
+        egui::pos2(rect.right() - 10.0 - 12.0, mid - 6.0),
+        egui::vec2(12.0, 12.0),
+    );
+    let name = crate::ui::transcript::head::one_line(
+        ui,
+        crate::themes::label(&current),
+        egui::TextFormat::simple(
+            egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
+            palette.ink,
+        ),
+        chevron.left() - 9.0 - x,
+    );
+    ui.painter()
+        .galley(egui::pos2(x, mid - name.size().y / 2.0), name, palette.ink);
+    crate::icons::themed_image(crate::icons::Icon::ChevronDown, 12.0, palette.faint)
+        .paint_at(ui, chevron);
+    if response.clicked() {
+        open = !open;
+    }
+    if open {
+        let kage = if dark { "kage-shadow" } else { "kage-dawn" };
+        let menu = egui::Area::new(id.with("menu"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(rect.left_bottom() + egui::vec2(0.0, 4.0))
+            .show(ui.ctx(), |ui| {
+                egui::Frame::NONE
+                    .fill(palette.bg)
+                    .stroke(egui::Stroke::new(1.0, palette.line))
+                    .corner_radius(egui::CornerRadius::same(R_LG as u8))
+                    .shadow(palette.shadow_menu)
+                    .inner_margin(egui::Margin::same(4))
+                    .show(ui, |ui| {
+                        ui.set_width(PICK_W - 8.0);
+                        ui.spacing_mut().item_spacing.y = 1.0;
+                        egui::ScrollArea::vertical()
+                            .max_height(PICK_MENU_H)
+                            .show(ui, |ui| {
+                                for name in catalog.names() {
+                                    let Some((theme, _)) =
+                                        crate::themes::resolve(&name, catalog, !dark)
+                                    else {
+                                        continue;
+                                    };
+                                    let on = name == current;
+                                    if theme_option(ui, &name, theme, on, palette).clicked() {
+                                        let pick = if name == kage { String::new() } else { name };
+                                        events
+                                            .push(SettingsEvent::SystemTheme { dark, name: pick });
+                                        open = false;
+                                    }
+                                }
+                            });
+                    });
+            });
+        let escape = ui.input(|input| input.key_pressed(egui::Key::Escape));
+        if escape || (menu.response.clicked_elsewhere() && !response.clicked()) {
+            open = false;
+        }
+    }
+    ui.data_mut(|data| data.insert_temp(id, open));
+}
+
+/// One theme in the select's menu: its swatch, its name and the check
+/// on the one in use.
+fn theme_option(
+    ui: &mut egui::Ui,
+    name: &str,
+    theme: &Palette,
+    on: bool,
+    palette: &Palette,
+) -> egui::Response {
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 32.0), egui::Sense::click());
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::SelectableLabel,
+            true,
+            on,
+            crate::themes::label(name),
+        )
+    });
+    let radius = egui::CornerRadius::same(R_MD as u8);
+    if response.hovered() {
+        ui.painter().rect_filled(rect, radius, palette.accent_soft);
+    } else if on {
+        ui.painter().rect_filled(rect, radius, palette.selected);
+    }
+    let mid = rect.center().y;
+    let x = paint_swatch(ui, egui::pos2(rect.left() + 8.0, mid), theme, palette) + 9.0;
+    let ink = if on { palette.ink_strong } else { palette.ink };
+    let mut right = rect.right() - 8.0;
+    if on {
+        let check =
+            egui::Rect::from_min_size(egui::pos2(right - 13.0, mid - 6.5), egui::vec2(13.0, 13.0));
+        crate::icons::themed_image(crate::icons::Icon::Check, 13.0, palette.accent)
+            .paint_at(ui, check);
+        right = check.left() - 9.0;
+    }
+    let label = crate::ui::transcript::head::one_line(
+        ui,
+        crate::themes::label(name),
+        egui::TextFormat::simple(egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)), ink),
+        right - x,
+    );
+    ui.painter()
+        .galley(egui::pos2(x, mid - label.size().y / 2.0), label, ink);
+    response
+}
+
+/// Paints a theme's colors in small at `at` (left edge, vertical
+/// center): its sidebar beside its background with a dot of its
+/// accent. Gives back the swatch's right edge.
+fn paint_swatch(ui: &egui::Ui, at: egui::Pos2, theme: &Palette, palette: &Palette) -> f32 {
+    let rect = egui::Rect::from_min_size(egui::pos2(at.x, at.y - 8.0), egui::vec2(26.0, 16.0));
+    let radius = egui::CornerRadius::same(4);
+    ui.painter().rect_filled(rect, radius, theme.bg);
+    ui.painter().rect_filled(
+        egui::Rect::from_min_size(rect.min, egui::vec2(9.0, 16.0)),
+        egui::CornerRadius {
+            nw: 4,
+            sw: 4,
+            ne: 0,
+            se: 0,
+        },
+        theme.sidebar,
+    );
+    let main_center = egui::pos2(rect.left() + 9.0 + 17.0 / 2.0, rect.center().y);
+    ui.painter().circle_filled(main_center, 3.0, theme.accent);
+    ui.painter().rect_stroke(
+        rect,
+        radius,
+        egui::Stroke::new(1.0, palette.line),
+        egui::StrokeKind::Inside,
+    );
+    rect.right()
+}
+
+/// One theme card: a swatch of its side, main and accent colors over
+/// its name, outlined in the accent when chosen.
 fn theme_card(
     ui: &mut egui::Ui,
     choice: crate::theme::ThemeChoice,
     prefs: &Prefs,
     catalog: &crate::themes::Catalog,
+    light: bool,
     palette: &Palette,
     events: &mut Vec<SettingsEvent>,
 ) {
-    let on = prefs.theme == choice;
+    let resolve = |name: &str, light: bool| crate::themes::resolve(name, catalog, light);
     let (side, main, accent) = match &choice {
         crate::theme::ThemeChoice::System => {
-            let (shadow, dawn) = (
-                crate::theme::Palette::shadow(),
-                crate::theme::Palette::dawn(),
-            );
-            (shadow.bg, dawn.bg, shadow.accent)
+            let (Some((dark, _)), Some((day, _))) = (
+                resolve(&catalog.system(false), false),
+                resolve(&catalog.system(true), true),
+            ) else {
+                return;
+            };
+            (
+                dark.bg,
+                day.bg,
+                if light { day.accent } else { dark.accent },
+            )
         }
         crate::theme::ThemeChoice::Named(name) => {
-            let shadow = crate::theme::Palette::shadow();
-            let themed =
-                crate::themes::resolve(name, catalog, false).map_or(&shadow, |(themed, _)| themed);
-            (themed.bg, themed.surface, themed.accent)
+            let Some((theme, _)) = resolve(name, light) else {
+                return;
+            };
+            (theme.bg, theme.surface, theme.accent)
         }
     };
-    let width = (ui.available_width() - 20.0).max(120.0) / 3.0;
-    let card = egui::Button::new("")
-        .fill(palette.surface)
-        .stroke(egui::Stroke::new(
-            1.0,
-            if on { palette.accent } else { palette.line },
-        ))
-        .corner_radius(egui::CornerRadius::same(R_LG as u8))
-        .min_size(egui::vec2(width, 92.0));
-    let response = ui.add(card);
-    let rect = response.rect;
-    if response.hovered() && !on {
-        ui.painter().rect_stroke(
-            rect,
-            egui::CornerRadius::same(R_LG as u8),
-            egui::Stroke::new(1.0, palette.line_strong),
-            egui::StrokeKind::Inside,
-        );
-    }
-    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-        ui.add_space(8.0);
-        let swatch = egui::Rect::from_min_size(
-            egui::pos2(rect.left() + 8.0, rect.top() + 8.0),
-            egui::vec2(rect.width() - 16.0, 58.0),
-        );
-        let _ = ui.allocate_rect(swatch, egui::Sense::hover());
-        let painter = ui.painter();
-        painter.rect_filled(swatch, egui::CornerRadius::same(R_MD as u8), main);
-        painter.rect_filled(
-            egui::Rect::from_min_size(
-                swatch.min,
-                egui::vec2(swatch.width() * 0.28, swatch.height()),
-            ),
-            egui::CornerRadius::same(R_MD as u8),
-            side,
-        );
-        painter.rect_filled(
-            egui::Rect::from_min_size(
-                egui::pos2(swatch.left() + 8.0, swatch.bottom() - 16.0),
-                egui::vec2(swatch.width() * 0.4, 8.0),
-            ),
-            egui::CornerRadius::same(4),
-            accent,
-        );
-        ui.painter().text(
-            egui::pos2(rect.left() + 10.0, rect.top() + 80.0),
-            egui::Align2::LEFT_CENTER,
-            choice.label(),
-            egui::FontId::new(
-                FS_XS,
-                crate::theme::family(crate::theme::FAMILY_BODY_REGULAR),
-            ),
-            palette.ink,
-        );
+    let on = prefs.theme == choice;
+    let label_h = FS_XS * LINE;
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(THEME_CARD_W, 8.0 + 58.0 + 8.0 + label_h + 8.0),
+        egui::Sense::click(),
+    );
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let label = choice.label();
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, on, label.clone())
     });
+    let border = if on {
+        palette.accent
+    } else if response.hovered() {
+        palette.line_strong
+    } else {
+        palette.line
+    };
+    let radius = egui::CornerRadius::same(R_LG as u8);
+    ui.painter().rect_filled(rect, radius, palette.surface);
+    ui.painter().rect_stroke(
+        rect,
+        radius,
+        egui::Stroke::new(1.0, border),
+        egui::StrokeKind::Inside,
+    );
+    let swatch = egui::Rect::from_min_size(
+        rect.min + egui::vec2(8.0, 8.0),
+        egui::vec2(rect.width() - 16.0, 58.0),
+    );
+    let side_w = swatch.width() * 0.28;
+    ui.painter()
+        .rect_filled(swatch, egui::CornerRadius::same(R_MD as u8), main);
+    ui.painter().rect_filled(
+        egui::Rect::from_min_size(swatch.min, egui::vec2(side_w, swatch.height())),
+        egui::CornerRadius {
+            nw: R_MD as u8,
+            sw: R_MD as u8,
+            ne: 0,
+            se: 0,
+        },
+        side,
+    );
+    let main_w = swatch.width() - side_w;
+    ui.painter().rect_filled(
+        egui::Rect::from_min_size(
+            egui::pos2(swatch.left() + side_w + 8.0, swatch.bottom() - 16.0),
+            egui::vec2(main_w * 0.4, 8.0),
+        ),
+        egui::CornerRadius::same(4),
+        accent,
+    );
+    let name = crate::ui::transcript::head::one_line(
+        ui,
+        label,
+        egui::TextFormat::simple(
+            egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR)),
+            palette.ink,
+        ),
+        rect.width() - 20.0,
+    );
+    let top = swatch.bottom() + 8.0;
+    ui.painter().galley(
+        egui::pos2(rect.left() + 10.0, top + (label_h - name.size().y) / 2.0),
+        name,
+        palette.ink,
+    );
     if response.clicked() {
         events.push(SettingsEvent::Theme(choice));
     }
@@ -1130,15 +1366,13 @@ fn config_page(
     match section {
         Section::Providers => {
             config::providers_page(ui, &snapshot, option("model"), palette, events);
+            config::acp_page(ui, &snapshot, palette, events);
         }
         Section::Mcp => {
             let live = session
                 .map(|session| session.mcp.clone())
                 .unwrap_or_default();
             config::mcp_page(ui, &snapshot, &live, palette, events);
-        }
-        Section::Acp => {
-            config::acp_page(ui, &snapshot, palette, events);
         }
         Section::Permissions => {
             let modes: Option<SessionConfigOption> = option("mode").map(|option| {
@@ -1356,7 +1590,6 @@ fn about(
         .map_or_else(|| "unknown".to_owned(), |v| format!("ACP v{v}"));
     ui.add_space(8.0);
     ui.horizontal(|ui| {
-        ui.add_space(32.0);
         ui.spacing_mut().item_spacing.x = 14.0;
         crate::ui::eclipse::eclipse(ui, 48.0, None);
         ui.vertical(|ui| {
@@ -1597,145 +1830,222 @@ fn updates(
     );
 }
 
+/// The page title: the reference's 17px bold over its 34px band, clear
+/// of the close button at the right.
+fn title(ui: &mut egui::Ui, text: &str, palette: &Palette) {
+    ui.add_space(2.0);
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 34.0), egui::Sense::hover());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
+    ui.painter().text(
+        rect.left_center(),
+        egui::Align2::LEFT_CENTER,
+        text,
+        egui::FontId::new(17.0, family(FAMILY_BODY_BOLD)),
+        palette.ink_strong,
+    );
+    ui.add_space(6.0);
+}
+
 /// A group heading above a page section.
-fn group(ui: &mut egui::Ui, text: &str, palette: &Palette) {
+pub(crate) fn group(ui: &mut egui::Ui, text: &str, palette: &Palette) {
     ui.add_space(22.0);
-    ui.horizontal(|ui| {
-        ui.add_space(32.0);
-        ui.label(
-            egui::RichText::new(text)
-                .size(FS_SM)
-                .family(family(FAMILY_BODY_SEMIBOLD))
-                .color(palette.ink_strong),
-        );
-    });
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), FS_SM * LINE),
+        egui::Sense::hover(),
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
+    ui.painter().text(
+        rect.left_center(),
+        egui::Align2::LEFT_CENTER,
+        text,
+        egui::FontId::new(FS_SM, family(FAMILY_BODY_SEMIBOLD)),
+        palette.ink_strong,
+    );
     ui.add_space(8.0);
 }
 
-/// A muted note under a page section.
-fn note(ui: &mut egui::Ui, text: &str, palette: &Palette) {
+/// A faint note under a page section.
+pub(crate) fn note(ui: &mut egui::Ui, text: &str, palette: &Palette) {
     ui.add_space(8.0);
-    ui.horizontal(|ui| {
-        ui.add_space(32.0);
-        ui.add(egui::Label::new(egui::RichText::new(text).size(FS_XS).color(palette.faint)).wrap());
-    });
-    ui.add_space(8.0);
-}
-
-/// The rounded box rows sit in; each row after the first carries a
-/// hairline the box paints over its top.
-fn boxed(ui: &mut egui::Ui, palette: &Palette, add: impl FnOnce(&mut egui::Ui)) {
-    let width = ui.available_width();
     egui::Frame::NONE
-        .fill(palette.surface)
-        .stroke(egui::Stroke::new(1.0, palette.subtle))
-        .corner_radius(egui::CornerRadius::same(R_LG as u8))
-        .inner_margin(egui::Margin::symmetric(16, 0))
+        .inner_margin(egui::Margin::symmetric(2, 0))
         .show(ui, |ui| {
-            ui.set_min_width(width - 32.0);
-            add(ui);
+            ui.add(
+                egui::Label::new(egui::RichText::new(text).size(FS_XS).color(palette.faint)).wrap(),
+            );
         });
     ui.add_space(8.0);
 }
 
+/// The rounded box rows sit in; rows after the first carry a hairline.
+pub(crate) fn boxed(ui: &mut egui::Ui, palette: &Palette, add: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::NONE
+        .fill(palette.surface)
+        .stroke(egui::Stroke::new(1.0, palette.subtle))
+        .corner_radius(egui::CornerRadius::same(R_LG as u8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 0.0;
+            add(ui);
+        });
+}
+
+/// The hairline a row after the first carries at its top.
+pub(crate) fn row_rule(ui: &egui::Ui, rect: egui::Rect, palette: &Palette) {
+    if rect.top() > ui.min_rect().top() + 0.5 {
+        ui.painter().hline(
+            rect.x_range(),
+            rect.top() + 0.5,
+            egui::Stroke::new(1.0, palette.subtle),
+        );
+    }
+}
+
+/// Lays out one settings row: the label over its wrapped hint at the
+/// left, at least 58px tall and taller when the hint wraps, leaving
+/// `reserve` at the right for the control. Gives back the row's
+/// response under `sense` and the slot the control goes in.
+fn row_frame(
+    ui: &mut egui::Ui,
+    label: &str,
+    hint: &str,
+    reserve: f32,
+    sense: egui::Sense,
+    palette: &Palette,
+) -> (egui::Response, egui::Rect) {
+    let width = ui.available_width();
+    let text_w = (width - 32.0 - 16.0 - reserve).max(80.0);
+    let wrapped = |ui: &egui::Ui, text: &str, size: f32, color: egui::Color32| {
+        let mut job = egui::text::LayoutJob::simple(
+            text.to_owned(),
+            egui::FontId::new(size, family(FAMILY_BODY_REGULAR)),
+            color,
+            text_w,
+        );
+        job.wrap.max_width = text_w;
+        ui.painter().layout_job(job)
+    };
+    let name = wrapped(ui, label, FS_SM, palette.ink);
+    let help = (!hint.is_empty()).then(|| wrapped(ui, hint, FS_XS, palette.muted));
+    let text_h = name.size().y + help.as_ref().map_or(0.0, |help| help.size().y);
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(width, (text_h + 24.0).max(58.0)), sense);
+    row_rule(ui, rect, palette);
+    let mut y = rect.center().y - text_h / 2.0;
+    let name_h = name.size().y;
+    ui.painter()
+        .galley(egui::pos2(rect.left() + 16.0, y), name, palette.ink);
+    y += name_h;
+    if let Some(help) = help {
+        ui.painter()
+            .galley(egui::pos2(rect.left() + 16.0, y), help, palette.muted);
+    }
+    let slot = egui::Rect::from_min_max(
+        egui::pos2(rect.left() + 16.0 + text_w + 16.0, rect.top()),
+        egui::pos2(rect.right() - 16.0, rect.bottom()),
+    );
+    (response, slot)
+}
+
 /// One labeled row with its control drawn by `control` at the far end.
-fn row(
+/// The control's width from the last frame decides how wide the text
+/// may run.
+pub(crate) fn row(
     ui: &mut egui::Ui,
     label: &str,
     hint: &str,
     control: impl FnOnce(&mut egui::Ui),
     palette: &Palette,
 ) {
-    let width = ui.available_width();
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(width.max(1.0), 58.0), egui::Sense::hover());
-    ui.painter().line_segment(
-        [
-            egui::pos2(rect.left(), rect.top()),
-            egui::pos2(rect.right(), rect.top()),
-        ],
-        egui::Stroke::new(1.0, palette.subtle),
-    );
-    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-        ui.horizontal(|ui| {
-            ui.add_space(16.0);
-            ui.spacing_mut().item_spacing.x = 16.0;
-            ui.vertical(|ui| {
-                ui.set_max_width(rect.width() - 320.0);
-                ui.label(egui::RichText::new(label).size(FS_SM).color(palette.ink));
-                if !hint.is_empty() {
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(hint).size(FS_XS).color(palette.muted),
-                        )
-                        .wrap(),
-                    );
-                }
-            });
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add_space(16.0);
+    let id = ui.id().with(("settings-row", label));
+    let reserve = ui.data(|data| data.get_temp::<f32>(id)).unwrap_or(120.0);
+    let (response, slot) = row_frame(ui, label, hint, reserve, egui::Sense::hover(), palette);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label));
+    let used = ui
+        .scope_builder(
+            egui::UiBuilder::new()
+                .max_rect(slot)
+                .layout(egui::Layout::right_to_left(egui::Align::Center)),
+            |ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
                 control(ui);
-            });
-        });
-    });
+                ui.min_rect().width()
+            },
+        )
+        .inner;
+    ui.data_mut(|data| data.insert_temp(id, used));
 }
 
-/// One toggle row: the label, its hint and the switch, whose new value
-/// the caller compares against the stored one. The whole row answers,
-/// as the design's control did.
-fn toggle_row(ui: &mut egui::Ui, label: &str, hint: &str, on: &mut bool, palette: &Palette) {
-    let width = ui.available_width();
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(width.max(1.0), 58.0), egui::Sense::click());
-    ui.painter().line_segment(
-        [
-            egui::pos2(rect.left(), rect.top()),
-            egui::pos2(rect.right(), rect.top()),
-        ],
-        egui::Stroke::new(1.0, palette.subtle),
-    );
-    let track = egui::Rect::from_min_size(
-        egui::pos2(rect.right() - 52.0, rect.center().y - 10.0),
+/// Paints the design's switch, a 36 by 20 track with its knob at the
+/// end, right-aligned and centered in `slot`.
+pub(crate) fn paint_switch(ui: &egui::Ui, slot: egui::Rect, on: bool, palette: &Palette) {
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(slot.right() - 36.0, slot.center().y - 10.0),
         egui::vec2(36.0, 20.0),
     );
-    let painter = ui.painter();
-    painter.rect_filled(
-        track,
-        egui::CornerRadius::same(R_FULL as u8),
-        if *on {
-            palette.accent
-        } else {
-            palette.fill_hover
-        },
-    );
-    let knob = egui::pos2(
-        if *on {
-            track.right() - 10.0
-        } else {
-            track.left() + 10.0
-        },
-        track.center().y,
-    );
-    painter.circle_filled(knob, 8.0, egui::Color32::WHITE);
+    let track = if on {
+        palette.accent
+    } else {
+        palette.fill_hover
+    };
+    ui.painter()
+        .rect_filled(rect, egui::CornerRadius::same(10), track);
+    let knob = egui::pos2(rect.left() + if on { 26.0 } else { 10.0 }, rect.center().y);
+    ui.painter().circle_filled(knob, 8.0, egui::Color32::WHITE);
+}
+
+/// One toggle row: the label, its hint and the switch. The whole row
+/// answers, and the new value is for the caller to compare against
+/// the stored one.
+pub(crate) fn toggle_row(
+    ui: &mut egui::Ui,
+    label: &str,
+    hint: &str,
+    on: &mut bool,
+    palette: &Palette,
+) {
+    let (response, slot) = row_frame(ui, label, hint, 36.0, egui::Sense::click(), palette);
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    let state = *on;
+    response
+        .widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, state, label));
+    paint_switch(ui, slot, *on, palette);
     if response.clicked() {
         *on = !*on;
     }
-    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-        ui.horizontal(|ui| {
-            ui.add_space(16.0);
-            ui.vertical(|ui| {
-                ui.set_max_width(rect.width() - 110.0);
-                ui.add(
-                    egui::Label::new(egui::RichText::new(label).size(FS_SM).color(palette.ink))
-                        .selectable(false),
-                );
-                ui.add(
-                    egui::Label::new(egui::RichText::new(hint).size(FS_XS).color(palette.muted))
-                        .selectable(false)
-                        .wrap(),
-                );
-            });
-        });
-    });
+}
+
+/// Paints a rounded badge with its left edge at `at.x`, centered on
+/// `at.y`, and gives back where it landed.
+pub(crate) fn paint_badge(
+    ui: &egui::Ui,
+    at: egui::Pos2,
+    text: &str,
+    size: f32,
+    ink: egui::Color32,
+    palette: &Palette,
+) -> egui::Rect {
+    let galley = ui.painter().layout_no_wrap(
+        text.to_owned(),
+        egui::FontId::new(size, family(FAMILY_BODY_MEDIUM)),
+        ink,
+    );
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(at.x, at.y - (galley.size().y + 4.0) / 2.0),
+        egui::vec2(galley.size().x + 16.0, galley.size().y + 4.0),
+    );
+    let radius = egui::CornerRadius::same((rect.height() / 2.0) as u8);
+    ui.painter().rect_filled(rect, radius, palette.fill);
+    ui.painter().rect_stroke(
+        rect,
+        radius,
+        egui::Stroke::new(1.0, palette.line),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, ink);
+    rect
 }
 
 /// A shortcut table: one row per entry, the keys as caps at the right.
@@ -1815,7 +2125,7 @@ mod tests {
             assert!(!section.label().is_empty(), "{section:?} has a label");
             let _ = section.icon();
         }
-        assert_eq!(Section::ALL.len(), 11);
+        assert_eq!(Section::ALL.len(), 10);
     }
 
     #[test]
@@ -1823,16 +2133,11 @@ mod tests {
         for section in Section::ALL {
             let reads = matches!(
                 section,
-                Section::Providers
-                    | Section::Mcp
-                    | Section::Acp
-                    | Section::Permissions
-                    | Section::Plugins
+                Section::Providers | Section::Mcp | Section::Permissions | Section::Plugins
             );
             assert_eq!(section.reads_config(), reads, "{section:?}");
         }
         assert!(Section::Providers.reads_config());
-        assert!(Section::Acp.reads_config());
         assert!(!Section::General.reads_config());
     }
 

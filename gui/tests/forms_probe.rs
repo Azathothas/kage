@@ -209,8 +209,8 @@ fn the_providers_page_edit_button_opens_the_form_on_that_row() {
     settle(&mut harness);
     assert_eq!(
         harness.query_all_by_label("Edit").count(),
-        3,
-        "one edit button per configured row"
+        4,
+        "one edit button per configured provider and agent"
     );
     harness
         .query_all_by_label("Edit")
@@ -264,9 +264,9 @@ fn the_mcp_page_add_button_opens_the_server_form() {
 }
 
 #[test]
-fn the_acp_page_add_button_opens_the_agent_form() {
+fn the_providers_page_acp_button_opens_the_agent_form() {
     let mut harness = harness_for(configured());
-    harness.state_mut().1.open(Section::Acp);
+    harness.state_mut().1.open(Section::Providers);
     settle(&mut harness);
     assert_eq!(
         testutil::count(&harness, "Add ACP agent"),
@@ -303,11 +303,15 @@ fn the_acp_page_add_button_opens_the_agent_form() {
 }
 
 #[test]
-fn the_acp_page_edit_button_opens_the_form_on_that_agent() {
+fn the_providers_page_opens_the_form_on_an_acp_agent() {
     let mut harness = harness_for(configured());
-    harness.state_mut().1.open(Section::Acp);
+    harness.state_mut().1.open(Section::Providers);
     settle(&mut harness);
-    harness.get_by_label("Edit").click();
+    harness
+        .query_all_by_label("Edit")
+        .last()
+        .expect("the agent row has an edit button")
+        .click();
     harness.run();
     assert_eq!(
         testutil::count(&harness, "Edit acp:claude"),

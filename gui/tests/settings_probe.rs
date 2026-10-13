@@ -355,15 +355,15 @@ fn a_toggle_click_reports_its_preference_field() {
     harness.state_mut().1.open(Section::General);
     harness.run();
     harness.run();
+    harness.hover_at(egui::pos2(600.0, 400.0));
+    harness.run();
     harness.event(egui::Event::MouseWheel {
         unit: egui::MouseWheelUnit::Point,
-        delta: egui::vec2(0.0, -600.0),
+        delta: egui::vec2(0.0, -2000.0),
         phase: egui::TouchPhase::Move,
         modifiers: egui::Modifiers::NONE,
     });
-    harness.hover_at(egui::pos2(600.0, 400.0));
-    harness.run();
-    harness.run();
+    harness.run_steps(30);
     harness.get_by_label("Ask before enabling swarm").click();
     harness.run();
     let (store, _, events, ..) = harness.state();
