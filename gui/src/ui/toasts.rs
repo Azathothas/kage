@@ -19,7 +19,7 @@ use kage_client::wire::NoticeTone;
 use web_time::Instant;
 
 use crate::store::Note;
-use crate::theme::{FS_SM, Palette, R_LG, SP_2, SP_3, SP_4, SP_6};
+use crate::theme::{FS_SM, Palette, R_LG};
 
 /// How long a toast stays before it expires on its own.
 pub const TOAST_TTL: Duration = Duration::from_secs(4);
@@ -27,9 +27,10 @@ pub const TOAST_TTL: Duration = Duration::from_secs(4);
 /// The most toasts the stack holds; the oldest give way.
 pub const TOAST_MAX: usize = 5;
 
-/// The toast card's width, between the old stack's 260px minimum and
-/// 380px maximum.
-const TOAST_W: f32 = 340.0;
+/// A toast card's narrowest width.
+const TOAST_MIN_W: f32 = 260.0;
+/// A toast card's widest width; longer text wraps.
+const TOAST_MAX_W: f32 = 380.0;
 
 /// What a click on a toast does beyond dismissing it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,44 +139,15 @@ impl Toasts {
         let palette = Palette::active_of(ui.ctx());
         let mut clicked = None;
         egui::Area::new(egui::Id::new("kage-toasts"))
-            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-SP_6, SP_6))
+            .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-16.0, -42.0))
             .order(egui::Order::Foreground)
             .interactable(true)
             .movable(false)
             .show(ui.ctx(), |ui| {
-                ui.set_max_width(TOAST_W);
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = SP_2;
+                ui.with_layout(egui::Layout::top_down(egui::Align::Max), |ui| {
+                    ui.spacing_mut().item_spacing.y = 8.0;
                     for (index, item) in self.items.iter().enumerate() {
-                        let (icon, color) = tone_look(item.draft.tone, palette);
-                        let card = egui::Frame::NONE
-                            .fill(palette.raised)
-                            .stroke(egui::Stroke::new(1.0, palette.line))
-                            .inner_margin(egui::Margin::symmetric(SP_4 as i8, SP_4 as i8))
-                            .corner_radius(egui::CornerRadius::same(R_LG as u8))
-                            .shadow(palette.shadow_2)
-                            .show(ui, |ui| {
-                                ui.horizontal_top(|ui| {
-                                    crate::icons::icon(ui, icon, 14.0, color);
-                                    ui.add_space(SP_3);
-                                    ui.label(
-                                        egui::RichText::new(&item.draft.text)
-                                            .size(FS_SM)
-                                            .color(palette.ink),
-                                    );
-                                });
-                            });
-                        let response = card.response.interact(egui::Sense::click());
-                        if response.hovered() {
-                            let radius = egui::CornerRadius::same(R_LG as u8);
-                            ui.painter().rect_stroke(
-                                response.rect,
-                                radius,
-                                egui::Stroke::new(1.0, palette.line_strong),
-                                egui::StrokeKind::Outside,
-                            );
-                        }
-                        if response.clicked() {
+                        if toast_card(ui, &item.draft, palette).clicked() {
                             clicked = Some(index);
                         }
                     }
@@ -195,6 +167,52 @@ impl Toasts {
         self.fired.push(item.draft.action.clone());
         self.items.remove(index);
     }
+}
+
+/// One toast: the tone's icon beside the wrapped text on the raised
+/// card, between 260 and 380px wide. The whole card answers a click.
+fn toast_card(ui: &mut egui::Ui, draft: &ToastDraft, palette: &Palette) -> egui::Response {
+    let (icon, color) = tone_look(draft.tone, palette);
+    let mut job = egui::text::LayoutJob::simple(
+        draft.text.clone(),
+        egui::FontId::new(
+            FS_SM,
+            crate::theme::family(crate::theme::FAMILY_BODY_REGULAR),
+        ),
+        palette.ink,
+        TOAST_MAX_W - 12.0 - 14.0 - 10.0 - 12.0,
+    );
+    job.wrap.max_width = TOAST_MAX_W - 12.0 - 14.0 - 10.0 - 12.0;
+    let text = ui.painter().layout_job(job);
+    let width = (12.0 + 14.0 + 10.0 + text.size().x + 12.0).clamp(TOAST_MIN_W, TOAST_MAX_W);
+    let height = 10.0 + text.size().y.max(18.0) + 10.0;
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::click());
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &draft.text));
+    let radius = egui::CornerRadius::same(R_LG as u8);
+    ui.painter().add(palette.shadow_2.as_shape(rect, radius));
+    ui.painter().rect_filled(rect, radius, palette.raised);
+    let border = if response.hovered() {
+        palette.line_strong
+    } else {
+        palette.line
+    };
+    ui.painter().rect_stroke(
+        rect,
+        radius,
+        egui::Stroke::new(1.0, border),
+        egui::StrokeKind::Inside,
+    );
+    crate::icons::themed_image(icon, 14.0, color).paint_at(
+        ui,
+        egui::Rect::from_min_size(rect.min + egui::vec2(12.0, 12.0), egui::vec2(14.0, 14.0)),
+    );
+    ui.painter().galley(
+        rect.min + egui::vec2(12.0 + 14.0 + 10.0, 10.0),
+        text,
+        palette.ink,
+    );
+    response
 }
 
 /// The icon and color a notice tone renders in, matching the
