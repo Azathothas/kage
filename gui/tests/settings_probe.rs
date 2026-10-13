@@ -407,21 +407,3 @@ fn an_empty_archive_says_so() {
         "an empty archive says so"
     );
 }
-
-#[test]
-fn render_general_page_for_review() {
-    let mut harness = harness_for(booted());
-    harness.state_mut().1.open(Section::General);
-    harness.run();
-    harness.run();
-    harness.render().expect("renders").save("/tmp/settings-general.png").expect("save");
-}
-
-#[test]
-fn render_keyboard_page_for_review() {
-    let mut harness = harness_for(booted());
-    harness.state_mut().1.open(Section::Keyboard);
-    harness.run();
-    harness.run();
-    harness.render().expect("renders").save("/tmp/settings-keyboard.png").expect("save");
-}
