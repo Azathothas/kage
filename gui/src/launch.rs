@@ -1222,6 +1222,9 @@ impl ShellApp {
                         "enter_sends" => prefs.enter_sends = !prefs.enter_sends,
                         "group_by_project" => prefs.group_by_project = !prefs.group_by_project,
                         "confirm_swarm" => prefs.confirm_swarm = !prefs.confirm_swarm,
+                        "vim" => prefs.vim = !prefs.vim,
+                        "smooth_stream" => prefs.smooth_stream = !prefs.smooth_stream,
+                        "rail" => prefs.rail = !prefs.rail,
                         "constellation" => prefs.constellation = !prefs.constellation,
                         "fuel" => prefs.fuel = !prefs.fuel,
                         _ => {}

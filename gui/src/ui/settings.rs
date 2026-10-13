@@ -701,6 +701,17 @@ fn general(ui: &mut egui::Ui, store: &Store, palette: &Palette, events: &mut Vec
         }
     });
     group(ui, "Input", palette);
+    let mut vim = prefs.vim;
+    toggle_row(
+        ui,
+        "Vim mode",
+        "Normal-mode motions over the transcript (j k gg G za / n), a : command line and a modeline. Esc leaves the composer.",
+        &mut vim,
+        palette,
+    );
+    if vim != prefs.vim {
+        events.push(SettingsEvent::Flip("vim"));
+    }
     let mut enter = prefs.enter_sends;
     toggle_row(
         ui,
@@ -734,6 +745,29 @@ fn general(ui: &mut egui::Ui, store: &Store, palette: &Palette, events: &mut Vec
     );
     if confirm != prefs.confirm_swarm {
         events.push(SettingsEvent::Flip("confirm_swarm"));
+    }
+    group(ui, "Chat", palette);
+    let mut smooth = prefs.smooth_stream;
+    toggle_row(
+        ui,
+        "Smooth streaming",
+        "Show a reply that arrives in bursts at a steady pace, a moment behind",
+        &mut smooth,
+        palette,
+    );
+    if smooth != prefs.smooth_stream {
+        events.push(SettingsEvent::Flip("smooth_stream"));
+    }
+    let mut rail = prefs.rail;
+    toggle_row(
+        ui,
+        "Turn timeline rail",
+        "A minimap beside the transcript with ticks for turns, edits, approvals, failures and swarms",
+        &mut rail,
+        palette,
+    );
+    if rail != prefs.rail {
+        events.push(SettingsEvent::Flip("rail"));
     }
 }
 
