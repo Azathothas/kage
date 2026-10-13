@@ -215,15 +215,18 @@ pub fn render_user(
                 .inner_margin(egui::Margin::symmetric(BUBBLE_PX as i8, BUBBLE_PY as i8))
                 .show(ui, |ui| {
                     ui.set_max_width((ui.available_width() * BUBBLE_MAX).max(1.0));
-                    ui.label(
-                        egui::RichText::new(text)
-                            .size(FS_BASE)
-                            .line_height(Some(FS_BASE * PHI))
-                            .color(if steered {
-                                palette.ink
-                            } else {
-                                palette.ink_strong
-                            }),
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(text)
+                                .size(FS_BASE)
+                                .line_height(Some(FS_BASE * PHI))
+                                .color(if steered {
+                                    palette.ink
+                                } else {
+                                    palette.ink_strong
+                                }),
+                        )
+                        .halign(egui::Align::LEFT),
                     );
                 });
             if steered {

@@ -177,6 +177,19 @@ pub const FAMILY_MONO_BOLD: &str = "JetBrains Mono Bold";
 /// Extra bold mono.
 pub const FAMILY_MONO_EXTRABOLD: &str = "JetBrains Mono ExtraBold";
 
+/// The body face for prose: the regular body face with its line gap
+/// set so a line is [`LINE`] times the font size, the reference's line
+/// height. The markdown viewer renders under it; every other text keeps
+/// the face's own metrics.
+pub const FAMILY_PROSE: &str = "kage prose";
+/// The semibold face for prose: bold runs and headings.
+pub const FAMILY_PROSE_SEMIBOLD: &str = "kage prose semibold";
+/// The mono face for prose, set to the same line height.
+pub const FAMILY_PROSE_MONO: &str = "kage prose mono";
+
+/// The reference's line height over the font size.
+pub const LINE: f32 = 1.618;
+
 /// The registered Inter families, the system-font stand-in behind the
 /// design families.
 pub const FAMILY_INTER_REGULAR: &str = "Inter Regular";
@@ -189,24 +202,26 @@ pub const FAMILY_INTER_BOLD: &str = "Inter Bold";
 /// Extra bold Inter.
 pub const FAMILY_INTER_EXTRABOLD: &str = "Inter ExtraBold";
 
+/// The regular body face, which the prose face is derived from too.
+const BODY_REGULAR_TTF: &[u8] = include_bytes!("../assets/fonts/SchibstedGrotesk-Regular.ttf");
+/// The semibold body face, which the prose semibold face is derived
+/// from too.
+const BODY_SEMIBOLD_TTF: &[u8] = include_bytes!("../assets/fonts/SchibstedGrotesk-SemiBold.ttf");
+/// The regular mono face, which the prose mono face is derived from too.
+const MONO_REGULAR_TTF: &[u8] = include_bytes!("../assets/fonts/JetBrainsMono-Regular.ttf");
+
 /// The bundled family files, static per-weight faces. The family each
 /// face registers under is named for the face, and the chains live in
 /// [`install_fonts`]. Static faces rather than one variable TTF because
 /// the shell picks a family per weight (egui cannot select a variable
 /// axis per text style either).
 const FONT_FACES: &[(&str, &[u8])] = &[
-    (
-        FAMILY_BODY_REGULAR,
-        include_bytes!("../assets/fonts/SchibstedGrotesk-Regular.ttf"),
-    ),
+    (FAMILY_BODY_REGULAR, BODY_REGULAR_TTF),
     (
         FAMILY_BODY_MEDIUM,
         include_bytes!("../assets/fonts/SchibstedGrotesk-Medium.ttf"),
     ),
-    (
-        FAMILY_BODY_SEMIBOLD,
-        include_bytes!("../assets/fonts/SchibstedGrotesk-SemiBold.ttf"),
-    ),
+    (FAMILY_BODY_SEMIBOLD, BODY_SEMIBOLD_TTF),
     (
         FAMILY_BODY_BOLD,
         include_bytes!("../assets/fonts/SchibstedGrotesk-Bold.ttf"),
@@ -235,10 +250,7 @@ const FONT_FACES: &[(&str, &[u8])] = &[
         FAMILY_INTER_EXTRABOLD,
         include_bytes!("../assets/fonts/Inter-ExtraBold.ttf"),
     ),
-    (
-        FAMILY_MONO_REGULAR,
-        include_bytes!("../assets/fonts/JetBrainsMono-Regular.ttf"),
-    ),
+    (FAMILY_MONO_REGULAR, MONO_REGULAR_TTF),
     (
         FAMILY_MONO_MEDIUM,
         include_bytes!("../assets/fonts/JetBrainsMono-Medium.ttf"),
@@ -268,6 +280,41 @@ pub fn install_fonts(ctx: &egui::Context) {
             Arc::new(egui::FontData::from_static(bytes)),
         );
     }
+    for (name, bytes) in [
+        (FAMILY_PROSE, BODY_REGULAR_TTF),
+        (FAMILY_PROSE_SEMIBOLD, BODY_SEMIBOLD_TTF),
+        (FAMILY_PROSE_MONO, MONO_REGULAR_TTF),
+    ] {
+        if let Some((patched, shift)) = with_line_height(bytes, LINE) {
+            let tweak = egui::FontTweak {
+                y_offset_factor: shift,
+                ..Default::default()
+            };
+            fonts.font_data.insert(
+                name.to_owned(),
+                Arc::new(egui::FontData::from_owned(patched).tweak(tweak)),
+            );
+        }
+    }
+    chain(
+        &mut fonts,
+        family(FAMILY_PROSE),
+        &[FAMILY_PROSE, FAMILY_BODY_REGULAR, FAMILY_INTER_REGULAR],
+    );
+    chain(
+        &mut fonts,
+        family(FAMILY_PROSE_SEMIBOLD),
+        &[
+            FAMILY_PROSE_SEMIBOLD,
+            FAMILY_BODY_SEMIBOLD,
+            FAMILY_INTER_SEMIBOLD,
+        ],
+    );
+    chain(
+        &mut fonts,
+        family(FAMILY_PROSE_MONO),
+        &[FAMILY_PROSE_MONO, FAMILY_MONO_REGULAR, FAMILY_INTER_REGULAR],
+    );
     // The body face is the proportional default; the other weights and
     // Inter follow as glyph fallbacks, egui's fonts last of all.
     chain(
@@ -350,6 +397,44 @@ pub fn install_fonts(ctx: &egui::Context) {
     // font only when the platform itself lacks one.
     crate::fonts::install_cjk_fallback(&mut fonts);
     ctx.set_fonts(fonts);
+}
+
+/// `font` with its line gap set so a line is `ratio` times the font
+/// size, and the downward shift, as a fraction of the size, that
+/// centers the glyphs in the taller line the way the reference splits
+/// the extra room above and below. `None` when the bytes are not a
+/// font with the tables the metrics come from.
+///
+/// Both the hhea gap and the OS/2 typographic gap are set, since the
+/// shaper reads whichever the font's flags select.
+fn with_line_height(font: &[u8], ratio: f32) -> Option<(Vec<u8>, f32)> {
+    let u16_at = |at: usize| Some(u16::from_be_bytes([*font.get(at)?, *font.get(at + 1)?]));
+    let i16_at = |at: usize| u16_at(at).map(|v| v as i16);
+    let table = |tag: &[u8; 4]| {
+        (0..usize::from(u16_at(4)?)).find_map(|n| {
+            let record = 12 + n * 16;
+            (font.get(record..record + 4)? == tag).then(|| {
+                let at = font.get(record + 8..record + 12)?;
+                Some(u32::from_be_bytes([at[0], at[1], at[2], at[3]]) as usize)
+            })?
+        })
+    };
+    let head = table(b"head")?;
+    let hhea = table(b"hhea")?;
+    let os2 = table(b"OS/2");
+    let em = f32::from(u16_at(head + 18)?);
+    let mut out = font.to_vec();
+    let mut set_gap = |at: usize, ascent: i16, descent: i16| {
+        let gap = (ratio * em - f32::from(ascent) + f32::from(descent)).max(0.0) as i16;
+        out[at..at + 2].copy_from_slice(&gap.to_be_bytes());
+    };
+    let (ascent, descent) = (i16_at(hhea + 4)?, i16_at(hhea + 6)?);
+    set_gap(hhea + 8, ascent, descent);
+    if let Some(os2) = os2 {
+        set_gap(os2 + 72, i16_at(os2 + 68)?, i16_at(os2 + 70)?);
+    }
+    let natural = (f32::from(ascent) - f32::from(descent)) / em;
+    Some((out, ((ratio - natural) / 2.0).max(0.0)))
 }
 
 /// The named family a registered face renders under.
@@ -1189,8 +1274,47 @@ impl ThemeChoice {
 
 #[cfg(test)]
 mod tests {
-    use super::{Mode, Palette, ThemeChoice, color, corner};
+    use super::{
+        BODY_REGULAR_TTF, FAMILY_PROSE, FAMILY_PROSE_MONO, FAMILY_PROSE_SEMIBOLD, LINE, Mode,
+        Palette, ThemeChoice, color, corner, family, install_fonts, with_line_height,
+    };
     use egui::Color32;
+
+    #[test]
+    fn the_prose_faces_set_lines_at_the_reference_height() {
+        let ctx = egui::Context::default();
+        install_fonts(&ctx);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+        output.textures_delta.clear();
+        for (face, size) in [
+            (FAMILY_PROSE, 14.0),
+            (FAMILY_PROSE_SEMIBOLD, 17.0),
+            (FAMILY_PROSE_MONO, 12.5),
+        ] {
+            let galley = ctx.fonts_mut(|fonts| {
+                fonts.layout_no_wrap(
+                    "one\ntwo".to_owned(),
+                    egui::FontId::new(size, family(face)),
+                    Color32::WHITE,
+                )
+            });
+            let line = galley.size().y / 2.0;
+            assert!(
+                (line - size * LINE).abs() < 1.0,
+                "{face} sets {line} per line at {size}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_line_height_patch_refuses_what_is_not_a_font() {
+        assert!(with_line_height(b"not a font", LINE).is_none());
+        let (_, shift) = with_line_height(BODY_REGULAR_TTF, LINE).expect("the body face patches");
+        assert!(
+            shift > 0.0 && shift < 0.5,
+            "the glyphs move down, by {shift}"
+        );
+    }
 
     #[test]
     fn colors_take_six_or_eight_digits() {

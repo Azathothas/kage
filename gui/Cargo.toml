@@ -42,6 +42,9 @@ eframe = { version = "0.36", default-features = false, features = [
 egui = "0.36"
 egui_extras = { version = "0.36", features = ["svg"] }
 egui_commonmark = { version = "0.25", features = ["better_syntax_highlighting"] }
+# The top-level block split the transcript's markdown renders by; the
+# same parser and version egui_commonmark reads with.
+pulldown-cmark = { version = "0.13", default-features = false }
 egui_virtual_list = "0.12"
 # Syntax highlighting for the transcript's code blocks; the
 # `default-fancy` flavor keeps the fancy regex engine.

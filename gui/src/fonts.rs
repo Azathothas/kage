@@ -80,6 +80,9 @@ pub fn install_cjk_fallback(fonts: &mut egui::FontDefinitions) -> Option<String>
             crate::theme::FAMILY_MONO_SEMIBOLD,
             crate::theme::FAMILY_MONO_BOLD,
             crate::theme::FAMILY_MONO_EXTRABOLD,
+            crate::theme::FAMILY_PROSE,
+            crate::theme::FAMILY_PROSE_SEMIBOLD,
+            crate::theme::FAMILY_PROSE_MONO,
         ] {
             fonts
                 .families

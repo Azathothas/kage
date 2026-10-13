@@ -21,6 +21,7 @@ pub(crate) mod head;
 pub mod list;
 pub mod markdown;
 pub mod model;
+pub(crate) mod prose;
 pub mod text_rows;
 pub mod tool_rows;
 pub mod view;

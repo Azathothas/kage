@@ -2299,6 +2299,7 @@ dependencies = [
  "image",
  "js-sys",
  "kage-client",
+ "pulldown-cmark",
  "rfd",
  "serde",
  "serde_json",

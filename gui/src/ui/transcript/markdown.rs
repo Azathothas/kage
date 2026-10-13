@@ -11,6 +11,7 @@
 //! the spec's guard asserts on.
 
 use std::collections::HashMap;
+use std::ops::Range;
 
 /// The cache name the palette-derived syntect themes register under.
 pub const THEME_SHADOW: &str = "kage-shadow";
@@ -45,6 +46,9 @@ pub struct Entry {
     /// The text this entry last rendered, so a repeat render with no
     /// change is not a parse.
     last_text: Option<String>,
+    /// The top-level blocks of `last_text`, each read into the block
+    /// the transcript renders itself, or `None` for the viewer's.
+    blocks: Vec<(Range<usize>, Option<super::prose::Block>)>,
 }
 
 /// The parsed form of the transcript, keyed by the entry's id.
@@ -79,13 +83,99 @@ impl Pipeline {
         let changed = entry.last_text.as_deref() != Some(text);
         if changed || streaming {
             entry.last_text = Some(text.to_owned());
+            entry.blocks = blocks(text)
+                .into_iter()
+                .map(|range| {
+                    let block = super::prose::parse(&text[range.clone()]);
+                    (range, block)
+                })
+                .collect();
             self.parses.record(id);
         }
-        egui_commonmark::CommonMarkViewer::new()
-            .syntax_theme_light(THEME_DAWN)
-            .syntax_theme_dark(THEME_SHADOW)
-            .show(ui, &mut entry.cache, text);
+        ui.scope(|ui| {
+            // Prose sets at the reference's line height, through the
+            // faces registered with that line gap, when they are.
+            let prose = crate::theme::family(crate::theme::FAMILY_PROSE);
+            let registered = ui
+                .ctx()
+                .fonts(|fonts| fonts.definitions().families.contains_key(&prose));
+            let styles = &mut ui.style_mut().text_styles;
+            for (style, face) in [
+                (egui::TextStyle::Body, crate::theme::FAMILY_PROSE),
+                (egui::TextStyle::Heading, crate::theme::FAMILY_PROSE),
+                (egui::TextStyle::Monospace, crate::theme::FAMILY_PROSE_MONO),
+            ] {
+                if let Some(font) = styles.get_mut(&style)
+                    && registered
+                {
+                    font.family = crate::theme::family(face);
+                }
+            }
+            // Each top-level block renders on its own, so the viewer's
+            // blank line between paragraphs gives way to the
+            // reference's paragraph gap.
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let palette = crate::theme::Palette::active_of(ui.ctx());
+            let mut prev = None;
+            for (n, (range, block)) in entry.blocks.iter().enumerate() {
+                if n > 0 {
+                    ui.add_space(super::prose::gap_after(prev));
+                }
+                ui.push_id(n, |ui| match block {
+                    Some(block) if registered => super::prose::show(ui, block, palette),
+                    _ => {
+                        egui_commonmark::CommonMarkViewer::new()
+                            .syntax_theme_light(THEME_DAWN)
+                            .syntax_theme_dark(THEME_SHADOW)
+                            .show(ui, &mut entry.cache, &text[range.clone()]);
+                    }
+                });
+                prev = block.as_ref();
+            }
+        });
     }
+}
+
+/// The byte ranges of `text`'s top-level blocks, in order. A text with
+/// a link reference definition stays one block, since a block cut away
+/// from its definition would lose the link.
+fn blocks(text: &str) -> Vec<Range<usize>> {
+    use pulldown_cmark::{Event, Options, Parser};
+
+    let whole = || {
+        vec![Range {
+            start: 0,
+            end: text.len(),
+        }]
+    };
+    let defines_links = text.lines().any(|line| {
+        let line = line.trim_start();
+        line.starts_with('[') && line.contains("]:")
+    });
+    if defines_links {
+        return whole();
+    }
+    let options = Options::ENABLE_TABLES
+        | Options::ENABLE_TASKLISTS
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_FOOTNOTES
+        | Options::ENABLE_DEFINITION_LIST;
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    for (event, range) in Parser::new_ext(text, options).into_offset_iter() {
+        match event {
+            Event::Start(_) => {
+                if depth == 0 {
+                    out.push(range);
+                }
+                depth += 1;
+            }
+            Event::End(_) => depth = depth.saturating_sub(1),
+            _ if depth == 0 => out.push(range),
+            _ => {}
+        }
+    }
+    if out.is_empty() { whole() } else { out }
 }
 
 /// The syntect theme the kage palette implies, as `.tmTheme` bytes.
@@ -148,7 +238,28 @@ pub fn theme_bytes(palette: &crate::theme::Palette) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Parses, Pipeline, theme_bytes};
+    use super::{Parses, Pipeline, blocks, theme_bytes};
+
+    #[test]
+    fn the_text_splits_into_its_top_level_blocks() {
+        let text =
+            "One para\nstill one.\n\n- a\n\n- b\n\n```rust\nfn x() {}\n\nfn y() {}\n```\n\nLast.";
+        let parts: Vec<&str> = blocks(text)
+            .into_iter()
+            .map(|r| text[r].trim_end())
+            .collect();
+        assert_eq!(parts.len(), 4, "{parts:?}");
+        assert_eq!(parts[0], "One para\nstill one.");
+        assert!(parts[1].starts_with("- a") && parts[1].ends_with("- b"));
+        assert!(parts[2].starts_with("```rust") && parts[2].contains("fn y()"));
+        assert_eq!(parts[3], "Last.");
+    }
+
+    #[test]
+    fn a_text_with_link_definitions_stays_whole() {
+        let text = "See [the docs][d].\n\n[d]: https://example.com";
+        assert_eq!(blocks(text), vec![0..text.len()]);
+    }
     use crate::theme::Palette;
 
     #[test]
