@@ -1313,7 +1313,11 @@ impl ShellApp {
                 }
                 crate::ui::workbench::WorkbenchEvent::OpenAgent(id) => {
                     self.shell.store.load_child(&id);
-                    self.shell.store.set_active(id);
+                    self.shell.workbench.open_agent(id);
+                }
+                crate::ui::workbench::WorkbenchEvent::Row(action) => {
+                    self.row_actions.push(action);
+                    self.ctx.request_repaint();
                 }
                 crate::ui::workbench::WorkbenchEvent::StopAgent(id) => {
                     self.shell.store.cancel_session(&id);
@@ -1366,8 +1370,9 @@ impl ShellApp {
             RowAction::OpenChange(path) => self.show_workbench(panels, Tab::Changes, Some(path)),
             RowAction::OpenBrowser => self.show_workbench(panels, Tab::Browser, None),
             RowAction::OpenAgent(id) => {
+                self.shell.store.load_child(&id);
                 self.show_workbench(panels, Tab::Agents, None);
-                self.shell.workbench.select(Some(id));
+                self.shell.workbench.open_agent(id);
             }
             RowAction::OpenAgents => self.show_workbench(panels, Tab::Agents, None),
             RowAction::Review(choice, revision) => {

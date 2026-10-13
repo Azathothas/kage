@@ -14,6 +14,8 @@ use crate::theme::{
 };
 use crate::ui::agents::{self, AgentEvent};
 use crate::ui::transcript::model::{DiffLine, diff_lines};
+use crate::ui::transcript::tool_rows::RowAction;
+use crate::ui::transcript::view::TranscriptView;
 
 /// What a file change row reports, collected from one tool call.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -447,6 +449,10 @@ fn empty_block(ui: &mut egui::Ui, icon: crate::icons::Icon, text: &str, palette:
 /// selections.
 #[derive(Debug, Default)]
 pub struct Workbench {
+    /// The subagent whose detail the workbench shows, when one is open.
+    agent: Option<String>,
+    /// The subagent's transcript, pinned to `agent`.
+    agent_view: Option<TranscriptView>,
     /// The pane the tabs show.
     tab: Tab,
     /// The file the files pane previews.
@@ -546,6 +552,25 @@ impl Workbench {
     pub fn select(&mut self, id: Option<String>) {
         self.selected = id;
     }
+
+    /// The subagent whose detail is open.
+    #[must_use]
+    pub fn agent(&self) -> Option<&str> {
+        self.agent.as_deref()
+    }
+
+    /// Opens subagent `id`'s detail on the agents tab.
+    pub fn open_agent(&mut self, id: String) {
+        self.tab = Tab::Agents;
+        self.agent_view = Some(TranscriptView::pinned(id.clone()));
+        self.agent = Some(id);
+    }
+
+    /// Returns from a subagent's detail to the agents list.
+    pub fn close_agent(&mut self) {
+        self.agent = None;
+        self.agent_view = None;
+    }
 }
 
 /// What the workbench asks the shell to carry out.
@@ -562,6 +587,8 @@ pub enum WorkbenchEvent {
     AskFiles,
     /// Read the file at `path` for the files pane's preview.
     ReadFile(String),
+    /// An action a row of the subagent's transcript raised.
+    Row(RowAction),
 }
 
 /// Draws the workbench and reports what its panes asked for.
@@ -578,13 +605,22 @@ pub fn show(
         ui.set_width(ui.available_width());
         tab_strip(ui, workbench, palette);
         let Some(session) = store.active_session() else {
-            empty_block(ui, crate::icons::Icon::Folder, "Start a session to see its changes, agents and output here.", palette);
+            empty_block(
+                ui,
+                crate::icons::Icon::Folder,
+                "Start a session to see its changes, agents and output here.",
+                palette,
+            );
             return;
         };
         // The panes read the session by value, so the store stays free
         // for the panes that write to it.
         let items = session.items.clone();
         let agents = session.agents.clone();
+        if workbench.agent().is_some() {
+            agent_detail(ui, workbench, store, palette, &mut events);
+            return;
+        }
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -755,7 +791,12 @@ fn files_pane(
     events: &mut Vec<WorkbenchEvent>,
 ) {
     let Some(id) = store.active_id().map(str::to_owned) else {
-        empty_block(ui, crate::icons::Icon::Folder, "Start a session to see its changes, agents and output here.", palette);
+        empty_block(
+            ui,
+            crate::icons::Icon::Folder,
+            "Start a session to see its changes, agents and output here.",
+            palette,
+        );
         return;
     };
     if !workbench.listing_asked(&id) {
@@ -929,6 +970,119 @@ fn file_preview(
             );
         });
     }
+}
+
+/// The subagent detail: back, the name, the kind, the state with Stop
+/// while it runs, the task and the measured facts, then its transcript.
+fn agent_detail(
+    ui: &mut egui::Ui,
+    workbench: &mut Workbench,
+    store: &Store,
+    palette: &Palette,
+    events: &mut Vec<WorkbenchEvent>,
+) {
+    let Some(id) = workbench.agent().map(str::to_owned) else {
+        return;
+    };
+    let found = store
+        .active_session()
+        .and_then(|parent| parent.agents.get(&id).map(|agent| (parent, agent)));
+    let Some((parent, agent)) = found else {
+        empty_block(ui, crate::icons::Icon::Bot, "Agent not found.", palette);
+        return;
+    };
+    let facts = agents::agent_facts(store, parent, &id, agent);
+    let kind = match &facts.item {
+        Some((_, index)) => format!("swarm #{:02}", index + 1),
+        None => facts.name.clone(),
+    };
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 8.0;
+        ui.add_space(8.0);
+        if crate::ui::forms::icon_button(ui, "agent-back", crate::icons::Icon::ChevronLeft, palette)
+            .on_hover_text("Back to agents")
+            .clicked()
+        {
+            workbench.close_agent();
+        }
+        ui.label(
+            egui::RichText::new(&facts.name)
+                .size(FS_SM)
+                .family(family(FAMILY_BODY_SEMIBOLD))
+                .color(palette.ink_strong),
+        );
+        ui.label(egui::RichText::new(kind).size(11.0).color(palette.muted));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.add_space(8.0);
+            if facts.stoppable
+                && ui
+                    .add(egui::Button::new(
+                        egui::RichText::new("Stop")
+                            .size(FS_XS)
+                            .color(palette.danger),
+                    ))
+                    .clicked()
+            {
+                events.push(WorkbenchEvent::StopAgent(id.clone()));
+            }
+            ui.label(
+                egui::RichText::new(facts.phase.label())
+                    .size(FS_XS)
+                    .color(facts.phase.color(palette)),
+            );
+        });
+    });
+    ui.add_space(4.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.add_space(8.0);
+        ui.label(
+            egui::RichText::new(&facts.task)
+                .size(FS_SM)
+                .color(palette.ink),
+        );
+    });
+    let calls = store.state().session(&id).map_or(0, |child| {
+        child
+            .items
+            .iter()
+            .filter(|item| matches!(item, TranscriptItem::ToolCall(_)))
+            .count()
+    });
+    let line = [
+        Some(facts.name.clone()),
+        facts.model.clone(),
+        facts.elapsed.map(crate::clock::span),
+        facts.tokens.map(|n| format!("{} tok", agents::tokens(n))),
+        facts.cost.map(|cost| format!("USD {cost:.4}")),
+        Some(format!("{calls} tool calls")),
+        facts.item.as_ref().map(|(item, _)| format!("item: {item}")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" \u{b7} ");
+    ui.horizontal_wrapped(|ui| {
+        ui.add_space(8.0);
+        ui.label(
+            egui::RichText::new(line)
+                .size(11.0)
+                .family(family(FAMILY_MONO_REGULAR))
+                .color(palette.faint),
+        );
+    });
+    if let Some(reason) = &facts.reason {
+        ui.horizontal_wrapped(|ui| {
+            ui.add_space(8.0);
+            ui.label(egui::RichText::new(reason).size(FS_XS).color(palette.warn));
+        });
+    }
+    ui.separator();
+    let mut rows = Vec::new();
+    if let Some(view) = workbench.agent_view.as_mut() {
+        view.show(ui, store, &mut rows);
+    }
+    events.extend(rows.into_iter().map(WorkbenchEvent::Row));
 }
 
 /// The agents pane: the filter chips over the session's agent cards.
@@ -1106,6 +1260,18 @@ fn browser_pane(ui: &mut egui::Ui, palette: &Palette, items: &[TranscriptItem]) 
 
 #[cfg(test)]
 mod tests {
+    use super::Workbench;
+
+    #[test]
+    fn opening_an_agent_shows_its_detail_and_closing_returns() {
+        let mut workbench = Workbench::new();
+        assert_eq!(workbench.agent(), None);
+        workbench.open_agent("child-1".to_owned());
+        assert_eq!(workbench.agent(), Some("child-1"));
+        workbench.close_agent();
+        assert_eq!(workbench.agent(), None);
+    }
+
     use super::{
         ChangeEntry, Filter, Tab, TermEntry, bytes, change_entries, change_path, fetch_entries,
         strip_ansi, term_entries,
