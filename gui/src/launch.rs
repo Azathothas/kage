@@ -962,6 +962,15 @@ impl ShellApp {
             ui.vertical(|ui| {
                 crate::ui::topbar::show(ui, store, sidebar_hidden, &mut topbar_events.borrow_mut());
                 if store.active_id().is_some() {
+                    if self.shell.find.is_open() {
+                        let rows = self.shell.transcript.searchable_rows(store);
+                        if let Some(crate::ui::find::RowAction::Reveal(key)) =
+                            self.shell.find.show(ui, &rows)
+                        {
+                            self.shell.transcript.scroll_to_row(key);
+                        }
+                    }
+                    self.shell.transcript.set_find(self.shell.find.marks());
                     egui::Panel::bottom("chat-band")
                         .resizable(false)
                         .show_separator_line(false)
@@ -1072,12 +1081,6 @@ impl ShellApp {
         self.carry_workbench(workbench_events);
 
         crate::ui::status::status_bar(ui, self.shell.store());
-
-        let rows = self.shell.transcript.searchable_rows(self.shell.store());
-        let find_action = self.shell.find.show(ui, &rows);
-        if let Some(crate::ui::find::RowAction::Reveal(key)) = find_action {
-            self.shell.transcript.scroll_to_row(key);
-        }
 
         let mut chosen = None;
         if self.shell.palette.is_open() {

@@ -7,11 +7,23 @@
 //! keys answer in the `Find` context while the query holds focus, and
 //! Escape closes and clears the tint.
 
-use crate::theme::{FS_XS, Palette, R_LG, SP_4, SP_6};
+use crate::icons::Icon;
+use crate::theme::{
+    FAMILY_BODY_REGULAR, FAMILY_MONO_REGULAR, FS_2XS, FS_SM, Palette, R_LG, family,
+};
+use crate::ui::transcript::head;
 use crate::ui::transcript::model::{FindMarks, RowKey};
 
 /// The bar's width, the old bar's 340px.
 const BAR_W: f32 = 340.0;
+/// The bar's height: its padding around the field and the buttons.
+const BAR_H: f32 = 42.0;
+/// The band around the bar, right and left.
+const BAND_PX: f32 = 10.0;
+/// The band around the bar, top and bottom.
+const BAND_PY: f32 = 6.0;
+/// The bar's inner padding and the gap between its items.
+const GAP: f32 = 8.0;
 
 /// The row indexes `query` matches, case insensitively. An empty
 /// query matches nothing.
@@ -62,6 +74,8 @@ pub struct FindBar {
     matches: Vec<RowKey>,
     /// Which match the counter points at.
     current: usize,
+    /// Whether the field still owes the focus the opening asked for.
+    focus: bool,
 }
 
 impl FindBar {
@@ -92,6 +106,7 @@ impl FindBar {
     /// Opens the bar over a fresh query.
     pub fn open(&mut self) {
         self.open = true;
+        self.focus = true;
         self.current = 0;
         self.matches.clear();
         self.query.clear();
@@ -155,74 +170,113 @@ impl FindBar {
         Some(key)
     }
 
-    /// Draws the bar over the chat column, when it is open. The query
-    /// field takes egui's focus, so typing lands in it.
+    /// Draws the bar as a band under the topbar, the bar at its right,
+    /// when it is open. The query field takes the focus when the bar
+    /// opens, and every frame re-matches against `rows`, so the counter
+    /// follows the query and the streaming transcript.
     pub fn show(&mut self, ui: &mut egui::Ui, rows: &[(RowKey, String)]) -> Option<RowAction> {
         if !self.open {
             return None;
         }
         let palette = Palette::active_of(ui.ctx());
         let mut action = None;
-        egui::Area::new(egui::Id::new("find-bar"))
-            .order(egui::Order::Foreground)
-            .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, SP_6))
-            .show(ui.ctx(), |ui| {
-                egui::Frame::NONE
-                    .fill(palette.menu)
-                    .stroke(egui::Stroke::new(1.0, palette.line))
-                    .corner_radius(egui::CornerRadius::same(R_LG as u8))
-                    .inner_margin(egui::Margin::symmetric(SP_6 as i8, SP_4 as i8))
-                    .show(ui, |ui| {
-                        ui.set_width(BAR_W);
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = SP_4;
-                            crate::icons::themed(ui, crate::icons::Icon::Search, 14.0);
-                            let response = ui.add(
-                                egui::TextEdit::singleline(&mut self.query)
-                                    .hint_text("Find in chat")
-                                    .desired_width(BAR_W - 120.0)
-                                    .id(egui::Id::new("find-query")),
-                            );
-                            if response.gained_focus() {
-                                // The bar mounts with the query empty,
-                                // so the caret starts where the user
-                                // expects.
-                                let _ = response;
-                            }
-                            let (current, total) = self.counter();
-                            ui.label(
-                                egui::RichText::new(counter_text(current, total))
-                                    .size(FS_XS)
-                                    .color(palette.muted),
-                            );
-                            if ui
-                                .add(egui::Button::new(
-                                    egui::RichText::new("\u{2191}").size(FS_XS),
-                                ))
-                                .clicked()
-                            {
-                                action = self.step(true).map(RowAction::Reveal);
-                            }
-                            if ui
-                                .add(egui::Button::new(
-                                    egui::RichText::new("\u{2193}").size(FS_XS),
-                                ))
-                                .clicked()
-                            {
-                                action = self.step(false).map(RowAction::Reveal);
-                            }
-                            if ui
-                                .add(egui::Button::new(egui::RichText::new("close").size(FS_XS)))
-                                .clicked()
-                            {
-                                self.close();
-                            }
-                        });
-                    });
-            });
-        // A query change re-matches, so the counter and the tint follow
-        // the transcript as it streams.
-        let _ = rows;
+        let (band, _) = ui.allocate_exact_size(
+            egui::vec2(ui.available_width(), BAR_H + 2.0 * BAND_PY),
+            egui::Sense::hover(),
+        );
+        let width = BAR_W.min(band.width() - 2.0 * BAND_PX);
+        let bar = egui::Rect::from_min_size(
+            egui::pos2(band.right() - BAND_PX - width, band.top() + BAND_PY),
+            egui::vec2(width, BAR_H),
+        );
+        let radius = egui::CornerRadius::same(R_LG as u8);
+        ui.painter().add(palette.shadow_menu.as_shape(bar, radius));
+        ui.painter().rect_filled(bar, radius, palette.menu);
+        ui.painter().rect_stroke(
+            bar,
+            radius,
+            egui::Stroke::new(1.0, palette.line),
+            egui::StrokeKind::Inside,
+        );
+        let mid = bar.center().y;
+        let button = |right: f32| {
+            egui::Rect::from_min_size(
+                egui::pos2(right - head::ICON_BTN, mid - head::ICON_BTN / 2.0),
+                egui::vec2(head::ICON_BTN, head::ICON_BTN),
+            )
+        };
+        let mut right = bar.right() - GAP;
+        if head::icon_button(ui, button(right), Icon::X, "Close (Esc)", palette).clicked() {
+            self.close();
+            return None;
+        }
+        right -= head::ICON_BTN + GAP;
+        let next = head::icon_button(
+            ui,
+            button(right),
+            Icon::ChevronDown,
+            "Next match (Enter)",
+            palette,
+        );
+        if next.clicked() {
+            action = self.step(false).map(RowAction::Reveal);
+        }
+        right -= head::ICON_BTN + GAP;
+        let prev = head::icon_button(
+            ui,
+            button(right),
+            Icon::ChevronUp,
+            "Previous match (Shift+Enter)",
+            palette,
+        );
+        if prev.clicked() {
+            action = self.step(true).map(RowAction::Reveal);
+        }
+        right -= head::ICON_BTN + GAP;
+        let (current, total) = self.counter();
+        let counter = ui.painter().layout_no_wrap(
+            counter_text(current, total),
+            egui::FontId::new(FS_2XS, family(FAMILY_MONO_REGULAR)),
+            palette.faint,
+        );
+        right -= counter.size().x;
+        ui.painter().galley(
+            egui::pos2(right, mid - counter.size().y / 2.0),
+            counter,
+            palette.faint,
+        );
+        right -= GAP;
+        let left = bar.left() + GAP;
+        crate::icons::themed_image(Icon::Search, 14.0, palette.faint).paint_at(
+            ui,
+            egui::Rect::from_min_size(egui::pos2(left, mid - 7.0), egui::vec2(14.0, 14.0)),
+        );
+        let field_left = left + 14.0 + GAP;
+        let field = egui::Rect::from_min_max(
+            egui::pos2(field_left, mid - FS_SM),
+            egui::pos2(right.max(field_left), mid + FS_SM),
+        );
+        let before = self.query.clone();
+        let response = ui.put(
+            field,
+            egui::TextEdit::singleline(&mut self.query)
+                .id(egui::Id::new("find-query"))
+                .frame(egui::Frame::NONE)
+                .margin(egui::Margin::ZERO)
+                .vertical_align(egui::Align::Center)
+                .hint_text("Find in chat")
+                .text_color(palette.ink)
+                .font(egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)))
+                .desired_width(field.width()),
+        );
+        let entered = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        if std::mem::take(&mut self.focus) || entered {
+            response.request_focus();
+        }
+        if self.query != before {
+            self.current = 0;
+        }
+        self.rematch(rows);
         action
     }
 }
