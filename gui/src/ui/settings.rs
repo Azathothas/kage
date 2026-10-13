@@ -1306,15 +1306,10 @@ fn theme_card(
     );
     let side_w = swatch.width() * 0.28;
     ui.painter()
-        .rect_filled(swatch, egui::CornerRadius::same(R_MD as u8), main);
+        .rect_filled(swatch, egui::CornerRadius::ZERO, main);
     ui.painter().rect_filled(
         egui::Rect::from_min_size(swatch.min, egui::vec2(side_w, swatch.height())),
-        egui::CornerRadius {
-            nw: R_MD as u8,
-            sw: R_MD as u8,
-            ne: 0,
-            se: 0,
-        },
+        egui::CornerRadius::ZERO,
         side,
     );
     let main_w = swatch.width() - side_w;
@@ -1917,12 +1912,13 @@ fn row_frame(
     let width = ui.available_width();
     let text_w = (width - 32.0 - 16.0 - reserve).max(80.0);
     let wrapped = |ui: &egui::Ui, text: &str, size: f32, color: egui::Color32| {
-        let mut job = egui::text::LayoutJob::simple(
-            text.to_owned(),
-            egui::FontId::new(size, family(FAMILY_BODY_REGULAR)),
+        let format = egui::TextFormat {
+            font_id: egui::FontId::new(size, family(FAMILY_BODY_REGULAR)),
             color,
-            text_w,
-        );
+            line_height: Some(size * LINE),
+            ..Default::default()
+        };
+        let mut job = egui::text::LayoutJob::single_section(text.to_owned(), format);
         job.wrap.max_width = text_w;
         ui.painter().layout_job(job)
     };
