@@ -121,6 +121,8 @@ pub enum Action {
     ToggleSwarm,
     /// Toggle plan mode.
     TogglePlan,
+    /// Step the permission mode to the next one the agent offers.
+    CycleMode,
     /// Open the goal dialog.
     SetGoal,
     /// Close the open dialog.
@@ -299,7 +301,7 @@ pub fn bindings() -> Vec<Binding> {
                 shift: true,
                 alt: false,
             },
-            action: TogglePlan,
+            action: CycleMode,
         },
     ]
 }
@@ -466,7 +468,7 @@ mod tests {
         );
         assert_eq!(
             dispatch(Context::Input, &shift_tab),
-            Some(Action::TogglePlan)
+            Some(Action::CycleMode)
         );
         assert_eq!(dispatch(Context::Shell, &shift_tab), None);
     }

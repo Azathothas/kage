@@ -47,7 +47,7 @@ type Probe = (
 /// A harness over the settings dialog with `store`'s session open.
 fn harness_for(store: Store) -> Harness<'static, Probe> {
     Harness::builder()
-        .with_size(egui::Vec2::new(1000.0, 760.0))
+        .with_size(egui::Vec2::new(1000.0, 1000.0))
         .build_ui_state(
             |ui, (store, settings, events, answered, installed): &mut Probe| {
                 if testutil::theme_installed(installed, ui.ctx()) {
@@ -355,6 +355,15 @@ fn a_toggle_click_reports_its_preference_field() {
     harness.state_mut().1.open(Section::General);
     harness.run();
     harness.run();
+    harness.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, -600.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.hover_at(egui::pos2(600.0, 400.0));
+    harness.run();
+    harness.run();
     harness.get_by_label("Ask before enabling swarm").click();
     harness.run();
     let (store, _, events, ..) = harness.state();
@@ -397,4 +406,22 @@ fn an_empty_archive_says_so() {
         1,
         "an empty archive says so"
     );
+}
+
+#[test]
+fn render_general_page_for_review() {
+    let mut harness = harness_for(booted());
+    harness.state_mut().1.open(Section::General);
+    harness.run();
+    harness.run();
+    harness.render().expect("renders").save("/tmp/settings-general.png").expect("save");
+}
+
+#[test]
+fn render_keyboard_page_for_review() {
+    let mut harness = harness_for(booted());
+    harness.state_mut().1.open(Section::Keyboard);
+    harness.run();
+    harness.run();
+    harness.render().expect("renders").save("/tmp/settings-keyboard.png").expect("save");
 }

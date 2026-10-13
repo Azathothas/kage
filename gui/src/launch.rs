@@ -1356,6 +1356,32 @@ impl ShellApp {
         }
     }
 
+    /// Steps the active session's permission mode to the next one the
+    /// agent offers, wrapping at the end. Plan is not one of the steps.
+    fn cycle_permission(&mut self) {
+        let Some(session) = self.shell.store.active_session() else {
+            return;
+        };
+        let values: Vec<String> = crate::modes::select_option(session, "mode")
+            .map(|option| {
+                option
+                    .options
+                    .iter()
+                    .map(|mode| mode.value.clone())
+                    .filter(|value| value != crate::modes::PLAN_MODE)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let current = self.shell.store.permission_mode().unwrap_or_default();
+        let index = values
+            .iter()
+            .position(|value| *value == current)
+            .map_or(0, |index| (index + 1) % values.len().max(1));
+        if let Some(next) = values.get(index) {
+            self.shell.store.set_permission(next);
+        }
+    }
+
     /// Carries out what a transcript row asked for.
     fn carry_row(
         &mut self,
@@ -2242,6 +2268,7 @@ impl ShellApp {
                     self.shell.dialogs.close();
                 }
             }
+            Action::CycleMode => self.cycle_permission(),
             Action::SendPrompt
             | Action::ToggleSwarm
             | Action::TogglePlan

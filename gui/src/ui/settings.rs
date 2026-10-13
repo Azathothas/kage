@@ -150,6 +150,7 @@ fn action_name(action: crate::ui::keys::Action) -> &'static str {
         Action::OpenProviders => "OpenProviders",
         Action::ToggleSwarm => "ToggleSwarm",
         Action::TogglePlan => "TogglePlan",
+        Action::CycleMode => "CycleMode",
         Action::SetGoal => "SetGoal",
         Action::CloseDialog => "CloseDialog",
         Action::ShowAgents => "ShowAgents",
@@ -498,7 +499,9 @@ impl SettingsView {
                             ui.set_min_size(card.size());
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 0.0;
-                                nav(ui, &self.settings, palette, &mut picked);
+                                ui.vertical(|ui| {
+                                    nav(ui, &self.settings, palette, &mut picked);
+                                });
                                 ui.vertical(|ui| {
                                     ui.set_width(card.width() - 224.0);
                                     ui.set_min_height(card.height());
@@ -635,19 +638,15 @@ fn nav(ui: &mut egui::Ui, settings: &Settings, palette: &Palette, picked: &mut O
         } else {
             (palette.muted, egui::Color32::TRANSPARENT)
         };
-        let row = egui::Button::new(egui::RichText::new(section.label()).size(FS_SM).color(fg))
-            .fill(fill)
-            .stroke(egui::Stroke::NONE)
-            .corner_radius(egui::CornerRadius::same(R_MD as u8))
-            .min_size(egui::vec2(204.0, 36.0));
+        let row = egui::Button::image_and_text(
+            crate::icons::themed_image(section.icon(), 14.0, fg),
+            egui::RichText::new(section.label()).size(FS_SM).color(fg),
+        )
+        .fill(fill)
+        .stroke(egui::Stroke::NONE)
+        .corner_radius(egui::CornerRadius::same(R_MD as u8))
+        .min_size(egui::vec2(204.0, 36.0));
         let response = ui.add(row);
-        let icon_rect = egui::Rect::from_min_size(
-            egui::pos2(response.rect.left() + 10.0, response.rect.center().y - 7.0),
-            egui::vec2(14.0, 14.0),
-        );
-        ui.scope_builder(egui::UiBuilder::new().max_rect(icon_rect), |ui| {
-            crate::icons::icon(ui, section.icon(), 14.0, fg);
-        });
         if response.clicked() {
             *picked = Some(section);
         }
@@ -663,10 +662,12 @@ fn page(
     updates: &UpdateState,
     events: &mut Vec<SettingsEvent>,
 ) {
+    let width = ui.available_width() - 24.0;
     egui::ScrollArea::vertical()
         .auto_shrink(false)
+        .max_width(width)
         .show(ui, |ui| {
-            ui.set_width(ui.available_width());
+            ui.set_width(width);
             ui.add_space(22.0);
             ui.horizontal(|ui| {
                 ui.add_space(32.0);
@@ -717,6 +718,10 @@ fn general(ui: &mut egui::Ui, store: &Store, palette: &Palette, events: &mut Vec
         });
     });
 
+    boxed(ui, palette, |ui| {
+        system_pick_row(ui, true, &catalog, palette, events);
+        system_pick_row(ui, false, &catalog, palette, events);
+    });
     group(ui, "Input", palette);
     let mut vim = prefs.vim;
     toggle_row(
@@ -808,10 +813,6 @@ fn general(ui: &mut egui::Ui, store: &Store, palette: &Palette, events: &mut Vec
     if constellation != prefs.constellation {
         events.push(SettingsEvent::Flip("constellation"));
     }
-    boxed(ui, palette, |ui| {
-        system_pick_row(ui, true, &catalog, palette, events);
-        system_pick_row(ui, false, &catalog, palette, events);
-    });
 }
 
 /// The Agent & Sessions page: the engine's options, grouped as the
@@ -1090,18 +1091,13 @@ fn theme_card(
             egui::CornerRadius::same(4),
             accent,
         );
-        ui.add_space(66.0);
-        ui.horizontal(|ui| {
-            ui.add_space(10.0);
-            ui.add(
-                egui::Label::new(
-                    egui::RichText::new(choice.label())
-                        .size(FS_XS)
-                        .color(palette.ink),
-                )
-                .selectable(false),
-            );
-        });
+        ui.painter().text(
+            egui::pos2(rect.left() + 10.0, rect.top() + 80.0),
+            egui::Align2::LEFT_CENTER,
+            choice.label(),
+            egui::FontId::new(FS_XS, crate::theme::family(crate::theme::FAMILY_BODY_REGULAR)),
+            palette.ink,
+        );
     });
     if response.clicked() {
         events.push(SettingsEvent::Theme(choice));
@@ -1715,13 +1711,15 @@ fn toggle_row(ui: &mut egui::Ui, label: &str, hint: &str, on: &mut bool, palette
         ui.horizontal(|ui| {
             ui.add_space(16.0);
             ui.vertical(|ui| {
+                ui.set_max_width(rect.width() - 110.0);
                 ui.add(
                     egui::Label::new(egui::RichText::new(label).size(FS_SM).color(palette.ink))
                         .selectable(false),
                 );
                 ui.add(
                     egui::Label::new(egui::RichText::new(hint).size(FS_XS).color(palette.muted))
-                        .selectable(false),
+                        .selectable(false)
+                        .wrap(),
                 );
             });
         });
@@ -1749,7 +1747,7 @@ fn table(ui: &mut egui::Ui, rows: &[(String, String)], palette: &Palette) {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         ui.add_space(16.0);
                         ui.spacing_mut().item_spacing.x = 4.0;
-                        for cap in keys.split(' ') {
+                        for cap in keys.split(' ').rev() {
                             key_cap(ui, cap, palette);
                         }
                     });
