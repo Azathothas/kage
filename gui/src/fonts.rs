@@ -43,9 +43,18 @@ pub fn install_cjk_fallback(fonts: &mut egui::FontDefinitions) -> Option<String>
     let mut collection = fontique::Collection::new(CollectionOptions::default());
     collection.load_system_fonts();
     let mut source_cache = fontique::SourceCache::default();
-    let names: Vec<String> = collection.family_names().map(str::to_owned).collect();
-    for name in names {
-        let Some(family) = collection.family_by_name(&name) else {
+    // The platform's own Han fallback first, then every other family in
+    // name order: the name list is a hash map, so its order changes per
+    // run and would pick a different face, with different advances, on
+    // a system that has several.
+    let mut ids: Vec<fontique::FamilyId> = collection
+        .fallback_families(fontique::Script::from_bytes(*b"Hani"))
+        .collect();
+    let mut names: Vec<String> = collection.family_names().map(str::to_owned).collect();
+    names.sort_unstable();
+    ids.extend(names.iter().filter_map(|name| collection.family_id(name)));
+    for id in ids {
+        let Some(family) = collection.family(id) else {
             continue;
         };
         let Some(font) = family.default_font() else {
