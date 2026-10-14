@@ -640,7 +640,7 @@ pub fn pairs(ui: &mut egui::Ui, id: &str, pairs: &mut Pairs, palette: &Palette) 
 }
 
 /// The height of the reference's text input.
-pub(crate) const FIELD_H: f32 = 27.0;
+pub(crate) const FIELD_H: f32 = 28.0;
 
 /// The reference's text input: no box of its own until it holds the
 /// focus, then the focus border with the accent ring around it. `mono`

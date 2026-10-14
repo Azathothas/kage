@@ -442,11 +442,22 @@ fn with_line_height(font: &[u8], ratio: f32) -> Option<(Vec<u8>, f32)> {
 /// them.
 #[must_use]
 pub fn prose_family(ctx: &egui::Context) -> egui::FontFamily {
-    let prose = family(FAMILY_PROSE);
-    if ctx.fonts(|fonts| fonts.definitions().families.contains_key(&prose)) {
-        prose
+    installed_or(ctx, FAMILY_PROSE, egui::FontFamily::Proportional)
+}
+
+/// The semibold prose face's family when the fonts are installed, the
+/// body semibold otherwise.
+#[must_use]
+pub fn prose_semibold_family(ctx: &egui::Context) -> egui::FontFamily {
+    installed_or(ctx, FAMILY_PROSE_SEMIBOLD, family(FAMILY_BODY_SEMIBOLD))
+}
+
+fn installed_or(ctx: &egui::Context, name: &str, fallback: egui::FontFamily) -> egui::FontFamily {
+    let wanted = family(name);
+    if ctx.fonts(|fonts| fonts.definitions().families.contains_key(&wanted)) {
+        wanted
     } else {
-        egui::FontFamily::Proportional
+        fallback
     }
 }
 

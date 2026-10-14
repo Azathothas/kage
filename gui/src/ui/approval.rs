@@ -511,8 +511,7 @@ impl Approval {
                     egui::Label::new(
                         egui::RichText::new(&question.question)
                             .size(FS_BASE)
-                            .line_height(Some(FS_BASE * LINE))
-                            .family(family(FAMILY_BODY_SEMIBOLD))
+                            .family(crate::theme::prose_semibold_family(ui.ctx()))
                             .color(palette.ink_strong),
                     )
                     .wrap(),

@@ -14,7 +14,7 @@ use kage_client::{Session, TranscriptItem, unquote_and_trim};
 
 use crate::store::{FoldersRead, Store};
 use crate::theme::{
-    FAMILY_BODY_REGULAR, FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_SM, FS_XS, LINE, Palette,
+    FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_SM, FS_XS, Palette,
     R_FULL, R_MD, R_SM, R_XL, family,
 };
 use crate::ui::settings_config::{BtnTone, btn_sm_at};
@@ -287,7 +287,7 @@ impl Dialogs {
                 let card = egui::Rect::from_min_size(
                     egui::pos2(
                         (screen.width() - width) / 2.0,
-                        ((screen.height() - last) / 2.0).max(8.0),
+                        ((screen.height() - last) / 2.0).floor().max(8.0),
                     ),
                     egui::vec2(width, 0.0),
                 );
@@ -415,7 +415,7 @@ impl Dialogs {
                 "The agent keeps working until the goal is met, checking it after each turn.",
             )
             .size(FS_SM)
-            .line_height(Some(FS_SM * LINE))
+            .family(crate::theme::prose_family(ui.ctx()))
             .color(palette.muted),
         );
         ui.add_space(10.0);
@@ -474,7 +474,7 @@ impl Dialogs {
                     "The agent will split work into many parallel sub-agents, one per item, and merge their results.",
                 )
                 .size(FS_SM)
-                    .line_height(Some(FS_SM * LINE))
+                    .family(crate::theme::prose_family(ui.ctx()))
                 .color(palette.ink),
             )
             .wrap(),
@@ -488,7 +488,7 @@ impl Dialogs {
                         mode_name("ask")
                     ))
                     .size(13.0)
-                    .line_height(Some(13.0 * LINE))
+                    .family(crate::theme::prose_family(ui.ctx()))
                     .color(palette.muted),
                 )
                 .wrap(),
@@ -558,7 +558,7 @@ impl Dialogs {
                                 egui::Label::new(
                                     egui::RichText::new(&preview.prompt)
                                         .size(FS_SM)
-                                        .line_height(Some(FS_SM * LINE))
+                                        .family(crate::theme::prose_family(ui.ctx()))
                                         .color(palette.ink_strong),
                                 )
                                 .wrap(),
@@ -686,7 +686,7 @@ impl Dialogs {
                     "The current state stays as \"{title} (before rewind)\", and this message goes back in the composer."
                 ))
                 .size(13.0)
-                    .line_height(Some(13.0 * LINE))
+                    .family(crate::theme::prose_family(ui.ctx()))
                 .color(palette.muted),
             )
             .wrap(),
@@ -723,7 +723,7 @@ impl Dialogs {
                     "A folder on the machine kage runs on. The next session opens there.",
                 )
                 .size(FS_SM)
-                .line_height(Some(FS_SM * LINE))
+                .family(crate::theme::prose_family(ui.ctx()))
                 .color(palette.muted),
             )
             .wrap(),
@@ -736,8 +736,8 @@ impl Dialogs {
         );
         let nav = |ui: &mut egui::Ui, right: f32, icon, tip: &str, to: &Option<String>| {
             let rect = egui::Rect::from_min_size(
-                egui::pos2(right - 28.0, row.center().y - 13.0),
-                egui::vec2(28.0, 26.0),
+                egui::pos2(right - 30.0, row.center().y - 13.0),
+                egui::vec2(30.0, 26.0),
             );
             let enabled = to.is_some();
             let response = ui
@@ -801,7 +801,7 @@ impl Dialogs {
                     ui,
                     &mut text,
                     "/path/to/project",
-                    true,
+                    false,
                     focus,
                     palette,
                 )
@@ -838,7 +838,7 @@ impl Dialogs {
             .inner_margin(egui::Margin::same(4))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.set_height(260.0 - 8.0);
+                ui.set_height(260.0 - 10.0);
                 let note = |ui: &mut egui::Ui, text: &str| {
                     egui::Frame::NONE
                         .inner_margin(egui::Margin::symmetric(10, 8))
@@ -901,7 +901,7 @@ fn folder_row(ui: &mut egui::Ui, name: &str, palette: &Palette) -> egui::Respons
         ui,
         name.to_owned(),
         egui::TextFormat::simple(
-            egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
+            egui::FontId::new(FS_SM, crate::theme::prose_family(ui.ctx())),
             palette.ink,
         ),
         rect.right() - 8.0 - x,
