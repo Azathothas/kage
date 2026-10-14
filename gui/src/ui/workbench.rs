@@ -487,7 +487,24 @@ fn empty_block(ui: &mut egui::Ui, icon: crate::icons::Icon, text: &str, palette:
     ui.vertical_centered(|ui| {
         crate::icons::icon(ui, icon, 28.0, palette.faint);
         ui.add_space(10.0);
-        ui.label(egui::RichText::new(text).size(FS_SM).color(palette.faint));
+        // The text on its 21px line, as the reference's block sets it.
+        let galley = ui.painter().layout_no_wrap(
+            text.to_owned(),
+            egui::FontId::new(
+                FS_SM,
+                crate::theme::family(crate::theme::FAMILY_BODY_REGULAR),
+            ),
+            palette.faint,
+        );
+        let line = crate::theme::line_h(FS_SM);
+        let (rect, response) = ui.allocate_exact_size(
+            egui::vec2(galley.size().x.ceil(), line),
+            egui::Sense::hover(),
+        );
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
+        let y = crate::theme::line_y(rect.top(), line, &galley);
+        ui.painter()
+            .galley(egui::pos2(rect.left(), y), galley, palette.faint);
     });
 }
 
@@ -659,12 +676,6 @@ pub fn show(
 ) -> Vec<WorkbenchEvent> {
     let palette = Palette::active_of(ui.ctx());
     let mut events = Vec::new();
-    let panel = ui.max_rect();
-    ui.painter().vline(
-        panel.left() + 0.5,
-        panel.y_range(),
-        egui::Stroke::new(1.0, palette.line),
-    );
     ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
     head(ui, workbench, store, palette, &mut events);
     let Some(session) = store.active_session() else {
@@ -758,7 +769,8 @@ fn head(
         }
     };
     let mut x = bar.left() + 8.0;
-    let mid = bar.center().y;
+    // The middle of what sits above the bottom border.
+    let mid = bar.top() + (bar.height() - 1.0) / 2.0;
     let agent_on = workbench.agent_on();
     for tab in Tab::ALL {
         let on = workbench.tab() == tab && !agent_on;
@@ -814,28 +826,34 @@ fn head(
             workbench.agent_on = true;
         }
     }
+    // The reference's extra small ghost button: 20px, a 12px glyph,
+    // centered above the bottom border and 4px in from the end.
     let close = egui::Rect::from_min_size(
-        egui::pos2(bar.right() - 4.0 - 24.0, mid - 12.0),
-        egui::vec2(24.0, 24.0),
+        egui::pos2(
+            bar.right() - 4.0 - 20.0,
+            crate::theme::snap(bar.top() + (bar.height() - 1.0 - 20.0) / 2.0),
+        ),
+        egui::vec2(20.0, 20.0),
     );
-    let close_response = ui.scope_builder(egui::UiBuilder::new().max_rect(close), |ui| {
-        crate::ui::forms::icon_btn(
-            ui,
-            "Close workbench",
-            crate::icons::Icon::X,
-            24.0,
-            14.0,
-            R_MD,
-            crate::ui::forms::IconTones {
-                fill: egui::Color32::TRANSPARENT,
-                hover_fill: palette.hover,
-                ink: palette.muted,
-                hover_ink: palette.ink,
-            },
-        )
-        .on_hover_text("Close workbench (Ctrl B)")
-    });
-    if close_response.inner.clicked() {
+    // A child of the bar's own room, so drawing the button moves no
+    // cursor under the head.
+    let mut close_ui = ui.new_child(egui::UiBuilder::new().max_rect(close));
+    let close_response = crate::ui::forms::icon_btn(
+        &mut close_ui,
+        "Close workbench",
+        crate::icons::Icon::X,
+        20.0,
+        12.0,
+        R_MD,
+        crate::ui::forms::IconTones {
+            fill: egui::Color32::TRANSPARENT,
+            hover_fill: palette.hover,
+            ink: palette.ink,
+            hover_ink: palette.ink,
+        },
+    )
+    .on_hover_text("Close workbench (Ctrl B)");
+    if close_response.clicked() {
         events.push(WorkbenchEvent::Close);
     }
 }
@@ -884,7 +902,12 @@ fn tab_button(
     if closer {
         width += 6.0 + 15.0;
     }
-    let rect = egui::Rect::from_min_size(egui::pos2(at.x, at.y - 15.0), egui::vec2(width, 30.0));
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(at.x, crate::theme::snap(at.y - 15.0)),
+        egui::vec2(width, 30.0),
+    );
+    // The contents center on the tab as it landed on the pixel grid.
+    let mid = rect.center().y;
     let response = ui
         .interact(rect, ui.id().with(("wb-tab", name)), egui::Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -908,20 +931,23 @@ fn tab_button(
     let mut x = rect.left() + 10.0;
     crate::icons::themed_image(icon, 14.0, ink).paint_snapped(
         ui,
-        egui::Rect::from_min_size(egui::pos2(x, at.y - 7.0), egui::vec2(14.0, 14.0)),
+        egui::Rect::from_min_size(egui::pos2(x, mid - 7.0), egui::vec2(14.0, 14.0)),
     );
     x += 14.0;
     if let Some(label) = label {
         x += 6.0;
         let w = label.size().x;
-        ui.painter()
-            .galley(egui::pos2(x, at.y - label.size().y / 2.0), label, ink);
+        ui.painter().galley(
+            egui::pos2(x, crate::theme::line_y(mid, 0.0, &label)),
+            label,
+            ink,
+        );
         x += w;
     }
     if let Some(count) = count {
         x += 6.0;
         ui.painter().galley(
-            egui::pos2(x, at.y - count.size().y / 2.0),
+            egui::pos2(x, crate::theme::line_y(mid, 0.0, &count)),
             count,
             palette.faint,
         );

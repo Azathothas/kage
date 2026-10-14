@@ -152,8 +152,8 @@ pub fn show(
         let panel = egui::Panel::right("workbench")
             .resizable(true)
             .show_separator_line(false)
-            .default_size(panels.workbench_width + DIVIDER_W)
-            .size_range(200.0 + DIVIDER_W..=f32::MAX)
+            .default_size(panels.workbench_width)
+            .size_range(200.0..=f32::MAX)
             .frame(
                 egui::Frame::NONE
                     .fill(palette.sidebar)
@@ -174,7 +174,9 @@ pub fn show(
             0.0,
             palette.line,
         );
-        panels.workbench_width = (rect.width() - DIVIDER_W).max(200.0);
+        // Here the divider is the panel's own first pixel, as the
+        // reference's handle belongs to the panel after it.
+        panels.workbench_width = rect.width().max(200.0);
     }
 
     // The chat column keeps what is left.
