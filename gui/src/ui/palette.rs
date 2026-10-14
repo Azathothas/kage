@@ -11,12 +11,14 @@
 //! [`Palette::run`] and Escape calls [`Palette::close`]. The query
 //! field inside the modal takes egui's focus, so typing lands in it.
 
+use crate::icons::PaintSnapped as _;
+use crate::ui::forms::ShowCrisp as _;
 use kage_client::Session;
 use serde_json::Value;
 
 use crate::theme::{
-    FAMILY_BODY_MEDIUM, FAMILY_BODY_REGULAR, FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_2XS,
-    FS_SM, FS_XS, Palette as Theme, R_MD, R_XL, family,
+    FAMILY_BODY_MEDIUM, FAMILY_BODY_REGULAR, FS_2XS, FS_SM, FS_XS, Palette as Theme, R_MD, R_XL,
+    family,
 };
 
 /// The dialog's width, the old palette's 620px.
@@ -27,10 +29,6 @@ const DIALOG_MAX_H: f32 = 520.0;
 
 /// The list's height cap, the old palette's 420px.
 const LIST_MAX_H: f32 = 420.0;
-
-/// The line height the old toolkit set its text in, as a multiple of
-/// the font size.
-const LINE: f32 = 1.618;
 
 /// The rows an empty query lists before the rest give way.
 const RECENT_CAP: usize = 5;
@@ -416,16 +414,27 @@ impl Palette {
                 ui.allocate_ui_with_layout(size, layout, |ui| {
                     ui.spacing_mut().item_spacing.x = 10.0;
                     crate::icons::icon(ui, crate::icons::Icon::Search, 16.0, palette.faint);
+                    // The reference's input pads its text 10px in and
+                    // sets the line a whole pixel from the top.
+                    let font = egui::FontId::new(15.0, crate::theme::prose_family(ui.ctx()));
+                    let above = ((size.y - crate::theme::line_h(15.0)) / 2.0) as i8;
                     let field = egui::TextEdit::singleline(&mut self.query)
                         .id(egui::Id::new("kage-palette-query"))
                         .hint_text(
                             egui::RichText::new("Run a command or switch session")
+                                .font(font.clone())
                                 .color(palette.faint),
                         )
                         .text_color(palette.ink_strong)
-                        .font(egui::FontId::new(15.0, family(FAMILY_BODY_REGULAR)))
-                        .frame(egui::Frame::NONE)
-                        .margin(egui::Margin::ZERO)
+                        .font(font)
+                        .frame(egui::Frame::NONE.inner_margin(egui::Margin {
+                            left: 10,
+                            right: 10,
+                            top: above,
+                            bottom: 0,
+                        }))
+                        .vertical_align(egui::Align::TOP)
+                        .min_size(egui::vec2(0.0, size.y))
                         .desired_width(ui.available_width());
                     ui.add(field).request_focus();
                 });
@@ -448,7 +457,7 @@ impl Palette {
                 palette.faint,
             );
             let (rect, _) = ui.allocate_exact_size(
-                egui::vec2(ui.available_width(), FS_SM * LINE + 48.0),
+                egui::vec2(ui.available_width(), crate::theme::line_h(FS_SM) + 48.0),
                 egui::Sense::hover(),
             );
             ui.painter()
@@ -534,7 +543,7 @@ impl Palette {
                         .stroke(egui::Stroke::new(1.0, palette.line))
                         .corner_radius(egui::CornerRadius::same(R_XL as u8))
                         .shadow(palette.shadow_2)
-                        .show(ui, |ui| {
+                        .show_crisp(ui, |ui| {
                             ui.set_width(DIALOG_W - 2.0);
                             ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
                             self.query_row(ui, palette);
@@ -628,19 +637,21 @@ fn divider(ui: &mut egui::Ui, palette: &Theme) {
 
 /// A group's caps label over its rows.
 fn section_label(ui: &mut egui::Ui, label: &str, palette: &Theme) {
-    let line = FS_2XS * LINE;
+    let line = crate::theme::line_h(FS_2XS);
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), 6.0 + line + 3.0),
         egui::Sense::hover(),
     );
     let galley = ui.painter().layout_no_wrap(
         label.to_owned(),
-        egui::FontId::new(FS_2XS, family(FAMILY_BODY_SEMIBOLD)),
+        egui::FontId::new(FS_2XS, crate::theme::prose_semibold_family(ui.ctx())),
         palette.faint,
     );
-    let y = rect.top() + 6.0 + (line - galley.size().y) / 2.0;
-    ui.painter()
-        .galley(egui::pos2(rect.left() + 9.0, y), galley, palette.faint);
+    ui.painter().galley(
+        egui::pos2(rect.left() + 9.0, rect.top() + 6.0),
+        galley,
+        palette.faint,
+    );
 }
 
 /// One row: the icon, the label over its detail, and the shortcut or
@@ -651,23 +662,28 @@ fn entry_row(
     selected: bool,
     palette: &Theme,
 ) -> egui::Response {
+    let prose = crate::theme::prose_family(ui.ctx());
     let (icon, label_font) = match entry {
         PaletteEntry::Action { action, .. } => (
             action_icon(*action),
-            egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
+            egui::FontId::new(FS_SM, prose.clone()),
         ),
         PaletteEntry::Command { .. } => (
             crate::icons::Icon::Command,
-            egui::FontId::new(12.5, family(FAMILY_MONO_REGULAR)),
+            egui::FontId::new(12.5, crate::theme::prose_mono_family(ui.ctx())),
         ),
         PaletteEntry::Session { .. } => (
             crate::icons::Icon::MessageSquare,
-            egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
+            egui::FontId::new(FS_SM, prose.clone()),
         ),
     };
     let detail = entry.detail();
-    let label_h = FS_SM * LINE;
-    let detail_h = if detail.is_empty() { 0.0 } else { FS_XS * LINE };
+    let label_h = crate::theme::line_h(label_font.size);
+    let detail_h = if detail.is_empty() {
+        0.0
+    } else {
+        crate::theme::line_h(FS_XS)
+    };
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), 7.0 + label_h + detail_h + 7.0),
         egui::Sense::click(),
@@ -700,7 +716,7 @@ fn entry_row(
         egui::pos2(rect.left() + 9.0, top + 2.0),
         egui::vec2(14.0, 14.0),
     );
-    crate::icons::themed_image(icon, 14.0, palette.faint).paint_at(ui, icon_rect);
+    crate::icons::themed_image(icon, 14.0, palette.faint).paint_snapped(ui, icon_rect);
     let text_x = icon_rect.right() + 10.0;
     let label = one_line(
         ui,
@@ -709,33 +725,51 @@ fn entry_row(
         palette.ink,
         chip_left - text_x,
     );
-    let y = top + (label_h - label.size().y) / 2.0;
     ui.painter()
-        .galley(egui::pos2(text_x, y), label, palette.ink);
+        .galley(egui::pos2(text_x, top), label, palette.ink);
     if !detail.is_empty() {
         let galley = one_line(
             ui,
             detail,
-            egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR)),
+            egui::FontId::new(FS_XS, prose),
             palette.muted,
             chip_left - text_x,
         );
-        let y = top + label_h + (detail_h - galley.size().y) / 2.0;
         ui.painter()
-            .galley(egui::pos2(text_x, y), galley, palette.muted);
+            .galley(egui::pos2(text_x, top + label_h), galley, palette.muted);
     }
     response
 }
 
+fn kbd_galley(ui: &egui::Ui, label: &str, palette: &Theme) -> std::sync::Arc<egui::Galley> {
+    ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::FontId::new(10.5, crate::theme::prose_mono_family(ui.ctx())),
+        palette.faint,
+    )
+}
+
+/// A key cap's size: 5px either side of the label inside the border,
+/// its width rounded up as the reference rounds text.
+fn kbd_size(galley: &egui::Galley) -> egui::Vec2 {
+    egui::vec2(galley.size().x.ceil() + 12.0, 18.0)
+}
+
+/// A key cap's width for `label`.
+pub(crate) fn kbd_width(ui: &egui::Ui, label: &str, palette: &Theme) -> f32 {
+    kbd_size(&kbd_galley(ui, label, palette)).x
+}
+
 /// Paints the keyboard chip with its right edge and top at `anchor`
 /// and gives back where it landed.
-fn paint_kbd(ui: &egui::Ui, anchor: egui::Pos2, label: &str, palette: &Theme) -> egui::Rect {
-    let galley = ui.painter().layout_no_wrap(
-        label.to_owned(),
-        egui::FontId::new(10.5, family(FAMILY_MONO_REGULAR)),
-        palette.faint,
-    );
-    let size = egui::vec2(galley.size().x + 12.0, 18.0);
+pub(crate) fn paint_kbd(
+    ui: &egui::Ui,
+    anchor: egui::Pos2,
+    label: &str,
+    palette: &Theme,
+) -> egui::Rect {
+    let galley = kbd_galley(ui, label, palette);
+    let size = kbd_size(&galley);
     let rect = egui::Rect::from_min_size(anchor - egui::vec2(size.x, 0.0), size);
     ui.painter().rect_stroke(
         rect,
@@ -743,8 +777,10 @@ fn paint_kbd(ui: &egui::Ui, anchor: egui::Pos2, label: &str, palette: &Theme) ->
         egui::Stroke::new(1.0, palette.line),
         egui::StrokeKind::Inside,
     );
+    // The reference centers the label's line, a pixel taller than the
+    // box inside the border, so the line starts at the box's top.
     ui.painter()
-        .galley(rect.center() - galley.size() / 2.0, galley, palette.faint);
+        .galley(rect.min + egui::vec2(6.0, 0.0), galley, palette.faint);
     rect
 }
 
@@ -756,7 +792,7 @@ fn paint_badge(ui: &egui::Ui, anchor: egui::Pos2, label: &str, palette: &Theme) 
         egui::FontId::new(10.5, family(FAMILY_BODY_MEDIUM)),
         palette.muted,
     );
-    let size = egui::vec2(galley.size().x + 16.0, 10.5 * LINE + 4.0);
+    let size = egui::vec2(galley.size().x + 16.0, crate::theme::line_h(10.5) + 4.0);
     let rect = egui::Rect::from_min_size(anchor - egui::vec2(size.x, 0.0), size);
     let radius = egui::CornerRadius::same((size.y / 2.0) as u8);
     ui.painter().rect_filled(rect, radius, palette.fill);
@@ -773,15 +809,8 @@ fn paint_badge(ui: &egui::Ui, anchor: egui::Pos2, label: &str, palette: &Theme) 
 
 /// The bordered keyboard hint chip of the design.
 pub(crate) fn kbd_chip(ui: &mut egui::Ui, label: &str, palette: &Theme) -> egui::Response {
-    let galley = ui.painter().layout_no_wrap(
-        label.to_owned(),
-        egui::FontId::new(10.5, family(FAMILY_MONO_REGULAR)),
-        palette.faint,
-    );
-    let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(galley.size().x + 12.0, 18.0),
-        egui::Sense::hover(),
-    );
+    let galley = kbd_galley(ui, label, palette);
+    let (rect, response) = ui.allocate_exact_size(kbd_size(&galley), egui::Sense::hover());
     paint_kbd(ui, rect.right_top(), label, palette);
     response
 }
@@ -791,7 +820,15 @@ fn hint(ui: &mut egui::Ui, keys: &str, word: &str, palette: &Theme) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         kbd_chip(ui, keys, palette);
-        ui.label(egui::RichText::new(word).size(FS_2XS).color(palette.faint));
+        let galley = ui.painter().layout_no_wrap(
+            word.to_owned(),
+            egui::FontId::new(FS_2XS, crate::theme::prose_family(ui.ctx())),
+            palette.faint,
+        );
+        let size = egui::vec2(galley.size().x.ceil(), galley.size().y);
+        let (rect, response) = ui.allocate_exact_size(size, egui::Sense::hover());
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, word));
+        ui.painter().galley(rect.min, galley, palette.faint);
     });
 }
 

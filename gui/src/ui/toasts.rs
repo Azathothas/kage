@@ -13,6 +13,7 @@
 //! carry out, because the store stays on the shell's side of this
 //! module's boundary.
 
+use crate::icons::PaintSnapped as _;
 use std::time::Duration;
 
 use kage_client::wire::NoticeTone;
@@ -203,7 +204,7 @@ fn toast_card(ui: &mut egui::Ui, draft: &ToastDraft, palette: &Palette) -> egui:
         egui::Stroke::new(1.0, border),
         egui::StrokeKind::Inside,
     );
-    crate::icons::themed_image(icon, 14.0, color).paint_at(
+    crate::icons::themed_image(icon, 14.0, color).paint_snapped(
         ui,
         egui::Rect::from_min_size(rect.min + egui::vec2(12.0, 12.0), egui::vec2(14.0, 14.0)),
     );

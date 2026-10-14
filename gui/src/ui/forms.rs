@@ -6,6 +6,7 @@
 //! after: setting text lays it out at once, and before the field's first
 //! render that layout uses a font the web cannot resolve.
 
+use crate::icons::PaintSnapped as _;
 use std::collections::BTreeMap;
 
 use crate::theme::{
@@ -310,7 +311,7 @@ pub fn icon_btn(
     let radius = egui::CornerRadius::same(radius.min(size / 2.0) as u8);
     ui.painter().rect_filled(rect, radius, fill);
     let ink = if hovered { tones.hover_ink } else { tones.ink };
-    crate::icons::themed_image(icon, icon_size, ink).paint_at(
+    crate::icons::themed_image(icon, icon_size, ink).paint_snapped(
         ui,
         egui::Rect::from_center_size(rect.center(), egui::vec2(icon_size, icon_size)),
     );
@@ -381,7 +382,7 @@ pub fn add_button(
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
     crate::ui::transcript::text_rows::dashed_rect(ui, rect, 12.0, palette.line);
-    crate::icons::themed_image(icon, 12.0, palette.muted).paint_at(
+    crate::icons::themed_image(icon, 12.0, palette.muted).paint_snapped(
         ui,
         egui::Rect::from_min_size(
             egui::pos2(rect.left() + 8.0, rect.center().y - 6.0),
@@ -643,34 +644,38 @@ pub fn pairs(ui: &mut egui::Ui, id: &str, pairs: &mut Pairs, palette: &Palette) 
 pub(crate) const FIELD_H: f32 = 28.0;
 
 /// The reference's text input: no box of its own until it holds the
-/// focus, then the focus border with the accent ring around it. `mono`
-/// sets it in the mono family; `focus` asks for the focus this frame.
+/// focus, then the focus border with the accent ring around it.
+/// `focus` asks for the focus this frame.
 pub(crate) fn input_field(
     ui: &mut egui::Ui,
     text: &mut String,
     hint: &str,
-    mono: bool,
     focus: bool,
     palette: &Palette,
 ) -> egui::Response {
-    let face = if mono {
-        crate::theme::FAMILY_MONO_REGULAR
-    } else {
-        crate::theme::FAMILY_BODY_REGULAR
-    };
+    let face = crate::theme::prose_family(ui.ctx());
+    // The reference pads 10px inside a 1px border, and sets the line a
+    // whole pixel from the top; centering here would round the line's
+    // offset and its baseline apart, a pixel lower.
+    let above = ((FIELD_H - crate::theme::line_h(FS_SM)) / 2.0) as i8;
     let response = ui.add(
         egui::TextEdit::singleline(text)
             .hint_text(
                 egui::RichText::new(hint)
-                    .font(egui::FontId::new(FS_SM, crate::theme::family(face)))
+                    .font(egui::FontId::new(FS_SM, face.clone()))
                     .color(palette.faint),
             )
-            .frame(egui::Frame::NONE.inner_margin(egui::Margin::symmetric(10, 0)))
+            .frame(egui::Frame::NONE.inner_margin(egui::Margin {
+                left: 11,
+                right: 11,
+                top: above,
+                bottom: 0,
+            }))
             .min_size(egui::vec2(ui.available_width(), FIELD_H))
             .desired_width(f32::INFINITY)
-            .vertical_align(egui::Align::Center)
+            .vertical_align(egui::Align::TOP)
             .text_color(palette.ink)
-            .font(egui::FontId::new(FS_SM, crate::theme::family(face))),
+            .font(egui::FontId::new(FS_SM, face)),
     );
     if focus {
         response.request_focus();
@@ -693,6 +698,48 @@ pub(crate) fn input_field(
         );
     }
     response
+}
+
+/// Showing a stroked frame with its border painted on its own, crisp on
+/// the pixel grid, as the reference draws borders. egui paints a fill
+/// and an inside stroke as one shape, which softens the border into
+/// what is around it.
+pub(crate) trait ShowCrisp {
+    /// Lays the frame out as [`egui::Frame::show`] does, then paints
+    /// its border over the content.
+    fn show_crisp<R>(
+        self,
+        ui: &mut egui::Ui,
+        add: impl FnOnce(&mut egui::Ui) -> R,
+    ) -> egui::InnerResponse<R>;
+}
+
+impl ShowCrisp for egui::Frame {
+    fn show_crisp<R>(
+        self,
+        ui: &mut egui::Ui,
+        add: impl FnOnce(&mut egui::Ui) -> R,
+    ) -> egui::InnerResponse<R> {
+        let stroke = self.stroke;
+        let width = stroke.width.round() as i8;
+        let mut frame = self;
+        frame.stroke = egui::Stroke::NONE;
+        frame.inner_margin = egui::Margin {
+            left: frame.inner_margin.left + width,
+            right: frame.inner_margin.right + width,
+            top: frame.inner_margin.top + width,
+            bottom: frame.inner_margin.bottom + width,
+        };
+        let mut prepared = frame.begin(ui);
+        let inner = add(&mut prepared.content_ui);
+        let edge = frame.widget_rect(prepared.content_ui.min_rect());
+        let response = prepared.end(ui);
+        if !stroke.is_empty() {
+            ui.painter()
+                .rect_stroke(edge, frame.corner_radius, stroke, egui::StrokeKind::Inside);
+        }
+        egui::InnerResponse::new(inner, response)
+    }
 }
 
 #[cfg(test)]

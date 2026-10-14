@@ -9,6 +9,7 @@
 //! shell mounts beside this row, and the plan review itself is
 //! answered on its card in the transcript.
 
+use crate::ui::forms::ShowCrisp as _;
 use kage_client::Session;
 use kage_client::wire::NoticeTone;
 use kage_client::wire::{ContentBlock, SubagentState};
@@ -354,7 +355,7 @@ pub fn show(ui: &mut egui::Ui, store: &Store) -> Vec<DockAction> {
                 .fill(palette.surface)
                 .stroke(egui::Stroke::new(1.0, palette.line))
                 .corner_radius(egui::CornerRadius::same(crate::theme::R_LG as u8))
-                .show(ui, |ui| {
+                .show_crisp(ui, |ui| {
                     ui.set_width(ui.available_width());
                     for (index, row) in queue.iter().enumerate() {
                         queue_row(ui, palette, row, index > 0, steer_tip, &mut actions);
@@ -398,7 +399,7 @@ fn goal_pill(
         .stroke(egui::Stroke::new(1.0, palette.line))
         .corner_radius(egui::CornerRadius::same(crate::theme::R_FULL as u8))
         .inner_margin(egui::Margin::symmetric(10, 0))
-        .show(ui, |ui| {
+        .show_crisp(ui, |ui| {
             ui.set_min_height(PILL_H);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = crate::theme::SP_3;
@@ -450,7 +451,7 @@ fn plan_pill(
         .stroke(egui::Stroke::new(1.0, line))
         .corner_radius(egui::CornerRadius::same(crate::theme::R_FULL as u8))
         .inner_margin(egui::Margin::symmetric(10, 0))
-        .show(ui, |ui| {
+        .show_crisp(ui, |ui| {
             ui.set_min_height(PILL_H);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = crate::theme::SP_3;
@@ -693,7 +694,7 @@ fn pill(
         .stroke(egui::Stroke::new(1.0, palette.line))
         .corner_radius(egui::CornerRadius::same(crate::theme::R_FULL as u8))
         .inner_margin(egui::Margin::symmetric(10, 0))
-        .show(ui, |ui| {
+        .show_crisp(ui, |ui| {
             ui.set_min_height(PILL_H);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = crate::theme::SP_3;

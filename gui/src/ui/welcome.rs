@@ -14,6 +14,7 @@ use crate::assets::{
     GLYPH_FACE_DAWN_PNG, GLYPH_FACE_SHADOW_PNG, WELCOME_GLOW_DAWN_PNG, WELCOME_GLOW_PNG,
 };
 use crate::icons::Icon;
+use crate::icons::PaintSnapped as _;
 use crate::store::Store;
 use crate::theme::{
     FAMILY_BODY_EXTRABOLD, FAMILY_BODY_REGULAR, FAMILY_BODY_SEMIBOLD, FS_2XS, FS_SM, FS_XS,
@@ -179,7 +180,9 @@ impl Welcome {
                 ))
                 .layout(egui::Layout::top_down(egui::Align::Min)),
         );
-        stack.add_space(WELCOME_PAD_TOP + offset);
+        // The reference snaps every box it lays out to a whole pixel.
+        let top = crate::theme::snap(pane.top() + WELCOME_PAD_TOP + offset);
+        stack.add_space(top - pane.top());
         // The height the next frame centers on starts here: the
         // leading pad and offset are the pane's, not the stack's, so
         // counting them would feed the offset back into itself and
@@ -209,33 +212,50 @@ impl Welcome {
         let mut rect = egui::Rect::NOTHING;
         ui.horizontal(|ui| {
             ui.add_space(PILL_ML);
-            let frame = egui::Frame::NONE
-                .fill(if hovered {
-                    palette.hover
-                } else {
-                    palette.surface
-                })
-                .corner_radius(egui::CornerRadius::same(R_MD as u8))
-                .inner_margin(egui::Margin::symmetric(10, 5))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 7.0;
-                        crate::icons::icon(ui, Icon::Folder, 14.0, palette.muted);
-                        ui.label(
-                            egui::RichText::new(crate::ui::sidebar::project_name(
-                                store.session_dir(),
-                            ))
-                            .size(FS_SM)
-                            .color(palette.ink),
-                        );
-                        crate::icons::icon(ui, Icon::ChevronDown, 12.0, palette.faint);
-                    });
-                });
-            let response = ui.interact(frame.response.rect, id, egui::Sense::click());
+            let project = crate::ui::sidebar::project_name(store.session_dir());
+            let name = ui.painter().layout_no_wrap(
+                project.clone(),
+                egui::FontId::new(FS_SM, crate::theme::prose_family(ui.ctx())),
+                palette.ink,
+            );
+            let width = 10.0 + 14.0 + 7.0 + name.size().x.ceil() + 7.0 + 12.0 + 10.0;
+            let (pill, _) = ui.allocate_exact_size(egui::vec2(width, 28.0), egui::Sense::hover());
+            let fill = if hovered {
+                palette.hover
+            } else {
+                palette.surface
+            };
+            ui.painter()
+                .rect_filled(pill, egui::CornerRadius::same(R_MD as u8), fill);
+            let mid = pill.center().y;
+            crate::icons::themed_image(Icon::Folder, 14.0, palette.muted).paint_snapped(
+                ui,
+                egui::Rect::from_min_size(
+                    egui::pos2(pill.left() + 10.0, mid - 7.0),
+                    egui::vec2(14.0, 14.0),
+                ),
+            );
+            let text_x = pill.left() + 10.0 + 14.0 + 7.0;
+            let text_w = name.size().x.ceil();
+            // The line centers in the pill, a whole pixel from its top.
+            let above = ((28.0 - crate::theme::line_h(FS_SM)) / 2.0).floor();
+            ui.painter()
+                .galley(egui::pos2(text_x, pill.top() + above), name, palette.ink);
+            crate::icons::themed_image(Icon::ChevronDown, 12.0, palette.faint).paint_snapped(
+                ui,
+                egui::Rect::from_min_size(
+                    egui::pos2(text_x + text_w + 7.0, mid - 6.0),
+                    egui::vec2(12.0, 12.0),
+                ),
+            );
+            let response = ui.interact(pill, id, egui::Sense::click());
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &project)
+            });
             if response.clicked() {
                 self.project_open = !self.project_open;
             }
-            rect = frame.response.rect;
+            rect = pill;
         });
         rect
     }
@@ -258,7 +278,9 @@ impl Welcome {
             let height = row
                 .iter()
                 .map(|card| {
-                    2.0 * 10.0 + 2.0 + card_text(ui, card, col_w, palette.muted).size().y.max(14.0)
+                    let text = card_text(ui, card, col_w, palette.muted).size().y;
+                    let tag = if card.tag.is_some() { tag_h() } else { 0.0 };
+                    2.0 * 10.0 + 2.0 + text.max(tag).max(14.0)
                 })
                 .fold(0.0, f32::max);
             let (rect, _) = ui.allocate_exact_size(
@@ -313,14 +335,20 @@ impl Welcome {
                 crate::ui::toolbar::surface_in(ui, palette, palette.bg, 5, MENU_W - 10.0, |ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;
                     let (head, header) = ui.allocate_exact_size(
-                        egui::vec2(ui.available_width(), 6.0 + FS_2XS * 1.618 + 3.0),
+                        egui::vec2(
+                            ui.available_width(),
+                            6.0 + crate::theme::line_h(FS_2XS) + 3.0,
+                        ),
                         egui::Sense::hover(),
                     );
                     header.widget_info(|| {
                         egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "PROJECT")
                     });
                     ui.painter().text(
-                        egui::pos2(head.left() + 9.0, head.top() + 6.0 + FS_2XS * 1.618 / 2.0),
+                        egui::pos2(
+                            head.left() + 9.0,
+                            head.top() + 6.0 + crate::theme::line_h(FS_2XS) / 2.0,
+                        ),
                         egui::Align2::LEFT_CENTER,
                         "PROJECT",
                         egui::FontId::new(FS_2XS, family(FAMILY_BODY_SEMIBOLD)),
@@ -387,9 +415,13 @@ fn glow(ui: &mut egui::Ui, pane: egui::Rect, dark: bool) {
             "welcome-glow",
             bytes,
         );
-        ui.painter().image(
+        // The reference's image keeps the square art's aspect: as wide
+        // as the pane and as tall as it is wide, from the pane's top,
+        // clipped to the pane.
+        let square = egui::Rect::from_min_size(pane.min, egui::vec2(pane.width(), pane.width()));
+        ui.painter().with_clip_rect(pane).image(
             tex.id(),
-            pane,
+            square,
             egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
             egui::Color32::WHITE,
         );
@@ -431,7 +463,7 @@ fn wordmark(ui: &mut egui::Ui, palette: &Palette, dark: bool) {
         bytes: patched.into_bytes().into(),
     })
     .fit_to_exact_size(egui::vec2(GLYPH_PX, GLYPH_PX))
-    .paint_at(
+    .paint_snapped(
         ui,
         glyph.translate(egui::vec2(SHADOW_OFFSET, SHADOW_OFFSET)),
     );
@@ -449,7 +481,7 @@ fn wordmark(ui: &mut egui::Ui, palette: &Palette, dark: bool) {
                 GLYPH_FACE_DAWN_PNG
             },
         );
-        egui::Image::new((face.id(), egui::vec2(GLYPH_PX, GLYPH_PX))).paint_at(ui, glyph);
+        egui::Image::new((face.id(), egui::vec2(GLYPH_PX, GLYPH_PX))).paint_snapped(ui, glyph);
     }
     let name_top = glyph.center().y - name.size().y / 2.0;
     let name_left = glyph.right() + WORDMARK_GAP;
@@ -478,14 +510,14 @@ fn card_text(
     width: f32,
     color: egui::Color32,
 ) -> std::sync::Arc<egui::Galley> {
-    let tag_space = card
-        .tag
-        .map_or(0.0, |tag| tag_galley(ui, tag, color).size().x + 14.0 + 10.0);
+    let tag_space = card.tag.map_or(0.0, |tag| {
+        tag_galley(ui, tag, color).size().x.ceil() + 14.0 + 10.0
+    });
     let text_w = (width - 2.0 - 24.0 - 14.0 - 10.0 - tag_space).max(40.0);
     let format = egui::TextFormat {
         font_id: egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
         color,
-        line_height: Some(FS_SM * 1.5),
+        line_height: Some(crate::theme::snap(FS_SM * 1.5)),
         ..Default::default()
     };
     let mut job = egui::text::LayoutJob::single_section(card.text.to_owned(), format);
@@ -528,16 +560,25 @@ fn card_view(
     let ink = if hovered { palette.ink } else { palette.muted };
     let mid = rect.center().y;
     let left = rect.left() + 1.0 + 12.0;
-    crate::icons::themed_image(card.icon, 14.0, palette.faint).paint_at(
+    crate::icons::themed_image(card.icon, 14.0, palette.faint).paint_snapped(
         ui,
         egui::Rect::from_min_size(egui::pos2(left, mid - 7.0), egui::vec2(14.0, 14.0)),
     );
     let text = card_text(ui, card, rect.width(), ink);
-    ui.painter().galley(
-        egui::pos2(left + 14.0 + 10.0, mid - text.size().y / 2.0),
-        text,
-        ink,
-    );
+    // egui sets a line's glyphs at its top; the reference centers them
+    // in the taller line, so the baseline moves down by half the extra.
+    let top = mid - text.size().y / 2.0;
+    let y = text
+        .rows
+        .first()
+        .and_then(|row| row.row.glyphs.first())
+        .map_or(top, |glyph| {
+            let lead = (glyph.line_height - glyph.font_height) / 2.0;
+            crate::theme::snap(top) + crate::theme::snap(lead + glyph.font_face_ascent)
+                - glyph.pos.y
+        });
+    ui.painter()
+        .galley(egui::pos2(left + 14.0 + 10.0, y), text, ink);
     if let Some(tag) = card.tag {
         let (fg, bg) = if tag == "swarm" {
             (palette.done, palette.done_soft)
@@ -556,10 +597,15 @@ fn card_view(
 const CARD_GAP: f32 = 8.0;
 
 /// The tag galley, shared by the space reservation and the paint.
+/// A card tag's height: its line and a pixel above and below.
+fn tag_h() -> f32 {
+    crate::theme::line_h(FS_2XS) + 2.0
+}
+
 fn tag_galley(ui: &egui::Ui, tag: &str, fg: egui::Color32) -> std::sync::Arc<egui::Galley> {
     ui.painter().layout_no_wrap(
         tag.to_owned(),
-        egui::FontId::new(FS_2XS, family(FAMILY_BODY_REGULAR)),
+        egui::FontId::new(FS_2XS, crate::theme::prose_family(ui.ctx())),
         fg,
     )
 }
@@ -568,56 +614,48 @@ fn tag_galley(ui: &egui::Ui, tag: &str, fg: egui::Color32) -> std::sync::Arc<egu
 /// frame drew.
 fn paint_tag(ui: &mut egui::Ui, tag: &str, fg: egui::Color32, bg: egui::Color32, card: egui::Rect) {
     let galley = tag_galley(ui, tag, fg);
-    let width = galley.size().x + 14.0;
-    let height = (galley.size().y + 2.0).max(16.0);
+    let width = galley.size().x.ceil() + 14.0;
     let rect = egui::Rect::from_center_size(
         egui::pos2(card.right() - 13.0 - width / 2.0, card.center().y),
-        egui::vec2(width, height),
+        egui::vec2(width, tag_h()),
     );
     ui.painter()
         .rect_filled(rect, egui::CornerRadius::same(R_FULL as u8), bg);
-    ui.painter().galley(
-        egui::pos2(rect.left() + 7.0, rect.center().y - galley.size().y / 2.0),
-        galley,
-        fg,
-    );
+    ui.painter()
+        .galley(rect.min + egui::vec2(7.0, 1.0), galley, fg);
 }
 
 /// The hint line under the cards: the key cap and what it opens,
 /// centered as one row.
 fn hint(ui: &mut egui::Ui, palette: &Palette) {
-    let chip = ui.painter().layout_no_wrap(
-        "Ctrl K".to_owned(),
-        egui::FontId::new(FS_2XS, family(crate::theme::FAMILY_MONO_REGULAR)),
-        palette.faint,
-    );
     let label = ui.painter().layout_no_wrap(
         "commands and sessions".to_owned(),
         egui::FontId::new(FS_XS, family(crate::theme::FAMILY_BODY_REGULAR)),
         palette.faint,
     );
-    let gap = 4.0;
-    let chip_w = chip.size().x + 12.0;
-    let width = chip_w + gap + label.size().x;
-    let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 20.0), egui::Sense::hover());
-    let left = rect.left() + (rect.width() - width) / 2.0;
-    let mut row = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(egui::Rect::from_min_size(
-                egui::pos2(left, rect.center().y - 10.0),
-                egui::vec2(width, 20.0),
-            ))
-            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    // The row is one line tall, the key cap centered on it and 4px
+    // from the words.
+    let line = crate::theme::line_h(FS_XS);
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), line), egui::Sense::hover());
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "commands and sessions")
+    });
+    let chip_w = crate::ui::palette::kbd_width(ui, "Ctrl K", palette);
+    let width = chip_w + 4.0 + label.size().x.ceil();
+    let left = crate::theme::snap(rect.left() + (rect.width() - width) / 2.0);
+    crate::ui::palette::paint_kbd(
+        ui,
+        egui::pos2(
+            left + chip_w,
+            crate::theme::snap(rect.top() + (line - 18.0) / 2.0),
+        ),
+        "Ctrl K",
+        palette,
     );
-    row.spacing_mut().item_spacing.x = 0.0;
-    crate::ui::palette::kbd_chip(&mut row, "Ctrl K", palette);
-    row.add_space(gap);
-    row.label(
-        egui::RichText::new("commands and sessions")
-            .size(FS_XS)
-            .color(palette.faint),
-    );
+    let y = crate::theme::line_y(rect.top(), line, &label);
+    ui.painter()
+        .galley(egui::pos2(left + chip_w + 4.0, y), label, palette.faint);
 }
 
 /// One project menu row: the folder, its name over its path, and the
@@ -629,15 +667,15 @@ fn project_row(
     dir: &str,
     checked: bool,
 ) -> bool {
-    let name_h = FS_SM * 1.618;
-    let path_h = FS_XS * 1.618;
+    let name_h = crate::theme::line_h(FS_SM);
+    let path_h = crate::theme::line_h(FS_XS);
     let name = crate::ui::sidebar::project_name(Some(dir));
     let (rect, response) = menu_rect(ui, id, name_h + path_h, &name, palette);
     let mid = rect.center().y;
     let mut right = rect.right() - 9.0;
     if checked {
         right -= 14.0;
-        crate::icons::themed_image(Icon::Check, 14.0, palette.accent).paint_at(
+        crate::icons::themed_image(Icon::Check, 14.0, palette.accent).paint_snapped(
             ui,
             egui::Rect::from_min_size(egui::pos2(right, mid - 7.0), egui::vec2(14.0, 14.0)),
         );
@@ -667,7 +705,7 @@ fn project_row(
 
 /// One simple menu row: an icon and a label.
 fn menu_row(ui: &mut egui::Ui, palette: &Palette, id: egui::Id, icon: Icon, label: &str) -> bool {
-    let (rect, response) = menu_rect(ui, id, FS_SM * 1.618, label, palette);
+    let (rect, response) = menu_rect(ui, id, crate::theme::line_h(FS_SM), label, palette);
     let x = paint_menu_icon(ui, rect, icon, palette);
     ui.painter().text(
         egui::pos2(x, rect.center().y),
@@ -707,7 +745,7 @@ fn menu_rect(
 fn paint_menu_icon(ui: &egui::Ui, rect: egui::Rect, icon: Icon, palette: &Palette) -> f32 {
     let at = egui::pos2(rect.left() + 9.0, rect.center().y - 7.0);
     crate::icons::themed_image(icon, 14.0, palette.muted)
-        .paint_at(ui, egui::Rect::from_min_size(at, egui::vec2(14.0, 14.0)));
+        .paint_snapped(ui, egui::Rect::from_min_size(at, egui::vec2(14.0, 14.0)));
     at.x + 14.0 + 10.0
 }
 

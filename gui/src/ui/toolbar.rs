@@ -7,15 +7,19 @@
 //! only what the agent advertised and dims what it did not.
 
 use crate::icons::Icon;
+use crate::icons::PaintSnapped as _;
 use crate::store::Store;
 use crate::theme::{
-    FAMILY_BODY_MEDIUM, FAMILY_BODY_REGULAR, FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_2XS,
-    FS_SM, FS_XS, Palette, R_FULL, R_LG, R_MD, SP_2, SP_4, family,
+    FAMILY_BODY_REGULAR, FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_2XS, FS_SM, FS_XS, Palette,
+    R_FULL, R_LG, R_MD, SP_2, SP_4, family,
 };
+use crate::ui::forms::ShowCrisp as _;
 use crate::ui::pickers;
 
 /// The toolbar's height, the old row's 30px pills.
 const PILL_H: f32 = 30.0;
+/// The send and stop circle's diameter.
+const SEND_D: f32 = 32.0;
 
 /// The popover surface's width.
 const MENU_W: f32 = 440.0;
@@ -258,50 +262,94 @@ pub fn thinking_label(store: &Store) -> Option<String> {
     )
 }
 
-/// One pill: 30px tall, fully round, muted text that fills and inks on
-/// hover or while its popover is open.
-/// One toolbar pill: a framed row of the widgets `body` draws, so the
-/// fill and the contents share one rect and the click covers the whole
-/// pill. Returns the pill's response.
+/// One part of a toolbar pill, in the order it reads left to right.
+enum Part {
+    /// An icon at its size and tint.
+    Icon(Icon, f32, egui::Color32),
+    /// A run of text in its font and color.
+    Text(String, egui::FontId, egui::Color32),
+    /// A square of this side the caller paints into.
+    Room(f32),
+}
+
+/// One toolbar pill as the reference sets it: 30px tall, fully round,
+/// `pad` either side and 6px between its parts, every part centered on
+/// the pill's height. Answers the pill's response and the rects of its
+/// rooms, in order.
 fn pill(
     ui: &mut egui::Ui,
     open: bool,
     palette: &Palette,
-    body: impl FnOnce(&mut egui::Ui),
-) -> egui::Response {
-    // The contents measure first, inside a frame that carries the
-    // pill's fill and shape, and a Button is placed over the measured
-    // rect so the whole pill answers the pointer.
-    let inner = egui::Frame::NONE
-        .fill(if open {
-            palette.hover
-        } else {
-            egui::Color32::TRANSPARENT
+    pad: f32,
+    parts: Vec<Part>,
+) -> (egui::Response, Vec<egui::Rect>) {
+    const GAP: f32 = 6.0;
+    let mut label = String::new();
+    let laid: Vec<(Part, Option<std::sync::Arc<egui::Galley>>)> = parts
+        .into_iter()
+        .map(|part| {
+            let galley = match &part {
+                Part::Text(text, font, color) => {
+                    if !label.is_empty() {
+                        label.push(' ');
+                    }
+                    label.push_str(text);
+                    Some(
+                        ui.painter()
+                            .layout_no_wrap(text.clone(), font.clone(), *color),
+                    )
+                }
+                _ => None,
+            };
+            (part, galley)
         })
-        .corner_radius(egui::CornerRadius::same(R_FULL as u8))
-        .inner_margin(egui::Margin::symmetric(9, 0))
-        .show(ui, |ui| {
-            ui.set_min_height(PILL_H);
-            ui.style_mut().interaction.selectable_labels = false;
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 6.0;
-                body(ui);
-            })
-            .response
-        })
-        .inner;
-    let rect = inner.rect;
-    let id = egui::Id::new("toolbar-pill")
-        .with(rect.left().to_bits())
-        .with(rect.top().to_bits());
-    let response = ui
-        .interact(rect, id, egui::Sense::click())
-        .on_hover_cursor(egui::CursorIcon::PointingHand);
-    if response.hovered() {
+        .collect();
+    let width_of = |part: &Part, galley: &Option<std::sync::Arc<egui::Galley>>| match part {
+        Part::Icon(_, size, _) | Part::Room(size) => *size,
+        Part::Text(..) => galley.as_ref().map_or(0.0, |galley| galley.size().x.ceil()),
+    };
+    let inner: f32 = laid
+        .iter()
+        .map(|(part, galley)| width_of(part, galley))
+        .sum::<f32>()
+        + GAP * laid.len().saturating_sub(1) as f32;
+    let (rect, response) =
+        ui.allocate_exact_size(egui::vec2(pad + inner + pad, PILL_H), egui::Sense::click());
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
+    if open || response.hovered() {
         ui.painter()
             .rect_filled(rect, egui::CornerRadius::same(R_FULL as u8), palette.hover);
     }
-    response
+    let mid = rect.center().y;
+    let mut x = rect.left() + pad;
+    let mut rooms = Vec::new();
+    for (part, galley) in laid {
+        let width = width_of(&part, &galley);
+        match part {
+            Part::Icon(icon, size, tint) => {
+                crate::icons::themed_image(icon, size, tint).paint_snapped(
+                    ui,
+                    egui::Rect::from_min_size(
+                        egui::pos2(x, mid - size / 2.0),
+                        egui::vec2(size, size),
+                    ),
+                );
+            }
+            Part::Text(_, _, color) => {
+                if let Some(galley) = galley {
+                    let y = crate::theme::line_y(rect.top(), PILL_H, &galley);
+                    ui.painter().galley(egui::pos2(x, y), galley, color);
+                }
+            }
+            Part::Room(side) => rooms.push(egui::Rect::from_min_size(
+                egui::pos2(x, mid - side / 2.0),
+                egui::vec2(side, side),
+            )),
+        }
+        x += width + GAP;
+    }
+    (response, rooms)
 }
 
 /// One toolbar pill that only carries a text label, dimmed.
@@ -466,7 +514,7 @@ pub(crate) fn surface_in(
         .corner_radius(egui::CornerRadius::same(R_LG as u8))
         .inner_margin(egui::Margin::same(margin))
         .shadow(palette.shadow_menu)
-        .show(ui, |ui| {
+        .show_crisp(ui, |ui| {
             ui.style_mut().interaction.selectable_labels = false;
             ui.allocate_ui_with_layout(
                 egui::vec2(width, 0.0),
@@ -486,7 +534,7 @@ fn kbd(ui: &mut egui::Ui, label: &str, palette: &Palette) {
         .stroke(egui::Stroke::new(1.0, palette.line))
         .corner_radius(egui::CornerRadius::same(5))
         .inner_margin(egui::Margin::symmetric(5, 2))
-        .show(ui, |ui| ui.label(text));
+        .show_crisp(ui, |ui| ui.label(text));
 }
 
 /// The toolbar row: the plus popover, the mode pill with its plan and
@@ -500,7 +548,14 @@ pub fn show(
     has_text: bool,
 ) -> Vec<ToolbarEvent> {
     let mut events = Vec::new();
-    ui.horizontal(|ui| {
+    // The row is as tall as its tallest control, the send circle, and
+    // the pills center on it.
+    let (row, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), SEND_D),
+        egui::Sense::hover(),
+    );
+    let layout = egui::Layout::left_to_right(egui::Align::Center);
+    ui.scope_builder(egui::UiBuilder::new().max_rect(row).layout(layout), |ui| {
         ui.spacing_mut().item_spacing = egui::vec2(SP_2, 0.0);
         plus_button(ui, toolbar, store, &mut events);
         mode_button(ui, toolbar, store, &mut events);
@@ -509,6 +564,8 @@ pub fn show(
         ui.add_space(SP_2);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             send_button(ui, running, has_text, &mut events);
+            // The send circle's own 4px margin on its left.
+            ui.add_space(4.0);
             model_button(ui, toolbar, store, &mut events);
             compact_button(ui, store, running, &mut events);
             context_ring(ui, toolbar, store, running, &mut events);
@@ -540,7 +597,7 @@ fn plus_button(
         16.0,
         if lit { palette.ink } else { palette.muted },
     )
-    .paint_at(ui, glyph);
+    .paint_snapped(ui, glyph);
     let response = response.on_hover_text("Add");
     if response.clicked() {
         toolbar.toggle_plus();
@@ -794,16 +851,21 @@ fn mode_button(
     let label = mode_label(store, &active);
     let tone = pickers::mode_tone(&active, palette);
     let text_color = tone.unwrap_or(palette.muted);
-    let response = pill(ui, open, palette, |ui| {
-        crate::icons::icon(ui, pickers::mode_icon(&active), 14.0, text_color);
-        ui.label(
-            egui::RichText::new(label)
-                .size(FS_XS + 1.0)
-                .family(family(FAMILY_BODY_MEDIUM))
-                .color(text_color),
-        );
-        crate::icons::icon(ui, Icon::ChevronDown, 12.0, palette.faint);
-    });
+    let (response, _) = pill(
+        ui,
+        open,
+        palette,
+        9.0,
+        vec![
+            Part::Icon(pickers::mode_icon(&active), 14.0, text_color),
+            Part::Text(
+                label,
+                egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
+                text_color,
+            ),
+            Part::Icon(Icon::ChevronDown, 12.0, text_color.gamma_multiply(0.7)),
+        ],
+    );
     let response = response.on_hover_text("Permission mode (Shift+Tab cycles)");
     if response.clicked() {
         toolbar.toggle_picker(Picker::Mode);
@@ -960,7 +1022,7 @@ fn mode_row(
         14.0,
         tone.unwrap_or(palette.muted),
     )
-    .paint_at(
+    .paint_snapped(
         ui,
         egui::Rect::from_center_size(tile.center(), egui::vec2(14.0, 14.0)),
     );
@@ -968,7 +1030,7 @@ fn mode_row(
     if on {
         let check =
             egui::Rect::from_min_size(egui::pos2(right - 14.0, mid - 7.0), egui::vec2(14.0, 14.0));
-        crate::icons::themed_image(Icon::Check, 14.0, palette.accent).paint_at(ui, check);
+        crate::icons::themed_image(Icon::Check, 14.0, palette.accent).paint_snapped(ui, check);
         right = check.left() - 10.0;
     }
     if let Some(verdicts) = pickers::policy(&row.value) {
@@ -1134,7 +1196,7 @@ fn mode_chip(
     let mid = rect.center().y;
     ui.painter()
         .rect_filled(rect, egui::CornerRadius::same(R_FULL as u8), bg);
-    crate::icons::themed_image(icon, 12.0, fg).paint_at(
+    crate::icons::themed_image(icon, 12.0, fg).paint_snapped(
         ui,
         egui::Rect::from_min_size(
             egui::pos2(rect.left() + 9.0, mid - 6.0),
@@ -1167,7 +1229,7 @@ fn mode_chip(
     } else {
         fg.gamma_multiply(0.7)
     };
-    crate::icons::themed_image(Icon::X, 12.0, tint).paint_at(
+    crate::icons::themed_image(Icon::X, 12.0, tint).paint_snapped(
         ui,
         egui::Rect::from_center_size(exit.center(), egui::vec2(12.0, 12.0)),
     );
@@ -1204,17 +1266,12 @@ fn model_button(
         palette.muted
     };
     let font = egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR));
-    let response = pill(ui, open, palette, |ui| {
-        crate::icons::icon(ui, Icon::ChevronDown, 12.0, ink.gamma_multiply(0.7));
-        if let Some(level) = &level {
-            ui.label(
-                egui::RichText::new(format!("\u{b7} {level}"))
-                    .font(font.clone())
-                    .color(palette.faint),
-            );
-        }
-        ui.label(egui::RichText::new(label).font(font).color(ink));
-    });
+    let mut parts = vec![Part::Text(label, font.clone(), ink)];
+    if let Some(level) = &level {
+        parts.push(Part::Text(format!("\u{b7} {level}"), font, palette.faint));
+    }
+    parts.push(Part::Icon(Icon::ChevronDown, 12.0, ink.gamma_multiply(0.7)));
+    let (response, _) = pill(ui, open, palette, 9.0, parts);
     let response = response.on_hover_text("Model and thinking");
     if response.clicked() {
         toolbar.toggle_picker(Picker::Model);
@@ -1680,14 +1737,20 @@ fn compact_button(
         return Some(());
     }
     let palette = Palette::active_of(ui.ctx());
-    let response = pill(ui, false, palette, |ui| {
-        crate::icons::icon(ui, crate::icons::Icon::Layers, 14.0, palette.warn);
-        ui.label(
-            egui::RichText::new("Compact")
-                .size(FS_XS + 1.0)
-                .color(palette.warn),
-        );
-    });
+    let (response, _) = pill(
+        ui,
+        false,
+        palette,
+        9.0,
+        vec![
+            Part::Icon(crate::icons::Icon::Layers, 14.0, palette.warn),
+            Part::Text(
+                "Compact".to_owned(),
+                egui::FontId::new(FS_XS + 1.0, family(FAMILY_BODY_REGULAR)),
+                palette.warn,
+            ),
+        ],
+    );
     if response.clicked() {
         events.push(ToolbarEvent::Compact);
     }
@@ -1738,19 +1801,22 @@ fn context_ring(
     let percent = pickers::fill_percent(used, size);
     let hot = pickers::compacts_soon(used, size);
     let ring = if hot { palette.warn } else { palette.accent };
-    let mut ring_rect = egui::Rect::NOTHING;
-    let response = pill(ui, false, palette, |ui| {
-        ui.label(
-            egui::RichText::new(format!("{percent}%"))
-                .size(FS_2XS)
-                .family(family(FAMILY_MONO_REGULAR))
-                .color(palette.faint),
-        );
-        ring_rect = ui
-            .allocate_exact_size(egui::vec2(RING_D, RING_D), egui::Sense::hover())
-            .0;
-    })
-    .on_hover_text("Context");
+    let (response, rooms) = pill(
+        ui,
+        false,
+        palette,
+        6.0,
+        vec![
+            Part::Room(RING_D),
+            Part::Text(
+                format!("{percent}%"),
+                egui::FontId::new(FS_2XS, family(FAMILY_MONO_REGULAR)),
+                palette.faint,
+            ),
+        ],
+    );
+    let response = response.on_hover_text("Context");
+    let ring_rect = rooms.first().copied().unwrap_or(egui::Rect::NOTHING);
     paint_ring(ui, ring_rect, fill, ring);
     if store.prefs().fuel && response.clicked() {
         toolbar.toggle_gauge();
@@ -2050,7 +2116,7 @@ fn send_button(
             ui,
             "Interrupt",
             Icon::Square,
-            32.0,
+            SEND_D,
             14.0,
             R_FULL,
             crate::ui::forms::IconTones {
@@ -2075,7 +2141,7 @@ fn send_button(
         ui,
         "Send",
         Icon::ArrowUp,
-        32.0,
+        SEND_D,
         14.0,
         R_FULL,
         crate::ui::forms::IconTones {

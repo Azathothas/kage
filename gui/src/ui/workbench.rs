@@ -3,6 +3,8 @@
 //! listing, the announced agents, the shell calls and the fetched
 //! pages, read straight from the session transcript.
 
+use crate::icons::PaintSnapped as _;
+use crate::ui::forms::ShowCrisp as _;
 use std::collections::HashSet;
 
 use kage_client::wire::{ToolCallContent, ToolCallStatus, ToolKind};
@@ -802,7 +804,7 @@ fn head(
             ui.painter()
                 .rect_filled(close, egui::CornerRadius::same(8), palette.fill_hover);
         }
-        crate::icons::themed_image(crate::icons::Icon::X, 11.0, palette.muted).paint_at(
+        crate::icons::themed_image(crate::icons::Icon::X, 11.0, palette.muted).paint_snapped(
             ui,
             egui::Rect::from_center_size(close.center(), egui::vec2(11.0, 11.0)),
         );
@@ -904,7 +906,7 @@ fn tab_button(
         ink
     };
     let mut x = rect.left() + 10.0;
-    crate::icons::themed_image(icon, 14.0, ink).paint_at(
+    crate::icons::themed_image(icon, 14.0, ink).paint_snapped(
         ui,
         egui::Rect::from_min_size(egui::pos2(x, at.y - 7.0), egui::vec2(14.0, 14.0)),
     );
@@ -1002,7 +1004,7 @@ fn changes_pane(
         } else {
             crate::icons::Icon::File
         };
-        crate::icons::themed_image(icon, 14.0, palette.faint).paint_at(
+        crate::icons::themed_image(icon, 14.0, palette.faint).paint_snapped(
             ui,
             egui::Rect::from_min_size(
                 egui::pos2(rect.left() + 14.0, mid - 7.0),
@@ -1048,7 +1050,7 @@ fn changes_pane(
             .hline(bar.x_range(), y, egui::Stroke::new(1.0, palette.subtle));
     }
     let mid = bar.center().y;
-    crate::icons::themed_image(crate::icons::Icon::FileDiff, 14.0, palette.faint).paint_at(
+    crate::icons::themed_image(crate::icons::Icon::FileDiff, 14.0, palette.faint).paint_snapped(
         ui,
         egui::Rect::from_min_size(
             egui::pos2(bar.left() + 14.0, mid - 7.0),
@@ -1233,7 +1235,7 @@ fn files_pane(
         } else {
             crate::icons::Icon::File
         };
-        crate::icons::themed_image(icon, 12.0, palette.faint).paint_at(
+        crate::icons::themed_image(icon, 12.0, palette.faint).paint_snapped(
             ui,
             egui::Rect::from_min_size(egui::pos2(x, mid - 6.0), egui::vec2(12.0, 12.0)),
         );
@@ -1301,7 +1303,7 @@ fn file_preview(
             .hline(bar.x_range(), y, egui::Stroke::new(1.0, palette.subtle));
     }
     let mid = bar.center().y;
-    crate::icons::themed_image(crate::icons::Icon::File, 14.0, palette.faint).paint_at(
+    crate::icons::themed_image(crate::icons::Icon::File, 14.0, palette.faint).paint_snapped(
         ui,
         egui::Rect::from_min_size(
             egui::pos2(bar.left() + 14.0, mid - 7.0),
@@ -1673,7 +1675,7 @@ fn agent_group(
         egui::Sense::hover(),
     );
     let mid = rect.top() + 10.0 + 9.0;
-    crate::icons::themed_image(icon, 12.0, palette.faint).paint_at(
+    crate::icons::themed_image(icon, 12.0, palette.faint).paint_snapped(
         ui,
         egui::Rect::from_min_size(
             egui::pos2(rect.left() + 14.0, mid - 6.0),
@@ -1721,8 +1723,8 @@ fn agent_row(
     palette: &Palette,
     events: &mut Vec<WorkbenchEvent>,
 ) {
-    let name_h = FS_SM * 1.618;
-    let line_h = FS_XS * 1.618;
+    let name_h = crate::theme::line_h(FS_SM);
+    let line_h = crate::theme::line_h(FS_XS);
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), 7.0 + name_h + line_h + 7.0),
         egui::Sense::click(),
@@ -1792,7 +1794,7 @@ fn agent_row(
         state,
         state_color,
     );
-    crate::icons::themed_image(facts.phase.icon(), 12.0, state_color).paint_at(
+    crate::icons::themed_image(facts.phase.icon(), 12.0, state_color).paint_snapped(
         ui,
         egui::Rect::from_min_size(
             egui::pos2(right - state_w - 5.0 - 12.0, top + name_h / 2.0 - 6.0),
@@ -1921,7 +1923,7 @@ fn term_run(ui: &mut egui::Ui, run: &TermEntry, open: bool, palette: &Palette) -
         .fill(palette.deep)
         .stroke(egui::Stroke::new(1.0, palette.line))
         .corner_radius(egui::CornerRadius::same(R_MD as u8))
-        .show(ui, |ui| {
+        .show_crisp(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
             let (head, response) = ui.allocate_exact_size(
@@ -1960,7 +1962,7 @@ fn term_run(ui: &mut egui::Ui, run: &TermEntry, open: bool, palette: &Palette) -
             };
             match mark {
                 Some((icon, color)) => {
-                    crate::icons::themed_image(icon, 12.0, color).paint_at(ui, state);
+                    crate::icons::themed_image(icon, 12.0, color).paint_snapped(ui, state);
                 }
                 None => crate::ui::transcript::head::paint_spinner(ui, state, palette.accent),
             }

@@ -14,6 +14,8 @@
 //! reaches past its own rect. The click that opens or closes a body
 //! comes back through the returned response.
 
+use crate::icons::PaintSnapped as _;
+use crate::ui::forms::ShowCrisp as _;
 use std::time::Duration;
 
 use kage_client::agent_text::{self, AgentText, Report};
@@ -45,8 +47,6 @@ const THINK_LINE: f32 = 20.0;
 const ICON_SM: f32 = 14.0;
 /// The icon size of the design's extra small rows.
 const ICON_XS: f32 = 12.0;
-/// The design's line height over its font size.
-const PHI: f32 = 1.618;
 /// The user row's hover strip: the reference's extra small ghost
 /// buttons, which keep their room while hidden.
 const USER_STRIP_H: f32 = 17.0;
@@ -193,7 +193,7 @@ pub fn render_user(
                             .stroke(egui::Stroke::new(1.0, palette.line))
                             .corner_radius(egui::CornerRadius::same(R_FULL as u8))
                             .inner_margin(egui::Margin::symmetric(SP_4 as i8, 0))
-                            .show(ui, |ui| {
+                            .show_crisp(ui, |ui| {
                                 ui.set_min_height(24.0);
                                 ui.spacing_mut().item_spacing.x = SP_2;
                                 icon_xs(ui, crate::icons::Icon::Paperclip, palette.muted);
@@ -494,8 +494,8 @@ pub fn render_engine_note(ui: &mut egui::Ui, ix: usize, note: &str) -> egui::Res
         egui::vec2(ui.available_width(), galley.size().y),
         egui::Sense::hover(),
     );
-    let first = rect.top() + FS_XS * PHI / 2.0;
-    crate::icons::themed_image(crate::icons::Icon::Info, ICON_XS, palette.faint).paint_at(
+    let first = rect.top() + crate::theme::line_h(FS_XS) / 2.0;
+    crate::icons::themed_image(crate::icons::Icon::Info, ICON_XS, palette.faint).paint_snapped(
         ui,
         egui::Rect::from_min_size(
             egui::pos2(rect.left(), first - ICON_XS / 2.0),
@@ -573,7 +573,7 @@ fn small_text(
     let format = egui::TextFormat {
         font_id: egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR)),
         color,
-        line_height: Some(FS_XS * PHI),
+        line_height: Some(crate::theme::line_h(FS_XS)),
         ..Default::default()
     };
     let mut job = egui::text::LayoutJob::single_section(text.to_owned(), format);
@@ -610,7 +610,7 @@ pub fn render_decision(
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &aria));
     let mid = rect.center().y;
     let mut x = rect.left() + SP_3;
-    crate::icons::themed_image(glyph, ICON_XS, color).paint_at(
+    crate::icons::themed_image(glyph, ICON_XS, color).paint_snapped(
         ui,
         egui::Rect::from_min_size(
             egui::pos2(x, mid - ICON_XS / 2.0),

@@ -16,6 +16,8 @@
 //! caller threads in, the way the old element handlers toggled the
 //! view's own state.
 
+use crate::icons::PaintSnapped as _;
+use crate::ui::forms::ShowCrisp as _;
 use std::time::Duration;
 
 use kage_client::wire::{ContentBlock, NoticeTone, ToolCallStatus};
@@ -63,8 +65,6 @@ const DETAIL_LINE: f32 = 19.0;
 const DIFF_MARKER_W: f32 = 20.0;
 /// The plan card's section padding, top and bottom.
 const PLAN_PY: f32 = 10.0;
-/// The design's line height over its font size.
-const PHI: f32 = 1.618;
 /// The state column of a swarm member row.
 const MEMBER_STATE_W: f32 = 92.0;
 /// The changes card's side padding.
@@ -565,7 +565,7 @@ fn detail(
         .fill(palette.well)
         .stroke(egui::Stroke::new(1.0, palette.line))
         .corner_radius(egui::CornerRadius::same(R_LG as u8))
-        .show(ui, |ui| {
+        .show_crisp(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 0.0;
             if let Some(head) = head {
@@ -579,7 +579,10 @@ fn detail(
                 });
             if let Some(footer) = footer {
                 let (rect, response) = ui.allocate_exact_size(
-                    egui::vec2(ui.available_width(), SP_3 + FS_XS * 1.618 + SP_3),
+                    egui::vec2(
+                        ui.available_width(),
+                        SP_3 + crate::theme::line_h(FS_XS) + SP_3,
+                    ),
                     egui::Sense::click(),
                 );
                 let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -624,7 +627,7 @@ fn detail_head(ui: &mut egui::Ui, head: &DetailHead, palette: &Palette) -> bool 
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(
             ui.available_width(),
-            DETAIL_HEAD_PY + FS_XS * 1.618 + DETAIL_HEAD_PY,
+            DETAIL_HEAD_PY + crate::theme::line_h(FS_XS) + DETAIL_HEAD_PY,
         ),
         egui::Sense::hover(),
     );
@@ -634,7 +637,7 @@ fn detail_head(ui: &mut egui::Ui, head: &DetailHead, palette: &Palette) -> bool 
         egui::Stroke::new(1.0, palette.subtle),
     );
     let mid = rect.center().y;
-    crate::icons::themed_image(head.icon, ICON_XS, palette.muted).paint_at(
+    crate::icons::themed_image(head.icon, ICON_XS, palette.muted).paint_snapped(
         ui,
         egui::Rect::from_min_size(
             egui::pos2(rect.left() + SP_5, mid - ICON_XS / 2.0),
@@ -820,7 +823,7 @@ pub fn render_changes(
         .fill(palette.surface)
         .stroke(egui::Stroke::new(1.0, palette.line))
         .corner_radius(egui::CornerRadius::same(R_LG as u8))
-        .show(ui, |ui| {
+        .show_crisp(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 0.0;
             let (rect, _) = ui
@@ -937,7 +940,7 @@ fn paint_lead(ui: &egui::Ui, row: egui::Rect, glyph: crate::icons::Icon, palette
         egui::pos2(row.left() + CHANGES_PX, row.center().y - ICON_SM / 2.0),
         egui::vec2(ICON_SM, ICON_SM),
     );
-    crate::icons::themed_image(glyph, ICON_SM, palette.faint).paint_at(ui, lead);
+    crate::icons::themed_image(glyph, ICON_SM, palette.faint).paint_snapped(ui, lead);
     lead.right()
 }
 
@@ -1076,7 +1079,7 @@ pub fn render_group(
             .fill(palette.well)
             .stroke(egui::Stroke::new(1.0, palette.line))
             .corner_radius(egui::CornerRadius::same(R_LG as u8))
-            .show(ui, |ui| {
+            .show_crisp(ui, |ui| {
                 ui.set_min_width(ui.available_width());
                 for (n, member) in members.iter().enumerate() {
                     if let Some(TranscriptItem::ToolCall(call)) = session.items.get(*member) {
@@ -1233,7 +1236,7 @@ pub fn render_todos(
             .fill(palette.well)
             .stroke(egui::Stroke::new(1.0, palette.line))
             .corner_radius(egui::CornerRadius::same(R_LG as u8))
-            .show(ui, |ui| {
+            .show_crisp(ui, |ui| {
                 ui.set_min_width(ui.available_width());
                 ui.horizontal_top(|ui| {
                     ui.add_space(DETAIL_INDENT);
@@ -1334,7 +1337,7 @@ pub fn render_plan_card(
         .fill(palette.surface)
         .stroke(egui::Stroke::new(1.0, palette.accent_bd))
         .corner_radius(egui::CornerRadius::same(R_LG as u8))
-        .show(ui, |ui| {
+        .show_crisp(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 0.0;
             toggled = plan_head(ui, &title, state, pending, open, palette).clicked();
@@ -1470,8 +1473,8 @@ fn plan_head(
     open: bool,
     palette: &Palette,
 ) -> egui::Response {
-    let title_h = FS_SM * PHI;
-    let note_h = FS_XS * PHI;
+    let title_h = crate::theme::line_h(FS_SM);
+    let note_h = crate::theme::line_h(FS_XS);
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), title_h + note_h + 2.0 * PLAN_PY),
         egui::Sense::click(),
@@ -1502,7 +1505,7 @@ fn plan_head(
         egui::CornerRadius::same(R_MD as u8),
         palette.accent_soft,
     );
-    crate::icons::themed_image(crate::icons::Icon::PenLine, ICON_SM, palette.accent).paint_at(
+    crate::icons::themed_image(crate::icons::Icon::PenLine, ICON_SM, palette.accent).paint_snapped(
         ui,
         egui::Rect::from_center_size(badge.center(), egui::vec2(ICON_SM, ICON_SM)),
     );
@@ -1512,7 +1515,7 @@ fn plan_head(
     } else {
         crate::icons::Icon::ChevronDown
     };
-    crate::icons::themed_image(chevron, ICON_SM, palette.faint).paint_at(
+    crate::icons::themed_image(chevron, ICON_SM, palette.faint).paint_snapped(
         ui,
         egui::Rect::from_min_size(
             egui::pos2(right, mid - ICON_SM / 2.0),
@@ -1872,7 +1875,7 @@ fn agent_card(
         let at =
             egui::Rect::from_min_size(egui::pos2(right - 14.0, mid - 7.0), egui::vec2(14.0, 14.0));
         crate::icons::themed_image(crate::icons::Icon::ChevronRight, 14.0, palette.faint)
-            .paint_at(ui, at);
+            .paint_snapped(ui, at);
         right = at.left() - 10.0;
     }
     let color = facts.phase.color(palette);
@@ -1890,7 +1893,7 @@ fn agent_card(
         state,
         color,
     );
-    crate::icons::themed_image(facts.phase.icon(), 12.0, color).paint_at(
+    crate::icons::themed_image(facts.phase.icon(), 12.0, color).paint_snapped(
         ui,
         egui::Rect::from_min_size(
             egui::pos2(right - state_w - 5.0 - 12.0, text_top + name_h / 2.0 - 6.0),
@@ -1968,7 +1971,7 @@ fn agent_card(
         } else {
             crate::icons::Icon::CircleX
         };
-        crate::icons::themed_image(glyph, 12.0, palette.muted).paint_at(
+        crate::icons::themed_image(glyph, 12.0, palette.muted).paint_snapped(
             ui,
             egui::Rect::from_min_size(
                 egui::pos2(band.left() + 12.0, mid - 6.0),
@@ -2051,7 +2054,7 @@ fn swarm_card(
         .fill(palette.surface)
         .stroke(egui::Stroke::new(1.0, palette.done_bd))
         .corner_radius(egui::CornerRadius::same(R_LG as u8))
-        .show(ui, |ui| {
+        .show_crisp(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 0.0;
             toggle_click = swarm_head(ui, &description, &sub, counts, open, palette).clicked();
@@ -2238,8 +2241,8 @@ fn swarm_head(
     open: bool,
     palette: &Palette,
 ) -> egui::Response {
-    let title_h = FS_SM * PHI;
-    let note_h = FS_XS * PHI;
+    let title_h = crate::theme::line_h(FS_SM);
+    let note_h = crate::theme::line_h(FS_XS);
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(
             ui.available_width(),
@@ -2271,7 +2274,7 @@ fn swarm_head(
         egui::CornerRadius::same(R_MD as u8),
         palette.done_soft,
     );
-    crate::icons::themed_image(crate::icons::Icon::Waypoints, ICON_SM, palette.done).paint_at(
+    crate::icons::themed_image(crate::icons::Icon::Waypoints, ICON_SM, palette.done).paint_snapped(
         ui,
         egui::Rect::from_center_size(badge.center(), egui::vec2(ICON_SM, ICON_SM)),
     );
@@ -2281,7 +2284,7 @@ fn swarm_head(
     } else {
         crate::icons::Icon::ChevronDown
     };
-    crate::icons::themed_image(chevron, ICON_SM, palette.faint).paint_at(
+    crate::icons::themed_image(chevron, ICON_SM, palette.faint).paint_snapped(
         ui,
         egui::Rect::from_min_size(
             egui::pos2(right, mid - ICON_SM / 2.0),
@@ -2499,7 +2502,7 @@ fn paint_status(
     label: &str,
     color: egui::Color32,
 ) {
-    crate::icons::themed_image(glyph, ICON_XS, color).paint_at(
+    crate::icons::themed_image(glyph, ICON_XS, color).paint_snapped(
         ui,
         egui::Rect::from_min_size(
             egui::pos2(left, mid - ICON_XS / 2.0),

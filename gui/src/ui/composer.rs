@@ -16,6 +16,8 @@
 //! picked row inserts plain text, exactly as the old `pick_slash` and
 //! `pick_mention` did, so the stored value stays byte-identical.
 
+use crate::icons::PaintSnapped as _;
+use crate::ui::forms::ShowCrisp as _;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -647,7 +649,7 @@ fn show_suggestion_menu(
                 .corner_radius(egui::CornerRadius::same(crate::theme::R_LG as u8))
                 .inner_margin(egui::Margin::same(SUGGEST_PAD as i8))
                 .shadow(palette.shadow_menu)
-                .show(ui, |ui| {
+                .show_crisp(ui, |ui| {
                     ui.set_width(width - 2.0 * SUGGEST_PAD - 2.0);
                     egui::ScrollArea::vertical()
                         .max_height(SUGGEST_MAX_H - 2.0 * SUGGEST_PAD - 2.0)
@@ -705,7 +707,7 @@ fn suggest_row(
         );
     }
     let mid = rect.center().y;
-    crate::icons::themed_image(row.icon, 16.0, palette.muted).paint_at(
+    crate::icons::themed_image(row.icon, 16.0, palette.muted).paint_snapped(
         ui,
         egui::Rect::from_min_size(
             egui::pos2(rect.left() + 9.0, mid - 8.0),
@@ -887,7 +889,7 @@ impl Composer {
             .corner_radius(egui::CornerRadius::same(crate::theme::R_COMPOSER as u8))
             .shadow(palette.shadow_input)
             .outer_margin(egui::Margin::ZERO);
-        let response = frame.show(ui, |ui| {
+        let response = frame.show_crisp(ui, |ui| {
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 egui::Frame::NONE

@@ -7,6 +7,7 @@
 //! engine reported, tokens are what the child reported spending, and a
 //! field the wire never carried stays blank.
 
+use crate::ui::forms::ShowCrisp as _;
 use std::time::Duration;
 
 use kage_client::agent_text::{self, AgentText, Report};
@@ -69,7 +70,7 @@ pub fn report_card(ui: &mut egui::Ui, n: usize, report: &Report, palette: &Palet
         .fill(palette.surface)
         .stroke(egui::Stroke::new(1.0, palette.line))
         .corner_radius(egui::CornerRadius::same(R_LG as u8))
-        .show(ui, |ui| {
+        .show_crisp(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 ui.add_space(12.0);
@@ -459,7 +460,7 @@ pub fn agent_card(
         .stroke(egui::Stroke::new(1.0, palette.line))
         .corner_radius(egui::CornerRadius::same(crate::theme::R_LG as u8))
         .inner_margin(egui::Margin::symmetric(12, 10))
-        .show(ui, |ui| {
+        .show_crisp(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 // The avatar tile.
@@ -636,7 +637,7 @@ pub fn swarm_card(
         .stroke(egui::Stroke::new(1.0, palette.line))
         .corner_radius(egui::CornerRadius::same(crate::theme::R_LG as u8))
         .inner_margin(egui::Margin::same(12))
-        .show(ui, |ui| {
+        .show_crisp(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 crate::icons::icon(ui, crate::icons::Icon::Waypoints, 14.0, palette.done);

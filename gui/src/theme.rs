@@ -190,6 +190,57 @@ pub const FAMILY_PROSE_MONO: &str = "kage prose mono";
 /// The reference's line height over the font size.
 pub const LINE: f32 = 1.618;
 
+/// The height of one line of text at `size`, snapped to a whole pixel
+/// as the reference snaps every line.
+#[must_use]
+pub fn line_h(size: f32) -> f32 {
+    snap(size * LINE)
+}
+
+/// Where to paint `galley` so its first line sits as the reference
+/// centers a line in a box `box_h` tall from `top`: the line box and
+/// the baseline in it each snapped to a whole pixel.
+#[must_use]
+pub fn line_y(top: f32, box_h: f32, galley: &egui::Galley) -> f32 {
+    let size = galley
+        .job
+        .sections
+        .first()
+        .map_or(FS_SM, |section| section.format.font_id.size);
+    let line = line_h(size);
+    let line_top = snap(top + (box_h - line) / 2.0);
+    galley
+        .rows
+        .first()
+        .and_then(|row| row.row.glyphs.first())
+        .map_or(line_top, |glyph| {
+            let lead = (line - glyph.font_height) / 2.0;
+            line_top + snap(lead + glyph.font_face_ascent) - glyph.pos.y
+        })
+}
+
+/// How far down to paint `galley`, laid out with a set line height,
+/// so its glyphs sit where the reference centers them in each line:
+/// egui sets them at a line's top and puts the extra below.
+#[must_use]
+pub fn half_lead(galley: &egui::Galley) -> f32 {
+    galley
+        .rows
+        .first()
+        .and_then(|row| row.row.glyphs.first())
+        .map_or(0.0, |glyph| {
+            let lead = (glyph.line_height - glyph.font_height) / 2.0;
+            snap(lead + glyph.font_face_ascent) - glyph.pos.y
+        })
+}
+
+/// `value` snapped to a whole pixel the way the reference snaps text
+/// lines: to the nearest, with a half rounding down.
+#[must_use]
+pub fn snap(value: f32) -> f32 {
+    (value - 0.5).ceil()
+}
+
 /// The registered Inter families, the system-font stand-in behind the
 /// design families.
 pub const FAMILY_INTER_REGULAR: &str = "Inter Regular";
@@ -285,14 +336,10 @@ pub fn install_fonts(ctx: &egui::Context) {
         (FAMILY_PROSE_SEMIBOLD, BODY_SEMIBOLD_TTF),
         (FAMILY_PROSE_MONO, MONO_REGULAR_TTF),
     ] {
-        if let Some((patched, shift)) = with_line_height(bytes, LINE) {
-            let tweak = egui::FontTweak {
-                y_offset_factor: shift,
-                ..Default::default()
-            };
+        if let Some(patched) = with_line_height(bytes, LINE) {
             fonts.font_data.insert(
                 name.to_owned(),
-                Arc::new(egui::FontData::from_owned(patched).tweak(tweak)),
+                Arc::new(egui::FontData::from_owned(patched)),
             );
         }
     }
@@ -399,15 +446,17 @@ pub fn install_fonts(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
 }
 
-/// `font` with its line gap set so a line is `ratio` times the font
-/// size, and the downward shift, as a fraction of the size, that
-/// centers the glyphs in the taller line the way the reference splits
-/// the extra room above and below. `None` when the bytes are not a
-/// font with the tables the metrics come from.
+/// `font` with its ascender and descender grown so a line is `ratio`
+/// times the font size, the extra room split evenly above and below
+/// the glyphs the way the reference centers them. Growing the extents
+/// rather than the line gap puts the half-leading in the baseline, so
+/// it rounds to a pixel with the glyph instead of shifting it by a
+/// fraction. `None` when the bytes are not a font with the tables the
+/// metrics come from.
 ///
-/// Both the hhea gap and the OS/2 typographic gap are set, since the
+/// Both the hhea and the OS/2 typographic metrics are set, since the
 /// shaper reads whichever the font's flags select.
-fn with_line_height(font: &[u8], ratio: f32) -> Option<(Vec<u8>, f32)> {
+fn with_line_height(font: &[u8], ratio: f32) -> Option<Vec<u8>> {
     let u16_at = |at: usize| Some(u16::from_be_bytes([*font.get(at)?, *font.get(at + 1)?]));
     let i16_at = |at: usize| u16_at(at).map(|v| v as i16);
     let table = |tag: &[u8; 4]| {
@@ -424,17 +473,22 @@ fn with_line_height(font: &[u8], ratio: f32) -> Option<(Vec<u8>, f32)> {
     let os2 = table(b"OS/2");
     let em = f32::from(u16_at(head + 18)?);
     let mut out = font.to_vec();
-    let mut set_gap = |at: usize, ascent: i16, descent: i16| {
-        let gap = (ratio * em - f32::from(ascent) + f32::from(descent)).max(0.0) as i16;
-        out[at..at + 2].copy_from_slice(&gap.to_be_bytes());
+    let mut grow = |at: usize| -> Option<()> {
+        let (ascent, descent) = (i16_at(at)?, i16_at(at + 2)?);
+        let extra = (ratio * em - f32::from(ascent) + f32::from(descent)).max(0.0);
+        let above = (extra / 2.0).round();
+        let ascent = (f32::from(ascent) + above) as i16;
+        let descent = (f32::from(descent) - (extra - above)) as i16;
+        out[at..at + 2].copy_from_slice(&ascent.to_be_bytes());
+        out[at + 2..at + 4].copy_from_slice(&descent.to_be_bytes());
+        out[at + 4..at + 6].copy_from_slice(&0i16.to_be_bytes());
+        Some(())
     };
-    let (ascent, descent) = (i16_at(hhea + 4)?, i16_at(hhea + 6)?);
-    set_gap(hhea + 8, ascent, descent);
+    grow(hhea + 4)?;
     if let Some(os2) = os2 {
-        set_gap(os2 + 72, i16_at(os2 + 68)?, i16_at(os2 + 70)?);
+        grow(os2 + 68)?;
     }
-    let natural = (f32::from(ascent) - f32::from(descent)) / em;
-    Some((out, ((ratio - natural) / 2.0).max(0.0)))
+    Some(out)
 }
 
 /// The prose face's family when the fonts are installed, the
@@ -450,6 +504,13 @@ pub fn prose_family(ctx: &egui::Context) -> egui::FontFamily {
 #[must_use]
 pub fn prose_semibold_family(ctx: &egui::Context) -> egui::FontFamily {
     installed_or(ctx, FAMILY_PROSE_SEMIBOLD, family(FAMILY_BODY_SEMIBOLD))
+}
+
+/// The prose mono face's family when the fonts are installed, the
+/// regular mono otherwise.
+#[must_use]
+pub fn prose_mono_family(ctx: &egui::Context) -> egui::FontFamily {
+    installed_or(ctx, FAMILY_PROSE_MONO, family(FAMILY_MONO_REGULAR))
 }
 
 fn installed_or(ctx: &egui::Context, name: &str, fallback: egui::FontFamily) -> egui::FontFamily {
@@ -1304,9 +1365,19 @@ impl ThemeChoice {
 mod tests {
     use super::{
         BODY_REGULAR_TTF, FAMILY_PROSE, FAMILY_PROSE_MONO, FAMILY_PROSE_SEMIBOLD, LINE, Mode,
-        Palette, ThemeChoice, color, corner, family, install_fonts, with_line_height,
+        Palette, ThemeChoice, color, corner, family, install_fonts, line_h, snap, with_line_height,
     };
     use egui::Color32;
+
+    #[test]
+    fn lines_snap_to_whole_pixels_with_halves_rounding_down() {
+        assert_eq!(snap(19.5), 19.0);
+        assert_eq!(snap(19.51), 20.0);
+        assert_eq!(snap(19.0), 19.0);
+        assert_eq!(line_h(13.0), 21.0);
+        assert_eq!(line_h(14.0), 23.0);
+        assert_eq!(line_h(11.0), 18.0);
+    }
 
     #[test]
     fn the_prose_faces_set_lines_at_the_reference_height() {
@@ -1337,11 +1408,7 @@ mod tests {
     #[test]
     fn the_line_height_patch_refuses_what_is_not_a_font() {
         assert!(with_line_height(b"not a font", LINE).is_none());
-        let (_, shift) = with_line_height(BODY_REGULAR_TTF, LINE).expect("the body face patches");
-        assert!(
-            shift > 0.0 && shift < 0.5,
-            "the glyphs move down, by {shift}"
-        );
+        assert!(with_line_height(BODY_REGULAR_TTF, LINE).is_some());
     }
 
     #[test]

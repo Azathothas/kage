@@ -8,6 +8,8 @@
 //! reads the dialog's open state and answers only the shell's own
 //! bindings while no modal is up.
 
+use crate::icons::PaintSnapped as _;
+use crate::ui::forms::ShowCrisp as _;
 use web_time::Instant;
 
 use kage_client::{Session, TranscriptItem, unquote_and_trim};
@@ -318,7 +320,7 @@ impl Dialogs {
                         .stroke(egui::Stroke::new(1.0, palette.line))
                         .corner_radius(egui::CornerRadius::same(R_XL as u8))
                         .shadow(palette.shadow_2)
-                        .show(ui, |ui| {
+                        .show_crisp(ui, |ui| {
                             ui.set_width(width - 2.0);
                             ui.spacing_mut().item_spacing.y = 0.0;
                             let (head, _) = ui.allocate_exact_size(
@@ -334,7 +336,7 @@ impl Dialogs {
                                 egui::CornerRadius::same(R_MD as u8),
                                 bg,
                             );
-                            crate::icons::themed_image(icon, 14.0, fg).paint_at(
+                            crate::icons::themed_image(icon, 14.0, fg).paint_snapped(
                                 ui,
                                 egui::Rect::from_center_size(
                                     badge.center(),
@@ -424,7 +426,6 @@ impl Dialogs {
             ui,
             &mut text,
             "e.g. all retry tests pass three runs in a row",
-            false,
             focus,
             palette,
         );
@@ -618,7 +619,7 @@ impl Dialogs {
                 egui::Frame::NONE
                     .stroke(egui::Stroke::new(1.0, palette.subtle))
                     .corner_radius(egui::CornerRadius::same(12))
-                    .show(ui, |ui| {
+                    .show_crisp(ui, |ui| {
                         ui.set_min_width(ui.available_width());
                         ui.horizontal(|ui| {
                             ui.add_space(12.0);
@@ -768,10 +769,11 @@ impl Dialogs {
                 egui::Stroke::new(1.0, line.gamma_multiply(alpha)),
                 egui::StrokeKind::Inside,
             );
-            crate::icons::themed_image(icon, 14.0, palette.ink.gamma_multiply(alpha)).paint_at(
-                ui,
-                egui::Rect::from_center_size(rect.center(), egui::vec2(14.0, 14.0)),
-            );
+            crate::icons::themed_image(icon, 14.0, palette.ink.gamma_multiply(alpha))
+                .paint_snapped(
+                    ui,
+                    egui::Rect::from_center_size(rect.center(), egui::vec2(14.0, 14.0)),
+                );
             (rect.left(), enabled && response.clicked())
         };
         let (left, home_click) = nav(
@@ -797,14 +799,7 @@ impl Dialogs {
         let field_rect = egui::Rect::from_min_max(row.min, egui::pos2(left - 6.0, row.max.y));
         let response = ui
             .scope_builder(egui::UiBuilder::new().max_rect(field_rect), |ui| {
-                crate::ui::forms::input_field(
-                    ui,
-                    &mut text,
-                    "/path/to/project",
-                    false,
-                    focus,
-                    palette,
-                )
+                crate::ui::forms::input_field(ui, &mut text, "/path/to/project", focus, palette)
             })
             .inner;
         if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
@@ -836,7 +831,7 @@ impl Dialogs {
             .stroke(egui::Stroke::new(1.0, palette.line))
             .corner_radius(egui::CornerRadius::same(R_MD as u8))
             .inner_margin(egui::Margin::same(4))
-            .show(ui, |ui| {
+            .show_crisp(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.set_height(260.0 - 10.0);
                 let note = |ui: &mut egui::Ui, text: &str| {
@@ -879,7 +874,10 @@ impl Dialogs {
 /// One folder of the listing: the folder icon and its name.
 fn folder_row(ui: &mut egui::Ui, name: &str, palette: &Palette) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), 5.0 + FS_SM * 1.618 + 5.0),
+        egui::vec2(
+            ui.available_width(),
+            5.0 + crate::theme::line_h(FS_SM) + 5.0,
+        ),
         egui::Sense::click(),
     );
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -889,7 +887,7 @@ fn folder_row(ui: &mut egui::Ui, name: &str, palette: &Palette) -> egui::Respons
             .rect_filled(rect, egui::CornerRadius::same(R_SM as u8), palette.hover);
     }
     let mid = rect.center().y;
-    crate::icons::themed_image(crate::icons::Icon::Folder, 14.0, palette.muted).paint_at(
+    crate::icons::themed_image(crate::icons::Icon::Folder, 14.0, palette.muted).paint_snapped(
         ui,
         egui::Rect::from_min_size(
             egui::pos2(rect.left() + 8.0, mid - 7.0),

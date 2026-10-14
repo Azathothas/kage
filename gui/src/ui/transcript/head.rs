@@ -7,6 +7,7 @@
 //! otherwise. The head is painted at a fixed height, so it can never
 //! wrap or grow with the space its parent offers.
 
+use crate::icons::PaintSnapped as _;
 use std::f32::consts::TAU;
 use std::sync::Arc;
 
@@ -124,7 +125,7 @@ pub(crate) fn show(ui: &mut egui::Ui, head: Head) -> egui::Response {
     let lead = egui::Rect::from_min_size(egui::pos2(x, mid - ICON / 2.0), egui::vec2(ICON, ICON));
     match head.lead {
         Lead::Icon(icon, color) => {
-            crate::icons::themed_image(icon, ICON, color).paint_at(ui, lead);
+            crate::icons::themed_image(icon, ICON, color).paint_snapped(ui, lead);
         }
         Lead::Spinner(color) => paint_spinner(ui, lead, color),
         Lead::Eclipse => {
@@ -230,7 +231,7 @@ pub(crate) fn icon_button_sized(
     } else {
         palette.muted
     };
-    crate::icons::themed_image(glyph, size, color).paint_at(
+    crate::icons::themed_image(glyph, size, color).paint_snapped(
         ui,
         egui::Rect::from_center_size(rect.center(), egui::vec2(size, size)),
     );
@@ -320,7 +321,7 @@ fn paint_chevron(ui: &egui::Ui, at: egui::Pos2, open: bool, palette: &Palette) {
         Icon::ChevronRight
     };
     crate::icons::themed_image(icon, ICON, palette.faint)
-        .paint_at(ui, egui::Rect::from_min_size(at, egui::vec2(ICON, ICON)));
+        .paint_snapped(ui, egui::Rect::from_min_size(at, egui::vec2(ICON, ICON)));
 }
 
 /// Paints the working spinner into `rect`: an arc turning once every

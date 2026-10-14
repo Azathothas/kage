@@ -6,6 +6,7 @@
 //! go to the engine through `_kage/config/set`, and the snapshot it
 //! answers with redraws the page.
 
+use crate::icons::PaintSnapped as _;
 use std::collections::BTreeMap;
 
 use kage_client::wire::{McpServerStatus, SessionConfigOption};
@@ -593,9 +594,6 @@ enum Hit {
     Switch,
 }
 
-/// The reference's text line height, as a multiple of the size.
-const LINE: f32 = 1.618;
-
 /// Paints a badge with its left edge at `at.x`, centered on `at.y`, and
 /// gives back where it landed.
 fn paint_badge(ui: &egui::Ui, at: egui::Pos2, text: &str, mono: bool, tone: Tone) -> egui::Rect {
@@ -658,8 +656,12 @@ fn list_row(
     clickable: bool,
     palette: &Palette,
 ) -> Hit {
-    let name_h = FS_SM * LINE;
-    let detail_h = if detail.is_some() { FS_XS * LINE } else { 0.0 };
+    let name_h = crate::theme::line_h(FS_SM);
+    let detail_h = if detail.is_some() {
+        crate::theme::line_h(FS_XS)
+    } else {
+        0.0
+    };
     let height = 10.0
         + name_h
         + if detail.is_some() {
@@ -722,7 +724,7 @@ fn list_row(
         }
         Lead::Icon(icon) => {
             let at = egui::Rect::from_min_size(egui::pos2(x, mid - 7.0), egui::vec2(14.0, 14.0));
-            crate::icons::themed_image(*icon, 14.0, palette.faint).paint_at(ui, at);
+            crate::icons::themed_image(*icon, 14.0, palette.faint).paint_snapped(ui, at);
             x = at.right() + 12.0;
         }
         Lead::Dot(color) => {
@@ -929,7 +931,8 @@ fn btn_sm_galley(ui: &egui::Ui, label: &str) -> std::sync::Arc<egui::Galley> {
 
 fn btn_sm_size(galley: &egui::Galley, icon: Option<crate::icons::Icon>) -> egui::Vec2 {
     let icon_w = if icon.is_some() { 12.0 + 6.0 } else { 0.0 };
-    egui::vec2(BTN_PAD + icon_w + galley.size().x + BTN_PAD, 26.0)
+    // The reference rounds a text's measured width up to a whole pixel.
+    egui::vec2(BTN_PAD + icon_w + galley.size().x.ceil() + BTN_PAD, 26.0)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -972,7 +975,7 @@ fn paint_btn_sm(
     );
     let mut x = rect.left() + BTN_PAD;
     if let Some(icon) = icon {
-        crate::icons::themed_image(icon, 12.0, ink).paint_at(
+        crate::icons::themed_image(icon, 12.0, ink).paint_snapped(
             ui,
             egui::Rect::from_min_size(egui::pos2(x, rect.center().y - 6.0), egui::vec2(12.0, 12.0)),
         );
@@ -988,7 +991,7 @@ fn paint_btn_sm(
 fn subgroup(ui: &mut egui::Ui, text: &str, palette: &Palette) {
     ui.add_space(4.0);
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), FS_XS * LINE),
+        egui::vec2(ui.available_width(), crate::theme::line_h(FS_XS)),
         egui::Sense::hover(),
     );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
@@ -1026,7 +1029,7 @@ fn paint_logo(
                 .rect_filled(tile, egui::CornerRadius::same(6), egui::Color32::WHITE);
             egui::Image::new(source)
                 .fit_to_exact_size(egui::vec2(size, size))
-                .paint_at(
+                .paint_snapped(
                     ui,
                     egui::Rect::from_center_size(tile.center(), egui::vec2(size, size)),
                 );
@@ -1038,7 +1041,7 @@ fn paint_logo(
                 egui::vec2(size - 2.0, size - 2.0),
             );
             crate::icons::themed_image(crate::icons::Icon::Bot, size - 2.0, palette.muted)
-                .paint_at(ui, glyph);
+                .paint_snapped(ui, glyph);
             glyph.right()
         }
     }
@@ -1254,7 +1257,7 @@ fn pick_chip(
     let mut x = rect.left() + 9.0;
     match lead {
         Some(ChipLead::Icon(icon)) => {
-            crate::icons::themed_image(icon, 14.0, palette.muted).paint_at(
+            crate::icons::themed_image(icon, 14.0, palette.muted).paint_snapped(
                 ui,
                 egui::Rect::from_min_size(
                     egui::pos2(x, rect.center().y - 7.0),
@@ -1601,7 +1604,7 @@ fn mode_card(
         job.wrap.max_width = width - 24.0;
         ui.painter().layout_job(job)
     });
-    let name_h = FS_SM * LINE;
+    let name_h = crate::theme::line_h(FS_SM);
     let body = name_h + description.as_ref().map_or(0.0, |text| 6.0 + text.size().y);
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(width, (12.0 + body + 12.0).max(84.0)),
@@ -1635,7 +1638,7 @@ fn mode_card(
         palette.ink_strong,
     );
     if on {
-        crate::icons::themed_image(crate::icons::Icon::Check, 14.0, palette.accent).paint_at(
+        crate::icons::themed_image(crate::icons::Icon::Check, 14.0, palette.accent).paint_snapped(
             ui,
             egui::Rect::from_min_size(
                 egui::pos2(rect.right() - 12.0 - 14.0, top + name_h / 2.0 - 7.0),
@@ -1676,7 +1679,10 @@ fn rule_columns(rect: egui::Rect) -> [egui::Rangef; 5] {
 /// The rule table's header row.
 fn rule_header(ui: &mut egui::Ui, palette: &Palette) {
     let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), 8.0 + FS_XS * LINE + 8.0),
+        egui::vec2(
+            ui.available_width(),
+            8.0 + crate::theme::line_h(FS_XS) + 8.0,
+        ),
         egui::Sense::hover(),
     );
     crate::ui::settings::row_rule(ui, rect, palette);
@@ -1785,7 +1791,7 @@ fn glob_chip(ui: &egui::Ui, at: egui::Pos2, glob: &str, tone: Tone) -> egui::Rec
         galley,
         tone.fg,
     );
-    crate::icons::themed_image(crate::icons::Icon::X, 10.0, tone.fg).paint_at(
+    crate::icons::themed_image(crate::icons::Icon::X, 10.0, tone.fg).paint_snapped(
         ui,
         egui::Rect::from_min_size(
             egui::pos2(rect.left() + 7.0 + text_w + 4.0, at.y - 5.0),
@@ -1949,7 +1955,7 @@ fn tool_rule_row(
         egui::pos2(remove_col.center(), mid),
         egui::vec2(RULE_REMOVE_W, 22.0),
     );
-    crate::icons::themed_image(crate::icons::Icon::Trash, 13.0, palette.faint).paint_at(
+    crate::icons::themed_image(crate::icons::Icon::Trash, 13.0, palette.faint).paint_snapped(
         ui,
         egui::Rect::from_center_size(bin.center(), egui::vec2(13.0, 13.0)),
     );
@@ -2015,7 +2021,7 @@ fn server_rule_row(
         egui::pos2(remove_col.center(), mid),
         egui::vec2(RULE_REMOVE_W, 22.0),
     );
-    crate::icons::themed_image(crate::icons::Icon::Trash, 13.0, palette.faint).paint_at(
+    crate::icons::themed_image(crate::icons::Icon::Trash, 13.0, palette.faint).paint_snapped(
         ui,
         egui::Rect::from_center_size(bin.center(), egui::vec2(13.0, 13.0)),
     );
@@ -2286,7 +2292,7 @@ fn grant_chip(ui: &mut egui::Ui, cap: &str, granted: bool, palette: &Palette) ->
     );
     let mut x = rect.left() + 8.0;
     if granted {
-        crate::icons::themed_image(crate::icons::Icon::Check, 12.0, ink).paint_at(
+        crate::icons::themed_image(crate::icons::Icon::Check, 12.0, ink).paint_snapped(
             ui,
             egui::Rect::from_min_size(egui::pos2(x, rect.center().y - 6.0), egui::vec2(12.0, 12.0)),
         );

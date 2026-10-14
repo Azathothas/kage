@@ -1,6 +1,8 @@
 //! The chat column's top bar: the project and session crumbs, the fork
 //! and working pills, and the panel toggles at the far end.
 
+use crate::icons::PaintSnapped as _;
+use crate::ui::forms::ShowCrisp as _;
 use kage_client::Session;
 
 use crate::icons::Icon;
@@ -299,7 +301,7 @@ fn session_menu(
                 .corner_radius(egui::CornerRadius::same(R_MD as u8))
                 .shadow(palette.shadow_menu)
                 .inner_margin(egui::Margin::symmetric(0, MENU_PAD_Y as i8))
-                .show(ui, |ui| {
+                .show_crisp(ui, |ui| {
                     ui.set_width(MENU_W);
                     ui.spacing_mut().item_spacing.y = 0.0;
                     for item in items {
@@ -375,7 +377,7 @@ fn menu_row(
     }
     let ink = if enabled { palette.ink } else { palette.faint };
     let mid = rect.center().y;
-    crate::icons::themed_image(icon, 12.0, ink).paint_at(
+    crate::icons::themed_image(icon, 12.0, ink).paint_snapped(
         ui,
         egui::Rect::from_min_size(
             egui::pos2(rect.left() + 12.0, mid - 6.0),
@@ -413,7 +415,7 @@ fn ghost(
             palette.fill_hover,
         );
     }
-    crate::icons::themed_image(icon, 16.0, palette.ink).paint_at(
+    crate::icons::themed_image(icon, 16.0, palette.ink).paint_snapped(
         ui,
         egui::Rect::from_center_size(rect.center(), egui::vec2(16.0, 16.0)),
     );

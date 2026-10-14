@@ -8,6 +8,7 @@
 //! Escape closes and clears the tint.
 
 use crate::icons::Icon;
+use crate::icons::PaintSnapped as _;
 use crate::theme::{
     FAMILY_BODY_REGULAR, FAMILY_MONO_REGULAR, FS_2XS, FS_SM, Palette, R_LG, family,
 };
@@ -247,7 +248,7 @@ impl FindBar {
         );
         right -= GAP;
         let left = bar.left() + GAP;
-        crate::icons::themed_image(Icon::Search, 14.0, palette.faint).paint_at(
+        crate::icons::themed_image(Icon::Search, 14.0, palette.faint).paint_snapped(
             ui,
             egui::Rect::from_min_size(egui::pos2(left, mid - 7.0), egui::vec2(14.0, 14.0)),
         );

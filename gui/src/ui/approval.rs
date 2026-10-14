@@ -28,6 +28,8 @@
 //! several, choices toggle and `Done` sends them. The whole answer
 //! rides `_meta.kage.question.answer`.
 
+use crate::icons::PaintSnapped as _;
+use crate::ui::forms::ShowCrisp as _;
 use std::collections::{BTreeSet, HashMap};
 
 use kage_client::wire::{PermissionOptionKind, QuestionPrompt};
@@ -36,8 +38,8 @@ use serde_json::Value;
 
 use crate::store::Store;
 use crate::theme::{
-    FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_2XS, FS_BASE, FS_SM, FS_XS, LINE, Palette,
-    R_FULL, R_MD, R_XL, SP_4, family,
+    FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_2XS, FS_BASE, FS_SM, FS_XS, Palette, R_FULL,
+    R_MD, R_XL, SP_4, family,
 };
 
 /// The three tones an option button carries: the filled success for
@@ -276,7 +278,7 @@ impl Approval {
                 .fill(fill)
                 .stroke(egui::Stroke::new(1.0, border))
                 .corner_radius(egui::CornerRadius::same(R_XL as u8))
-                .show(ui, |ui| {
+                .show_crisp(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.spacing_mut().item_spacing.y = 0.0;
                     self.question_body(
@@ -306,7 +308,7 @@ impl Approval {
             .corner_radius(egui::CornerRadius::same(R_XL as u8))
             .shadow(ring)
             .inner_margin(egui::Margin::symmetric(14, 12))
-            .show(ui, |ui| {
+            .show_crisp(ui, |ui| {
                 ui.set_min_width(ui.available_width());
                 // The head: the glyph, the tool title and the byline.
                 ui.horizontal(|ui| {
@@ -479,17 +481,17 @@ impl Approval {
                 ui.spacing_mut().item_spacing.y = 4.0;
                 let chip = ui.painter().layout_no_wrap(
                     question.header.clone(),
-                    egui::FontId::new(FS_2XS, family(crate::theme::FAMILY_BODY_REGULAR)),
+                    egui::FontId::new(FS_2XS, crate::theme::prose_family(ui.ctx())),
                     palette.accent,
                 );
-                let chip_h = FS_2XS * LINE + 2.0;
+                let chip_h = crate::theme::line_h(FS_2XS) + 2.0;
                 let (row, _) = ui.allocate_exact_size(
                     egui::vec2(ui.available_width(), chip_h.max(14.0)),
                     egui::Sense::hover(),
                 );
                 let mid = row.center().y;
                 crate::icons::themed_image(crate::icons::Icon::MessageSquare, 14.0, palette.accent)
-                    .paint_at(
+                    .paint_snapped(
                         ui,
                         egui::Rect::from_min_size(
                             egui::pos2(row.left(), mid - 7.0),
@@ -498,7 +500,7 @@ impl Approval {
                     );
                 let pill = egui::Rect::from_min_size(
                     egui::pos2(row.left() + 14.0 + 8.0, mid - chip_h / 2.0),
-                    egui::vec2(chip.size().x + 16.0, chip_h),
+                    egui::vec2(chip.size().x.ceil() + 16.0, chip_h),
                 );
                 ui.painter().rect_filled(
                     pill,
@@ -506,16 +508,24 @@ impl Approval {
                     palette.accent_soft,
                 );
                 ui.painter()
-                    .galley(pill.center() - chip.size() / 2.0, chip, palette.accent);
-                ui.add(
-                    egui::Label::new(
-                        egui::RichText::new(&question.question)
-                            .size(FS_BASE)
-                            .family(crate::theme::prose_semibold_family(ui.ctx()))
-                            .color(palette.ink_strong),
-                    )
-                    .wrap(),
+                    .galley(pill.min + egui::vec2(8.0, 1.0), chip, palette.accent);
+                let asked = ui.painter().layout(
+                    question.question.clone(),
+                    egui::FontId::new(FS_BASE, crate::theme::prose_semibold_family(ui.ctx())),
+                    palette.ink_strong,
+                    ui.available_width(),
                 );
+                let (rect, response) = ui.allocate_exact_size(
+                    egui::vec2(
+                        ui.available_width(),
+                        asked.rows.len() as f32 * crate::theme::line_h(FS_BASE),
+                    ),
+                    egui::Sense::hover(),
+                );
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &question.question)
+                });
+                ui.painter().galley(rect.min, asked, palette.ink_strong);
             });
         let picked = self.picks(&ask.request_id);
         egui::Frame::NONE
@@ -606,7 +616,6 @@ impl Approval {
                             &mut text,
                             "Answer in your own words...",
                             false,
-                            false,
                             palette,
                         )
                     })
@@ -643,11 +652,11 @@ fn choice_row(
     picked: Option<bool>,
     palette: &Palette,
 ) -> bool {
-    let label_h = FS_SM * LINE;
+    let label_h = crate::theme::line_h(FS_SM);
     let desc_h = if description.is_empty() {
         0.0
     } else {
-        FS_XS * LINE
+        crate::theme::line_h(FS_XS)
     };
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), 6.0 + label_h + desc_h + 6.0),
@@ -662,14 +671,14 @@ fn choice_row(
     if response.hovered() {
         ui.painter().rect_filled(rect, radius, palette.hover);
     }
-    let line_mid = rect.top() + 6.0 + label_h / 2.0;
+    let line_top = rect.top() + 6.0;
     let digit = ui.painter().layout_no_wrap(
         (index + 1).to_string(),
         egui::FontId::new(10.0, family(FAMILY_MONO_REGULAR)),
         palette.muted,
     );
     let cap = egui::Rect::from_min_size(
-        egui::pos2(rect.left() + 8.0, line_mid - 8.0),
+        egui::pos2(rect.left() + 8.0, line_top),
         egui::vec2(digit.size().x + 10.0, 16.0),
     );
     let faded = palette.muted.gamma_multiply(0.6);
@@ -689,9 +698,9 @@ fn choice_row(
             crate::icons::Icon::Circle
         };
         let tint = if on { palette.accent } else { palette.faint };
-        crate::icons::themed_image(glyph, 14.0, tint).paint_at(
+        crate::icons::themed_image(glyph, 14.0, tint).paint_snapped(
             ui,
-            egui::Rect::from_min_size(egui::pos2(x, line_mid - 7.0), egui::vec2(14.0, 14.0)),
+            egui::Rect::from_min_size(egui::pos2(x, line_top), egui::vec2(14.0, 14.0)),
         );
         x += 14.0 + 10.0;
     }
@@ -700,42 +709,31 @@ fn choice_row(
         ui,
         label.to_owned(),
         egui::TextFormat::simple(
-            egui::FontId::new(FS_SM, family(crate::theme::FAMILY_BODY_REGULAR)),
+            egui::FontId::new(FS_SM, crate::theme::prose_family(ui.ctx())),
             palette.ink_strong,
         ),
         width,
     );
-    ui.painter().galley(
-        egui::pos2(x, line_mid - name.size().y / 2.0),
-        name,
-        palette.ink_strong,
-    );
+    ui.painter()
+        .galley(egui::pos2(x, line_top), name, palette.ink_strong);
     if !description.is_empty() {
         let note = crate::ui::transcript::head::one_line(
             ui,
             description.to_owned(),
             egui::TextFormat::simple(
-                egui::FontId::new(FS_XS, family(crate::theme::FAMILY_BODY_REGULAR)),
+                egui::FontId::new(FS_XS, crate::theme::prose_family(ui.ctx())),
                 palette.muted,
             ),
             width,
         );
-        let note_mid = rect.top() + 6.0 + label_h + desc_h / 2.0;
-        let note_rect = egui::Rect::from_center_size(
-            egui::pos2(x + note.size().x / 2.0, note_mid),
-            note.size(),
-        );
+        let note_rect = egui::Rect::from_min_size(egui::pos2(x, line_top + label_h), note.size());
         ui.interact(
             note_rect,
             ui.id().with(("choice-note", index)),
             egui::Sense::hover(),
         )
         .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, description));
-        ui.painter().galley(
-            egui::pos2(x, note_mid - note.size().y / 2.0),
-            note,
-            palette.muted,
-        );
+        ui.painter().galley(note_rect.min, note, palette.muted);
     }
     response.clicked()
 }

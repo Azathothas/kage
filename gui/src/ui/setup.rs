@@ -10,6 +10,7 @@
 
 use crate::gate::MINIMUM_KAGE_VERSION;
 use crate::theme::{FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_SM, FS_XS, Palette, R_LG};
+use crate::ui::forms::ShowCrisp as _;
 use crate::ui::forms::{self, Tone};
 
 /// The ways to install `kage`, with the command or page each names.
@@ -345,7 +346,7 @@ fn boxed(ui: &mut egui::Ui, palette: &Palette, add: impl FnOnce(&mut egui::Ui)) 
         .stroke(egui::Stroke::new(1.0, palette.subtle))
         .corner_radius(egui::CornerRadius::same(R_LG as u8))
         .inner_margin(egui::Margin::symmetric(12, 10))
-        .show(ui, add);
+        .show_crisp(ui, add);
 }
 
 /// The hairline between two rows of a box.

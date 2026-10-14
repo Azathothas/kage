@@ -7,11 +7,11 @@
 //! footnote, raw html) is left to `egui_commonmark`, which [`parse`]
 //! says by returning `None`.
 
+use crate::ui::forms::ShowCrisp as _;
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 use crate::theme::{
-    FAMILY_MONO_REGULAR, FAMILY_PROSE, FAMILY_PROSE_MONO, FAMILY_PROSE_SEMIBOLD, FS_BASE, LINE,
-    Palette, R_LG, family,
+    FAMILY_MONO_REGULAR, FAMILY_PROSE, FAMILY_PROSE_SEMIBOLD, FS_BASE, Palette, R_LG, family,
 };
 
 /// The space between two blocks.
@@ -294,7 +294,10 @@ fn show_at(ui: &mut egui::Ui, block: &Block, palette: &Palette, depth: usize) {
                     })
                     .inner;
                 ui.painter().text(
-                    egui::pos2(item_rect.left(), item_rect.top() + FS_BASE * LINE / 2.0),
+                    egui::pos2(
+                        item_rect.left(),
+                        item_rect.top() + crate::theme::line_h(FS_BASE) / 2.0,
+                    ),
                     egui::Align2::LEFT_CENTER,
                     marker,
                     egui::FontId::new(FS_BASE, family(FAMILY_PROSE)),
@@ -304,7 +307,7 @@ fn show_at(ui: &mut egui::Ui, block: &Block, palette: &Palette, depth: usize) {
         }
         Block::Rule => {
             let (rect, _) = ui.allocate_exact_size(
-                egui::vec2(ui.available_width(), FS_BASE * LINE),
+                egui::vec2(ui.available_width(), crate::theme::line_h(FS_BASE)),
                 egui::Sense::hover(),
             );
             ui.painter().hline(
@@ -339,6 +342,30 @@ fn stack_tight(ui: &mut egui::Ui, blocks: &[Block], palette: &Palette, depth: us
 /// scrolling sideways when a line runs past the width.
 fn code_block(ui: &mut egui::Ui, text: &str, palette: &Palette) {
     let text = text.strip_suffix('\n').unwrap_or(text);
+    // The lines step at the reference's snapped line height, and the
+    // block's text moves down to the baseline it snaps the line to,
+    // where egui would set the glyphs at the line's top.
+    let line = crate::theme::line_h(CODE_SIZE);
+    let job = egui::text::LayoutJob::single_section(
+        text.to_owned(),
+        egui::TextFormat {
+            font_id: egui::FontId::new(CODE_SIZE, family(FAMILY_MONO_REGULAR)),
+            color: palette.ink,
+            line_height: Some(line),
+            ..Default::default()
+        },
+    );
+    let shift = ui
+        .painter()
+        .layout_job(job.clone())
+        .rows
+        .first()
+        .and_then(|row| row.row.glyphs.first())
+        .map_or(0.0, |glyph| {
+            let lead = (line - glyph.font_height) / 2.0;
+            crate::theme::snap(lead + glyph.font_face_ascent) - glyph.pos.y
+        })
+        .clamp(0.0, 9.0) as i8;
     egui::Frame::NONE
         .fill(palette.deep)
         .stroke(egui::Stroke::new(1.0, palette.line))
@@ -346,23 +373,15 @@ fn code_block(ui: &mut egui::Ui, text: &str, palette: &Palette) {
         .inner_margin(egui::Margin {
             left: 12,
             right: 12,
-            top: 9,
-            bottom: 11,
+            top: 9 + shift,
+            bottom: 11 - shift,
         })
-        .show(ui, |ui| {
+        .show_crisp(ui, |ui| {
             ui.set_width(ui.available_width());
             egui::ScrollArea::horizontal()
                 .auto_shrink([false, true])
                 .show(ui, |ui| {
-                    ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(text)
-                                .font(egui::FontId::new(CODE_SIZE, family(FAMILY_PROSE_MONO)))
-                                .color(palette.ink),
-                        )
-                        .extend()
-                        .selectable(true),
-                    );
+                    ui.add(egui::Label::new(job).extend().selectable(true));
                 });
         });
 }

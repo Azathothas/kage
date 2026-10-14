@@ -6,12 +6,14 @@
 //! shell stores; everything about the engine is read from what the
 //! connection reported and says unknown where it reported nothing.
 
+use crate::icons::PaintSnapped as _;
 use crate::prefs::Prefs;
 use crate::store::Store;
 use crate::theme::{
     FAMILY_BODY_BOLD, FAMILY_BODY_MEDIUM, FAMILY_BODY_REGULAR, FAMILY_BODY_SEMIBOLD,
     FAMILY_MONO_REGULAR, FS_SM, FS_XS, Palette, R_LG, R_MD, R_XL, family,
 };
+use crate::ui::forms::ShowCrisp as _;
 use crate::ui::settings_config as config;
 use crate::ui::settings_config::{BtnTone, btn_sm};
 
@@ -26,9 +28,6 @@ const PICK_W: f32 = 220.0;
 const UPDATES_W: f32 = 360.0;
 /// The theme select menu's height cap.
 const PICK_MENU_H: f32 = 280.0;
-/// The line height the reference sets its text in, as a multiple of
-/// the font size.
-const LINE: f32 = 1.618;
 
 /// The pages of the settings dialog, in nav order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -526,9 +525,12 @@ impl SettingsView {
                         .stroke(egui::Stroke::new(1.0, palette.line))
                         .corner_radius(egui::CornerRadius::same(R_XL as u8))
                         .shadow(palette.shadow_2)
-                        .show(ui, |ui| {
-                            ui.set_min_size(card.size());
-                            ui.set_max_size(card.size());
+                        .show_crisp(ui, |ui| {
+                            // The card's size counts its border, as the
+                            // reference's box does.
+                            let size = card.size() - egui::vec2(2.0, 2.0);
+                            ui.set_min_size(size);
+                            ui.set_max_size(size);
                             let inner = ui.max_rect();
                             let nav_rect = egui::Rect::from_min_size(
                                 inner.min,
@@ -681,13 +683,14 @@ fn nav(
         palette.ink_strong,
     );
     let mut y = rect.top() + 16.0 + 4.0;
-    let title_h = 16.0 * LINE;
+    let title_h = crate::theme::line_h(16.0);
     ui.painter().galley(
         egui::pos2(rect.left() + 20.0, y + (title_h - title.size().y) / 2.0),
         title,
         palette.ink_strong,
     );
-    y += title_h + 14.0;
+    // The title's 14px bottom pad and the column's 2px gap.
+    y += title_h + 14.0 + 2.0;
     for section in Section::ALL {
         let on = section == settings.section();
         let row = egui::Rect::from_min_size(
@@ -718,7 +721,7 @@ fn nav(
             palette.muted
         };
         let mid = row.center().y;
-        crate::icons::themed_image(section.icon(), 14.0, ink).paint_at(
+        crate::icons::themed_image(section.icon(), 14.0, ink).paint_snapped(
             ui,
             egui::Rect::from_min_size(
                 egui::pos2(row.left() + 10.0, mid - 7.0),
@@ -730,12 +733,10 @@ fn nav(
             egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
             ink,
         );
-        let label_right = row.left() + 34.0 + label.size().x;
-        ui.painter().galley(
-            egui::pos2(row.left() + 34.0, mid - label.size().y / 2.0),
-            label,
-            ink,
-        );
+        let label_right = row.left() + 34.0 + label.size().x.ceil();
+        let y = crate::theme::line_y(row.top(), row.height(), &label);
+        ui.painter()
+            .galley(egui::pos2(row.left() + 34.0, y), label, ink);
         if badge && section == Section::About {
             paint_badge(
                 ui,
@@ -1159,7 +1160,7 @@ fn stepper(
         let label = if delta < 0.0 { "Less" } else { "More" };
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, live, label));
         let tint = if live { palette.muted } else { palette.ghost };
-        crate::icons::themed_image(icon, 12.0, tint).paint_at(
+        crate::icons::themed_image(icon, 12.0, tint).paint_snapped(
             ui,
             egui::Rect::from_center_size(button.center(), egui::vec2(12.0, 12.0)),
         );
@@ -1266,7 +1267,7 @@ fn theme_select(
     ui.painter()
         .galley(egui::pos2(x, mid - name.size().y / 2.0), name, palette.ink);
     crate::icons::themed_image(crate::icons::Icon::ChevronDown, 12.0, palette.faint)
-        .paint_at(ui, chevron);
+        .paint_snapped(ui, chevron);
     if response.clicked() {
         open = !open;
     }
@@ -1282,7 +1283,7 @@ fn theme_select(
                     .corner_radius(egui::CornerRadius::same(R_LG as u8))
                     .shadow(palette.shadow_menu)
                     .inner_margin(egui::Margin::same(4))
-                    .show(ui, |ui| {
+                    .show_crisp(ui, |ui| {
                         ui.set_width(PICK_W - 8.0);
                         ui.spacing_mut().item_spacing.y = 1.0;
                         egui::ScrollArea::vertical()
@@ -1347,7 +1348,7 @@ fn theme_option(
         let check =
             egui::Rect::from_min_size(egui::pos2(right - 13.0, mid - 6.5), egui::vec2(13.0, 13.0));
         crate::icons::themed_image(crate::icons::Icon::Check, 13.0, palette.accent)
-            .paint_at(ui, check);
+            .paint_snapped(ui, check);
         right = check.left() - 9.0;
     }
     let label = crate::ui::transcript::head::one_line(
@@ -1423,9 +1424,10 @@ fn theme_card(
         }
     };
     let on = prefs.theme == choice;
-    let label_h = FS_XS * LINE;
+    let label_h = crate::theme::line_h(FS_XS);
+    // 8px inside a 1px border around the swatch and the name.
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(THEME_CARD_W, 8.0 + 58.0 + 8.0 + label_h + 8.0),
+        egui::vec2(THEME_CARD_W, 1.0 + 8.0 + 58.0 + 8.0 + label_h + 8.0 + 1.0),
         egui::Sense::click(),
     );
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -1449,15 +1451,29 @@ fn theme_card(
         egui::StrokeKind::Inside,
     );
     let swatch = egui::Rect::from_min_size(
-        rect.min + egui::vec2(8.0, 8.0),
-        egui::vec2(rect.width() - 16.0, 58.0),
+        rect.min + egui::vec2(9.0, 9.0),
+        egui::vec2(rect.width() - 18.0, 58.0),
     );
     let side_w = swatch.width() * 0.28;
-    ui.painter()
-        .rect_filled(swatch, egui::CornerRadius::ZERO, main);
+    let r = R_MD as u8;
+    ui.painter().rect_filled(
+        swatch,
+        egui::CornerRadius {
+            nw: 0,
+            sw: 0,
+            ne: r,
+            se: r,
+        },
+        main,
+    );
     ui.painter().rect_filled(
         egui::Rect::from_min_size(swatch.min, egui::vec2(side_w, swatch.height())),
-        egui::CornerRadius::ZERO,
+        egui::CornerRadius {
+            nw: r,
+            sw: r,
+            ne: 0,
+            se: 0,
+        },
         side,
     );
     let main_w = swatch.width() - side_w;
@@ -1476,14 +1492,11 @@ fn theme_card(
             egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR)),
             palette.ink,
         ),
-        rect.width() - 20.0,
+        rect.width() - 22.0,
     );
-    let top = swatch.bottom() + 8.0;
-    ui.painter().galley(
-        egui::pos2(rect.left() + 10.0, top + (label_h - name.size().y) / 2.0),
-        name,
-        palette.ink,
-    );
+    let y = crate::theme::line_y(swatch.bottom() + 8.0, label_h, &name);
+    ui.painter()
+        .galley(egui::pos2(rect.left() + 11.0, y), name, palette.ink);
     if response.clicked() {
         events.push(SettingsEvent::Theme(choice));
     }
@@ -1647,8 +1660,8 @@ fn connection(ui: &mut egui::Ui, store: &Store, palette: &Palette) {
 
 /// The link's status: the lamp and its word over the link's facts.
 fn status_row(ui: &mut egui::Ui, word: &str, dot: egui::Color32, detail: &str, palette: &Palette) {
-    let word_h = FS_SM * LINE;
-    let detail_h = FS_XS * LINE;
+    let word_h = crate::theme::line_h(FS_SM);
+    let detail_h = crate::theme::line_h(FS_XS);
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 58.0), egui::Sense::hover());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, word));
@@ -1784,8 +1797,12 @@ fn archived(ui: &mut egui::Ui, store: &Store, palette: &Palette, events: &mut Ve
 /// One archived session: its icon, its title over its project, and the
 /// restore button. Answers whether the button was clicked.
 fn archived_row(ui: &mut egui::Ui, title: &str, project: Option<&str>, palette: &Palette) -> bool {
-    let title_h = FS_SM * LINE;
-    let project_h = if project.is_some() { FS_XS * LINE } else { 0.0 };
+    let title_h = crate::theme::line_h(FS_SM);
+    let project_h = if project.is_some() {
+        crate::theme::line_h(FS_XS)
+    } else {
+        0.0
+    };
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), 10.0 + title_h + project_h + 10.0),
         egui::Sense::hover(),
@@ -1793,7 +1810,7 @@ fn archived_row(ui: &mut egui::Ui, title: &str, project: Option<&str>, palette: 
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, title));
     row_rule(ui, rect, palette);
     let mid = rect.center().y;
-    crate::icons::themed_image(crate::icons::Icon::Archive, 14.0, palette.faint).paint_at(
+    crate::icons::themed_image(crate::icons::Icon::Archive, 14.0, palette.faint).paint_snapped(
         ui,
         egui::Rect::from_min_size(
             egui::pos2(rect.left() + 16.0, mid - 7.0),
@@ -2070,13 +2087,14 @@ fn title(ui: &mut egui::Ui, text: &str, palette: &Palette) {
     let (rect, response) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 34.0), egui::Sense::hover());
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
-    ui.painter().text(
-        rect.left_center(),
-        egui::Align2::LEFT_CENTER,
-        text,
+    let galley = ui.painter().layout_no_wrap(
+        text.to_owned(),
         egui::FontId::new(17.0, family(FAMILY_BODY_BOLD)),
         palette.ink_strong,
     );
+    let y = crate::theme::line_y(rect.top(), rect.height(), &galley);
+    ui.painter()
+        .galley(egui::pos2(rect.left(), y), galley, palette.ink_strong);
     ui.add_space(6.0);
 }
 
@@ -2084,17 +2102,18 @@ fn title(ui: &mut egui::Ui, text: &str, palette: &Palette) {
 pub(crate) fn group(ui: &mut egui::Ui, text: &str, palette: &Palette) {
     ui.add_space(22.0);
     let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), FS_SM * LINE),
+        egui::vec2(ui.available_width(), crate::theme::line_h(FS_SM)),
         egui::Sense::hover(),
     );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
-    ui.painter().text(
-        rect.left_center(),
-        egui::Align2::LEFT_CENTER,
-        text,
+    let galley = ui.painter().layout_no_wrap(
+        text.to_owned(),
         egui::FontId::new(FS_SM, family(FAMILY_BODY_SEMIBOLD)),
         palette.ink_strong,
     );
+    let y = crate::theme::line_y(rect.top(), rect.height(), &galley);
+    ui.painter()
+        .galley(egui::pos2(rect.left(), y), galley, palette.ink_strong);
     ui.add_space(8.0);
 }
 
@@ -2117,22 +2136,21 @@ pub(crate) fn boxed(ui: &mut egui::Ui, palette: &Palette, add: impl FnOnce(&mut 
         .fill(palette.surface)
         .stroke(egui::Stroke::new(1.0, palette.subtle))
         .corner_radius(egui::CornerRadius::same(R_LG as u8))
-        .show(ui, |ui| {
+        .show_crisp(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.spacing_mut().item_spacing.y = 0.0;
             add(ui);
         });
 }
 
-/// The hairline a row after the first carries at its top.
+/// The hairline every row carries at its top; under the box's own
+/// border the first row's doubles it, as the reference draws it.
 pub(crate) fn row_rule(ui: &egui::Ui, rect: egui::Rect, palette: &Palette) {
-    if rect.top() > ui.min_rect().top() + 0.5 {
-        ui.painter().hline(
-            rect.x_range(),
-            rect.top() + 0.5,
-            egui::Stroke::new(1.0, palette.subtle),
-        );
-    }
+    ui.painter().hline(
+        rect.x_range(),
+        rect.top() + 0.5,
+        egui::Stroke::new(1.0, palette.subtle),
+    );
 }
 
 /// Lays out one settings row: the label over its wrapped hint at the
@@ -2154,7 +2172,7 @@ fn row_frame(
         let format = egui::TextFormat {
             font_id: egui::FontId::new(size, family(FAMILY_BODY_REGULAR)),
             color,
-            line_height: Some(size * LINE),
+            line_height: Some(crate::theme::line_h(size)),
             ..Default::default()
         };
         let mut job = egui::text::LayoutJob::single_section(text.to_owned(), format);
@@ -2164,18 +2182,31 @@ fn row_frame(
     let name = wrapped(ui, label, FS_SM, palette.ink);
     let help = (!hint.is_empty()).then(|| wrapped(ui, hint, FS_XS, palette.muted));
     let text_h = name.size().y + help.as_ref().map_or(0.0, |help| help.size().y);
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(width, (text_h + 24.0).max(58.0)), sense);
+    // The reference's row: a 1px top border and 12px above and below,
+    // at least 58px, with the text and the control centered on what
+    // is inside.
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(width, (1.0 + 12.0 + text_h + 12.0).max(58.0)),
+        sense,
+    );
     row_rule(ui, rect, palette);
-    let mut y = rect.center().y - text_h / 2.0;
+    let inner = egui::Rect::from_min_max(
+        egui::pos2(rect.left() + 16.0, rect.top() + 13.0),
+        egui::pos2(rect.right() - 16.0, rect.bottom() - 12.0),
+    );
+    let mut y = crate::theme::snap(inner.center().y - text_h / 2.0);
     let name_h = name.size().y;
-    let name_w = name.size().x;
+    let name_w = name.size().x.ceil();
+    let shift = crate::theme::half_lead(&name);
     ui.painter()
-        .galley(egui::pos2(rect.left() + 16.0, y), name, palette.ink);
+        .galley(egui::pos2(inner.left(), y + shift), name, palette.ink);
     if let Some(badge) = badge {
         paint_badge(
             ui,
-            egui::pos2(rect.left() + 16.0 + name_w + 8.0, y + name_h / 2.0),
+            egui::pos2(
+                inner.left() + name_w + 8.0,
+                y + crate::theme::line_h(FS_SM) / 2.0,
+            ),
             badge,
             10.5,
             palette.muted,
@@ -2184,12 +2215,16 @@ fn row_frame(
     }
     y += name_h;
     if let Some(help) = help {
+        let shift = crate::theme::half_lead(&help);
         ui.painter()
-            .galley(egui::pos2(rect.left() + 16.0, y), help, palette.muted);
+            .galley(egui::pos2(inner.left(), y + shift), help, palette.muted);
     }
+    // Under the border to the row's foot: centered on the same line
+    // as the padded inside, and the row's full height, so the control's
+    // scope leaves the cursor below the row.
     let slot = egui::Rect::from_min_max(
-        egui::pos2(rect.left() + 16.0 + text_w + 16.0, rect.top()),
-        egui::pos2(rect.right() - 16.0, rect.bottom()),
+        egui::pos2(inner.left() + text_w + 16.0, rect.top() + 1.0),
+        egui::pos2(inner.right(), rect.bottom()),
     );
     (response, slot)
 }
@@ -2247,7 +2282,10 @@ pub(crate) fn row_with(
 /// end, right-aligned and centered in `slot`.
 pub(crate) fn paint_switch(ui: &egui::Ui, slot: egui::Rect, on: bool, palette: &Palette) {
     let rect = egui::Rect::from_min_size(
-        egui::pos2(slot.right() - 36.0, slot.center().y - 10.0),
+        egui::pos2(
+            slot.right() - 36.0,
+            crate::theme::snap(slot.center().y - 10.0),
+        ),
         egui::vec2(36.0, 20.0),
     );
     let track = if on {
@@ -2297,9 +2335,13 @@ pub(crate) fn paint_badge(
         egui::FontId::new(size, family(FAMILY_BODY_MEDIUM)),
         ink,
     );
+    // The reference's badge: 7px and a 1px border either side, a pixel
+    // and the border above and below one line of text.
+    let line = crate::theme::line_h(size);
+    let height = line + 4.0;
     let rect = egui::Rect::from_min_size(
-        egui::pos2(at.x, at.y - (galley.size().y + 4.0) / 2.0),
-        egui::vec2(galley.size().x + 16.0, galley.size().y + 4.0),
+        egui::pos2(at.x, crate::theme::snap(at.y - height / 2.0)),
+        egui::vec2(galley.size().x.ceil() + 16.0, height),
     );
     let radius = egui::CornerRadius::same((rect.height() / 2.0) as u8);
     ui.painter().rect_filled(rect, radius, palette.fill);
@@ -2309,8 +2351,9 @@ pub(crate) fn paint_badge(
         egui::Stroke::new(1.0, palette.line),
         egui::StrokeKind::Inside,
     );
+    let y = crate::theme::line_y(rect.top() + 2.0, line, &galley);
     ui.painter()
-        .galley(rect.center() - galley.size() / 2.0, galley, ink);
+        .galley(egui::pos2(rect.left() + 8.0, y), galley, ink);
     rect
 }
 
@@ -2319,7 +2362,10 @@ fn table(ui: &mut egui::Ui, rows: &[(String, String)], palette: &Palette) {
     boxed(ui, palette, |ui| {
         for (label, keys) in rows {
             let (rect, response) = ui.allocate_exact_size(
-                egui::vec2(ui.available_width(), 8.0 + FS_SM * LINE + 8.0),
+                egui::vec2(
+                    ui.available_width(),
+                    8.0 + crate::theme::line_h(FS_SM) + 8.0,
+                ),
                 egui::Sense::hover(),
             );
             response

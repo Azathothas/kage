@@ -834,6 +834,21 @@ pub fn themed(ui: &mut egui::Ui, icon: Icon, size: f32) -> egui::Response {
     themed_image(icon, size, palette.ink).ui(ui)
 }
 
+/// Painting an image on the pixel grid, as the reference rounds every
+/// box it lays out, so an icon on a fractional position stays crisp
+/// and lands where the reference draws it.
+pub(crate) trait PaintSnapped {
+    /// Paints the image into `rect` rounded to whole pixels.
+    fn paint_snapped(self, ui: &egui::Ui, rect: egui::Rect);
+}
+
+impl PaintSnapped for egui::Image<'_> {
+    fn paint_snapped(self, ui: &egui::Ui, rect: egui::Rect) {
+        use egui::emath::GuiRounding as _;
+        self.paint_at(ui, rect.round_to_pixels(ui.pixels_per_point()));
+    }
+}
+
 /// The image widget for one icon, for buttons that take an image.
 pub(crate) fn themed_image(icon: Icon, size: f32, color: egui::Color32) -> egui::Image<'static> {
     egui::Image::new(egui::ImageSource::Bytes {

@@ -9,6 +9,7 @@
 //! session is reached through its parent's card and the Agents tab,
 //! never listed on its own.
 
+use crate::icons::PaintSnapped as _;
 use std::collections::{BTreeSet, HashMap};
 
 use kage_client::Session;
@@ -579,7 +580,7 @@ fn nav_row(
         egui::pos2(rect.left() + 8.0 + 8.0, rect.center().y),
         egui::vec2(16.0, 16.0),
     );
-    crate::icons::themed_image(icon, 16.0, palette.ink).paint_at(ui, icon_rect);
+    crate::icons::themed_image(icon, 16.0, palette.ink).paint_snapped(ui, icon_rect);
     let painter = ui.painter();
     painter.text(
         egui::pos2(rect.left() + 35.0, rect.center().y),
@@ -642,7 +643,7 @@ fn list_header(ui: &mut egui::Ui, grouped: bool, events: &mut Vec<SidebarEvent>)
             } else {
                 crate::icons::Icon::Folder
             };
-            crate::icons::themed_image(glyph, 13.0, palette.faint).paint_at(
+            crate::icons::themed_image(glyph, 13.0, palette.faint).paint_snapped(
                 ui,
                 egui::Rect::from_center_size(rect.center(), egui::vec2(13.0, 13.0)),
             );
@@ -760,7 +761,7 @@ fn project_row(
     } else {
         crate::icons::Icon::Folder
     };
-    crate::icons::themed_image(glyph, 14.0, palette.muted).paint_at(ui, folder);
+    crate::icons::themed_image(glyph, 14.0, palette.muted).paint_snapped(ui, folder);
     let mut right = if dir.is_some() {
         plus.left() - 8.0
     } else {
@@ -806,7 +807,7 @@ fn project_row(
         } else {
             palette.faint
         };
-        crate::icons::themed_image(crate::icons::Icon::Plus, 13.0, tint).paint_at(
+        crate::icons::themed_image(crate::icons::Icon::Plus, 13.0, tint).paint_snapped(
             ui,
             egui::Rect::from_center_size(plus.center(), egui::vec2(13.0, 13.0)),
         );
@@ -909,7 +910,8 @@ fn session_row(
     if item.pinned {
         let pin =
             egui::Rect::from_min_size(egui::pos2(right - 11.0, mid - 5.5), egui::vec2(11.0, 11.0));
-        crate::icons::themed_image(crate::icons::Icon::Pin, 11.0, palette.faint).paint_at(ui, pin);
+        crate::icons::themed_image(crate::icons::Icon::Pin, 11.0, palette.faint)
+            .paint_snapped(ui, pin);
         right = pin.left() - 8.0;
     }
     let badge = match item.state {
@@ -943,7 +945,7 @@ fn session_row(
         let at =
             egui::Rect::from_min_size(egui::pos2(right - 12.0, mid - 6.0), egui::vec2(12.0, 12.0));
         crate::icons::themed_image(crate::icons::Icon::Waypoints, 12.0, palette.done)
-            .paint_at(ui, at);
+            .paint_snapped(ui, at);
         right = at.left() - 8.0;
     } else if let Some(when) = ago(item.updated_at.as_deref(), now) {
         let galley = ui.painter().layout_no_wrap(
@@ -976,7 +978,7 @@ fn session_row(
             egui::vec2(11.0, 11.0),
         );
         crate::icons::themed_image(crate::icons::Icon::GitBranch, 11.0, palette.faint)
-            .paint_at(ui, icon);
+            .paint_snapped(ui, icon);
         right = icon.left() - 8.0;
     }
     let mut job = egui::text::LayoutJob::simple_singleline(
@@ -1078,7 +1080,7 @@ fn ghost_icon(
             palette.fill_hover,
         );
     }
-    crate::icons::themed_image(icon, 16.0, palette.ink).paint_at(
+    crate::icons::themed_image(icon, 16.0, palette.ink).paint_snapped(
         ui,
         egui::Rect::from_center_size(rect.center(), egui::vec2(16.0, 16.0)),
     );
