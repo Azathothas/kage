@@ -57,11 +57,13 @@ pub fn install_cjk_fallback(fonts: &mut egui::FontDefinitions) -> Option<String>
         if !covers_cjk(font.charmap_index().charmap(blob.as_ref())) {
             continue;
         }
-        let data = blob.as_ref().to_vec();
-        fonts.font_data.insert(
-            FALLBACK_FAMILY.to_owned(),
-            Arc::new(egui::FontData::from_owned(data)),
-        );
+        // The face may sit inside a collection, as macOS ships its CJK
+        // fonts, so egui must read the same face the charmap came from.
+        let mut data = egui::FontData::from_owned(blob.as_ref().to_vec());
+        data.index = font.index();
+        fonts
+            .font_data
+            .insert(FALLBACK_FAMILY.to_owned(), Arc::new(data));
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
             fonts
                 .families
