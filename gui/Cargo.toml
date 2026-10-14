@@ -96,6 +96,8 @@ compak = "0.2"
 # The native file dialog the setup screen's Browse opens, through the
 # XDG portal. Not on wasm: the browser build never runs a local binary.
 rfd = "0.17"
+# Watches for the error `rfd` logs when no folder picker answers.
+log = "0.4"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # `rand` reaches for `getrandom`, which needs the `wasm_js` feature to

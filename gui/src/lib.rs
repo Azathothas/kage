@@ -26,6 +26,8 @@ pub mod icons;
 pub mod launch;
 mod logos;
 mod modes;
+#[cfg(not(target_arch = "wasm32"))]
+mod picker;
 pub mod prefs;
 // The views that call the paced reveal return with E04; until then its
 // API is carried but unreferenced, and CI denies dead code.

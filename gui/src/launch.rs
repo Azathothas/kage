@@ -677,8 +677,8 @@ pub struct ShellApp {
     pub remote: bool,
     /// The system folder picker's answer, while it is open. Native
     /// only: the browser has no local folders.
-    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-    folder_rx: Option<std::sync::mpsc::Receiver<Option<String>>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    folder_rx: Option<std::sync::mpsc::Receiver<crate::picker::Picked>>,
     /// Whether the check in flight is the daily one, whose answer
     /// raises the update toast. The settings page's own check reports
     /// in place instead.
@@ -807,6 +807,7 @@ impl ShellApp {
             last_update_check: crate::clock::unix_seconds(),
             update_rx: None,
             remote: false,
+            #[cfg(not(target_arch = "wasm32"))]
             folder_rx: None,
             announce_update: false,
             install_rx: None,
@@ -2456,14 +2457,7 @@ impl ShellApp {
         std::thread::Builder::new()
             .name("kage-folder-picker".to_owned())
             .spawn(move || {
-                let mut dialog = rfd::FileDialog::new().set_title("Open folder");
-                if let Some(start) = start {
-                    dialog = dialog.set_directory(start);
-                }
-                let picked = dialog
-                    .pick_folder()
-                    .map(|path| path.to_string_lossy().into_owned());
-                let _ = tx.send(picked);
+                let _ = tx.send(crate::picker::pick_folder(start));
                 ctx.request_repaint();
             })
             .expect("the folder picker thread starts");
@@ -2479,7 +2473,8 @@ impl ShellApp {
 
     /// Takes the folder the system picker answered with, if it has, as
     /// the project the next session opens in. A cancelled picker
-    /// leaves the project as it was.
+    /// leaves the project as it was, and one that failed opens the
+    /// engine's folder listing instead.
     #[cfg(not(target_arch = "wasm32"))]
     fn apply_folder(&mut self) {
         let Some(rx) = &self.folder_rx else {
@@ -2488,8 +2483,17 @@ impl ShellApp {
         match rx.try_recv() {
             Ok(picked) => {
                 self.folder_rx = None;
-                if let Some(path) = picked {
-                    self.shell.store.set_project(Some(path));
+                match picked {
+                    crate::picker::Picked::Folder(path) => {
+                        self.shell.store.set_project(Some(path));
+                    }
+                    crate::picker::Picked::Cancelled => {}
+                    crate::picker::Picked::Failed => {
+                        self.shell.dialogs.show_dialog(
+                            crate::ui::dialog::DialogKind::OpenFolder,
+                            &mut self.shell.store,
+                        );
+                    }
                 }
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
