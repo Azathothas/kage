@@ -2313,6 +2313,7 @@ dependencies = [
  "web-sys",
  "web-time",
  "winresource",
+ "zbus",
 ]
 
 [[package]]

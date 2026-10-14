@@ -8,6 +8,8 @@
 // The icon catalog and the brand art callers return with their views;
 // until then the embeds are carried but unreferenced, and CI denies
 // dead code.
+#[cfg(target_os = "linux")]
+mod appearance;
 #[allow(dead_code)]
 mod assets;
 pub mod clock;

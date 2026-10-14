@@ -2751,6 +2751,8 @@ pub fn run() {
             .with_icon(crate::icon::window_icon().unwrap_or_default()),
         ..Default::default()
     };
+    #[cfg(target_os = "linux")]
+    let appearance = crate::appearance::watch();
     eframe::run_native(
         "kage client",
         options,
@@ -2759,6 +2761,8 @@ pub fn run() {
             app.stream = stream;
             app.remote = remote;
             app.prefs_theme = prefs.theme.clone();
+            #[cfg(target_os = "linux")]
+            appearance.attach(&cc.egui_ctx);
             crate::theme::apply_choice(&prefs.theme, &cc.egui_ctx);
             if let Some(millis) = smoke_millis {
                 app.shell.smoke_deadline =

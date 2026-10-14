@@ -99,6 +99,12 @@ rfd = "0.17"
 # Watches for the error `rfd` logs when no folder picker answers.
 log = "0.4"
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# Reads the desktop's light or dark preference from the settings
+# portal, which winit does not report on Linux. Already in the tree
+# through accesskit, with the same executor.
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # `rand` reaches for `getrandom`, which needs the `wasm_js` feature to
 # draw from the browser's crypto. Declared here so the feature
