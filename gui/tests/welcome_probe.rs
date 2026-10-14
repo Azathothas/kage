@@ -173,9 +173,9 @@ fn the_pane_leaves_the_composer_its_band_and_the_stack_sits_above_it() {
         "the cards keep inside the pane, at {:?}",
         card.rect()
     );
-    harness
-        .render()
-        .expect("the frame renders")
-        .save("/tmp/welcome-pane.png")
-        .expect("the pane view saves");
+    let img = harness.render().expect("the frame renders");
+    if std::env::var_os("KAGE_PROBE_PNG").is_some() {
+        img.save("/tmp/welcome-pane.png")
+            .expect("the pane view saves");
+    }
 }

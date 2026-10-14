@@ -143,7 +143,6 @@ fn the_model_picker_rows_never_overlap() {
     harness.run();
     harness.run();
     let img = harness.render().expect("the picker renders");
-    img.save("/tmp/model-picker.png").expect("save");
 
     // The surface's shadow is black at 60 percent. A regression once
     // turned `0x00000099` into the opaque blue `#000099`, which bled a

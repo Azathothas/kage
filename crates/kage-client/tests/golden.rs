@@ -169,6 +169,62 @@ fn turn_reason(item: &TranscriptItem) -> Option<kage_acp_wire::TurnReason> {
     }
 }
 
+/// The ten items the fix fixture's prompt leaves in the transcript.
+fn assert_fix_items(items: &[TranscriptItem]) {
+    assert_eq!(items.len(), 10, "{items:#?}");
+    let read = match &items[0] {
+        TranscriptItem::ToolCall(call) => call,
+        other => panic!("expected the read, got {other:?}"),
+    };
+    assert_eq!(read.title, "read");
+    assert_eq!(read.status, ToolCallStatus::Completed);
+    assert_eq!(read.input, Some(serde_json::json!({"path": "src/main.rs"})));
+    assert!(read.text().starts_with("fn main()"));
+    assert_eq!(
+        turn_reason(&items[1]),
+        Some(kage_acp_wire::TurnReason::ToolCalls)
+    );
+    assert_eq!(
+        match &items[2] {
+            TranscriptItem::Thinking { text, .. } => text.as_str(),
+            other => panic!("expected thinking, got {other:?}"),
+        },
+        "The read confirms main dereferences an Option, so the fix is a match."
+    );
+    assert_eq!(
+        match &items[3] {
+            TranscriptItem::Assistant { text } => text.as_str(),
+            other => panic!("expected an assistant message, got {other:?}"),
+        },
+        "Adding a match on the Option before printing."
+    );
+    let edit = match &items[4] {
+        TranscriptItem::ToolCall(call) => call,
+        other => panic!("expected the edit, got {other:?}"),
+    };
+    assert_eq!(edit.status, ToolCallStatus::Completed);
+    assert_eq!(edit.text(), "patched src/main.rs");
+    assert!(matches!(&items[5], TranscriptItem::ToolCall(_)));
+    let plan = match &items[6] {
+        TranscriptItem::Plan { entries } => entries,
+        other => panic!("expected the plan, got {other:?}"),
+    };
+    assert_eq!(plan.len(), 3);
+    assert_eq!(plan[1]["status"], "in_progress");
+    assert!(matches!(&items[7], TranscriptItem::TurnEnd { .. }));
+    assert_eq!(
+        match &items[8] {
+            TranscriptItem::Assistant { text } => text.as_str(),
+            other => panic!("expected an assistant message, got {other:?}"),
+        },
+        "The null check is in; cargo test passes."
+    );
+    assert_eq!(
+        turn_reason(&items[9]),
+        Some(kage_acp_wire::TurnReason::NoToolCalls)
+    );
+}
+
 #[test]
 fn the_fix_fixture_replays_to_the_asserted_state() {
     let frames = fixture("fix-tools.jsonl");
@@ -225,60 +281,8 @@ fn the_fix_fixture_replays_to_the_asserted_state() {
         (3120, 860, 8400, 1100)
     );
 
-    let items = own_prompt(&session.items);
-    assert_eq!(items.len(), 10, "{items:#?}");
-    let read = match &items[0] {
-        TranscriptItem::ToolCall(call) => call,
-        other => panic!("expected the read, got {other:?}"),
-    };
-    assert_eq!(read.title, "read");
-    assert_eq!(read.status, ToolCallStatus::Completed);
-    assert_eq!(read.input, Some(serde_json::json!({"path": "src/main.rs"})));
-    assert!(read.text().starts_with("fn main()"));
-    assert_eq!(
-        turn_reason(&items[1]),
-        Some(kage_acp_wire::TurnReason::ToolCalls)
-    );
-    assert_eq!(
-        match &items[2] {
-            TranscriptItem::Thinking { text, .. } => text.as_str(),
-            other => panic!("expected thinking, got {other:?}"),
-        },
-        "The read confirms main dereferences an Option, so the fix is a match."
-    );
-    assert_eq!(
-        match &items[3] {
-            TranscriptItem::Assistant { text } => text.as_str(),
-            other => panic!("expected an assistant message, got {other:?}"),
-        },
-        "Adding a match on the Option before printing."
-    );
-    let edit = match &items[4] {
-        TranscriptItem::ToolCall(call) => call,
-        other => panic!("expected the edit, got {other:?}"),
-    };
-    assert_eq!(edit.status, ToolCallStatus::Completed);
-    assert_eq!(edit.text(), "patched src/main.rs");
-    assert!(matches!(&items[5], TranscriptItem::ToolCall(_)));
-    let plan = match &items[6] {
-        TranscriptItem::Plan { entries } => entries,
-        other => panic!("expected the plan, got {other:?}"),
-    };
-    assert_eq!(plan.len(), 3);
-    assert_eq!(plan[1]["status"], "in_progress");
+    assert_fix_items(own_prompt(&session.items));
     assert_eq!(session.plan.as_ref().unwrap().len(), 3);
-    assert!(matches!(&items[7], TranscriptItem::TurnEnd { .. }));
-    assert_eq!(
-        match &items[8] {
-            TranscriptItem::Assistant { text } => text.as_str(),
-            other => panic!("expected an assistant message, got {other:?}"),
-        },
-        "The null check is in; cargo test passes."
-    );
-    assert_eq!(
-        turn_reason(&items[9]),
-        Some(kage_acp_wire::TurnReason::NoToolCalls)
-    );
     assert!(client.take_outgoing().is_empty());
     // The fixture drives exactly fifteen transcript notifications; a
     // duplicate report would inflate this count.

@@ -393,17 +393,16 @@ mod tests {
         assert_eq!(view.path(), "true", "the user can fix what they typed");
     }
 
+    // The stub is a shell script, which only Unix runs directly.
+    #[cfg(unix)]
     #[test]
     fn a_path_that_runs_is_handed_to_the_shell() {
+        use std::os::unix::fs::PermissionsExt as _;
         // A stub that answers `--version` as kage does.
         let stub = std::env::temp_dir().join("kage-setup-probe-stub");
         std::fs::write(&stub, "#!/bin/sh\necho 'kage 9.9.9'\n").expect("the stub is written");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755))
-                .expect("the stub runs");
-        }
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755))
+            .expect("the stub runs");
         let mut view = SetupView::new();
         view.path = stub.to_string_lossy().into_owned();
         assert_eq!(view.use_path(), Some(SetupEvent::Use(view.path.clone())));

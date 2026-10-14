@@ -2669,7 +2669,12 @@ mod tests {
             .iter()
             .find(|row| row.label == "Settings")
             .expect("settings is bound");
-        assert_eq!(settings.keys, "Ctrl ,");
+        let expected = if cfg!(target_os = "macos") {
+            "Cmd ,"
+        } else {
+            "Ctrl ,"
+        };
+        assert_eq!(settings.keys, expected);
     }
 
     #[test]

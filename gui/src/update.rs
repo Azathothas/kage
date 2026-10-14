@@ -937,11 +937,12 @@ mod tests {
         use super::native::{find_engine_binary, scratch_dir};
         let scratch = scratch_dir().unwrap();
         let nested = scratch.join("kage-x86_64-linux");
+        let engine = format!("kage{}", std::env::consts::EXE_SUFFIX);
         std::fs::create_dir_all(&nested).unwrap();
-        std::fs::write(nested.join("kage"), "binary").unwrap();
+        std::fs::write(nested.join(&engine), "binary").unwrap();
         std::fs::write(scratch.join("LICENSE"), "MIT").unwrap();
         let found = find_engine_binary(&scratch).unwrap();
-        assert_eq!(found, nested.join("kage"));
+        assert_eq!(found, nested.join(&engine));
         let _ = std::fs::remove_dir_all(&scratch);
 
         let empty = scratch_dir().unwrap();

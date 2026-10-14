@@ -57,8 +57,10 @@ fn harness_for(theme: &str) -> Harness<'static, Rig> {
                     return;
                 }
                 let app = rig.app.get_or_insert_with(|| {
+                    // A fixed folder, so the welcome chip names the
+                    // same folder on every platform.
                     kage_desktop::launch::ShellApp::new(
-                        std::env::temp_dir().to_string_lossy().into_owned(),
+                        "/tmp".to_owned(),
                         true,
                         Box::new(kage_desktop::transport::replay::ReplayTransport::new()),
                         ui.ctx(),

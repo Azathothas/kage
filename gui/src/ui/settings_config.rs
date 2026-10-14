@@ -1007,7 +1007,7 @@ fn paint_btn_sm(
     response
 }
 
-/// A sub heading over one list of a page, such as `Ready · 3`.
+/// A sub heading over one list of a page, such as `Ready \u{b7} 3`.
 fn subgroup(ui: &mut egui::Ui, text: &str, palette: &Palette) {
     ui.add_space(4.0);
     let (rect, response) = ui.allocate_exact_size(
