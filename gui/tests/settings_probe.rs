@@ -446,9 +446,4 @@ fn the_agent_page_draws_the_engine_options() {
         harness.query_all_by_label("Max depth").count() > 0,
         "the page draws the engine's agent options"
     );
-    harness
-        .render()
-        .expect("renders")
-        .save("/tmp/settings-agents.png")
-        .expect("save");
 }

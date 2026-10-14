@@ -284,11 +284,6 @@ fn the_agent_detail_shows_the_task_and_its_name() {
             > 0,
         "the detail draws the agent's task"
     );
-    harness
-        .render()
-        .expect("renders")
-        .save("/tmp/workbench-agent.png")
-        .expect("save");
 }
 
 #[test]
@@ -358,9 +353,4 @@ fn the_file_preview_draws_its_path_and_numbered_lines() {
         harness.query_all_by_label("src/main.rs").count() > 0,
         "the preview header names the file"
     );
-    harness
-        .render()
-        .expect("renders")
-        .save("/tmp/workbench-preview.png")
-        .expect("save");
 }
