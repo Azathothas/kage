@@ -143,37 +143,34 @@ fn the_cjk_line_renders_glyphs_now_that_a_fallback_loads() {
     // egui's own default fonts, the CJK line rendered exactly like a
     // private-use codepoint no font carries. E05's fallback closes
     // that: a system font covering U+5F71 registers behind the
-    // bundled families, so the line lays out at the CJK font's own
-    // advance widths instead of the .notdef box's.
+    // bundled families, so every glyph of the line resolves and the
+    // ideographs lay out at the CJK font's own advances.
     //
-    // The measurement is the galley's width. A CJK glyph is exactly
-    // one em wide, so ten of them at 28px measure 280px. The .notdef
-    // box is wider, so a tofu line measures more. The private-use
-    // control stays tofu and measures the same as the old CJK line
-    // did, which is what keeps the comparison honest.
+    // Han ideographs are one em wide in every CJK face, so five of
+    // them at 28px measure 140px. Kana and punctuation are not: the
+    // UI faces Windows falls back to set them proportionally. The
+    // private-use control stays uncovered, which keeps the coverage
+    // check honest.
 
-    /// The width `text` lays out at once the kage families and the
-    /// CJK fallback are active. `set_fonts` applies at the start of
-    /// the next pass, so the width is read on the frame after the
-    /// fonts are installed.
-    fn width_of(text: &str) -> f32 {
+    /// The width `text` lays out at and whether every glyph resolves,
+    /// once the kage families and the CJK fallback are active.
+    /// `set_fonts` applies at the start of the next pass, so both are
+    /// read on the frame after the fonts are installed.
+    fn measure(text: &str) -> (f32, bool) {
         let mut harness = egui_kittest::Harness::builder()
             .with_size(egui::Vec2::new(600.0, 120.0))
             .build_ui_state(
-                |ui, width: &mut Option<f32>| {
+                |ui, read: &mut Option<(f32, bool)>| {
                     testutil::install_theme(ui.ctx(), "kage-shadow");
                     let fid = egui::FontId::new(28.0, egui::FontFamily::Proportional);
-                    let galley = ui.ctx().fonts_mut(|f| {
-                        f.layout(text.to_owned(), fid, egui::Color32::WHITE, f32::INFINITY)
+                    let (galley, covered) = ui.ctx().fonts_mut(|f| {
+                        let covered = f.has_glyphs(&fid, text);
+                        let galley =
+                            f.layout(text.to_owned(), fid, egui::Color32::WHITE, f32::INFINITY);
+                        (galley, covered)
                     });
                     ui.label(egui::RichText::new(text.to_owned()).size(28.0));
-                    // The fonts land at the start of the next pass, so
-                    // the first frame still lays out against the old
-                    // set and every frame after it against the new.
-                    if width.is_some() {
-                        eprintln!("{text:?} galley width: {}", galley.rect.width());
-                    }
-                    *width = Some(galley.rect.width());
+                    *read = Some((galley.rect.width(), covered));
                 },
                 None,
             );
@@ -183,17 +180,13 @@ fn the_cjk_line_renders_glyphs_now_that_a_fallback_loads() {
         harness.state().expect("the width was read")
     }
 
-    let cjk = width_of("影者の影は影に宿る。");
-    let tofu = width_of("\u{E000}\u{E001}\u{E002}");
-    eprintln!("cjk galley width: {cjk}, known-tofu width: {tofu}");
-    // Ten CJK glyphs at 28px are exactly ten em wide; the tofu control
-    // is three .notdef boxes, so it is wider than three em.
+    let (_, line) = measure("影者の影は影に宿る。");
+    assert!(line, "every glyph of the CJK line resolves to a font");
+    let (han, _) = measure("影者影影宿");
     assert!(
-        (cjk - 280.0).abs() < 1.0,
-        "the CJK line lays out at its own advances: {cjk} for ten glyphs at 28px"
+        (han - 140.0).abs() < 1.0,
+        "the ideographs lay out at the CJK font's advances: {han} for five at 28px"
     );
-    assert!(
-        (tofu - cjk).abs() > 1.0,
-        "the private-use line still measures the .notdef advances, not the CJK ones: {tofu}"
-    );
+    let (_, tofu) = measure("\u{E000}\u{E001}\u{E002}");
+    assert!(!tofu, "the private-use control still has no font");
 }
