@@ -193,6 +193,7 @@ jobs:
       # escape hatch in either Cargo.toml. A patch would fork a
       # dependency away from the lockfile the release pipeline ships.
       - name: Dependency hygiene
+        shell: bash
         run: |
           if grep -rn --include=Cargo.toml 'git = ' . ; then
             echo "git dependencies are not allowed"; exit 1
