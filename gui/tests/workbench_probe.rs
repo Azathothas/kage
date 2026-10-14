@@ -163,7 +163,11 @@ fn the_five_tabs_draw_and_the_strip_takes_a_click() {
     harness.get_by_label("Agents").click();
     harness.run();
     assert!(
-        harness.query_by_label("No agents yet. Subagents and swarm workers show up here while they run.").is_some(),
+        harness
+            .query_by_label(
+                "No agents yet. Subagents and swarm workers show up here while they run."
+            )
+            .is_some(),
         "the agents pane took over"
     );
     harness.get_by_label("Changes").click();
@@ -274,10 +278,17 @@ fn the_agent_detail_shows_the_task_and_its_name() {
     harness.run();
     harness.run();
     assert!(
-        harness.query_all_by_label("Check the null handling in parse_config").count() > 0,
+        harness
+            .query_all_by_label("Check the null handling in parse_config")
+            .count()
+            > 0,
         "the detail draws the agent's task"
     );
-    harness.render().expect("renders").save("/tmp/workbench-agent.png").expect("save");
+    harness
+        .render()
+        .expect("renders")
+        .save("/tmp/workbench-agent.png")
+        .expect("save");
 }
 
 #[test]
@@ -337,12 +348,19 @@ fn the_file_preview_draws_its_path_and_numbered_lines() {
     let mut harness = harness_for(store_with_preview());
     harness.state_mut().1.set_tab(Tab::Files);
     harness.state_mut().1.mark_listing_asked("s1");
-    harness.state_mut().1.set_file(Some("src/main.rs".to_owned()));
+    harness
+        .state_mut()
+        .1
+        .set_file(Some("src/main.rs".to_owned()));
     harness.run();
     harness.run();
     assert!(
         harness.query_all_by_label("src/main.rs").count() > 0,
         "the preview header names the file"
     );
-    harness.render().expect("renders").save("/tmp/workbench-preview.png").expect("save");
+    harness
+        .render()
+        .expect("renders")
+        .save("/tmp/workbench-preview.png")
+        .expect("save");
 }

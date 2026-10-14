@@ -211,9 +211,17 @@ fn the_fix_fixture_replays_to_the_asserted_state() {
         "zai-coding-plan/glm-4.7"
     );
     assert_eq!((session.usage.used, session.usage.size), (12480, 200_000));
-    let tokens = session.usage.tokens.expect("the update carries kage's totals");
+    let tokens = session
+        .usage
+        .tokens
+        .expect("the update carries kage's totals");
     assert_eq!(
-        (tokens.input, tokens.output, tokens.cache_read, tokens.cache_write),
+        (
+            tokens.input,
+            tokens.output,
+            tokens.cache_read,
+            tokens.cache_write
+        ),
         (3120, 860, 8400, 1100)
     );
 

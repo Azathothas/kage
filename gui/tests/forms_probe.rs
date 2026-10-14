@@ -384,7 +384,11 @@ fn every_page_renders_for_review() {
     let forms: [(&str, Section, &[&str]); 4] = [
         ("provider", Section::Providers, &["Add provider", "Custom"]),
         ("acp", Section::Providers, &["Add provider", "ACP agent"]),
-        ("directory", Section::Providers, &["Add provider", "From models.dev"]),
+        (
+            "directory",
+            Section::Providers,
+            &["Add provider", "From models.dev"],
+        ),
         ("mcp", Section::Mcp, &["Add server"]),
     ];
     for (name, section, clicks) in forms {

@@ -14,8 +14,8 @@ use kage_client::{Session, TranscriptItem, unquote_and_trim};
 
 use crate::store::{FoldersRead, Store};
 use crate::theme::{
-    FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_SM, FS_XS, Palette,
-    R_FULL, R_MD, R_SM, R_XL, family,
+    FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_SM, FS_XS, Palette, R_FULL, R_MD, R_SM, R_XL,
+    family,
 };
 use crate::ui::settings_config::{BtnTone, btn_sm_at};
 use crate::ui::workbench::{ChangeEntry, change_entries, session_changes};
@@ -1004,8 +1004,6 @@ fn footer_icons(
 /// The space above a dialog's footer: the body's bottom padding and
 /// the footer's top, as the reference stacks them.
 const FOOT_GAP: f32 = 20.0;
-
-
 
 /// The folder names a listing carries, sorted, hidden ones left out.
 #[must_use]

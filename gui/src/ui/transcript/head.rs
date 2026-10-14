@@ -254,7 +254,13 @@ pub(crate) fn one_line(
 
 /// Paints one meta item with its right edge at `right`, centered on
 /// `mid`, and gives back its left edge.
-pub(crate) fn paint_meta(ui: &egui::Ui, right: f32, mid: f32, meta: Meta, palette: &Palette) -> f32 {
+pub(crate) fn paint_meta(
+    ui: &egui::Ui,
+    right: f32,
+    mid: f32,
+    meta: Meta,
+    palette: &Palette,
+) -> f32 {
     let font = egui::FontId::new(FS_2XS, family(FAMILY_MONO_REGULAR));
     match meta {
         Meta::Chip { text, fg, bg } => {

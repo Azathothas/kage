@@ -263,7 +263,10 @@ fn a_click_outside_the_model_picker_dismisses_it() {
 fn the_mode_picker_toggles_open_from_its_pill_state() {
     let store = picker_store();
     let mut harness = harness(store);
-    harness.state_mut().1.toggle_picker(kage_desktop::ui::toolbar::Picker::Mode);
+    harness
+        .state_mut()
+        .1
+        .toggle_picker(kage_desktop::ui::toolbar::Picker::Mode);
     harness.run();
     harness.run();
     assert_eq!(
@@ -272,4 +275,3 @@ fn the_mode_picker_toggles_open_from_its_pill_state() {
         "the mode picker is open"
     );
 }
-

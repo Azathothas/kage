@@ -84,7 +84,10 @@ mod tests {
     #[test]
     fn only_the_last_fallback_failing_marks_the_picker_failed() {
         FAILED.store(false, Ordering::Relaxed);
-        record("rfd::backend::xdg_desktop_portal::portal", log::Level::Error);
+        record(
+            "rfd::backend::xdg_desktop_portal::portal",
+            log::Level::Error,
+        );
         record(FALLBACK_TARGET, log::Level::Warn);
         assert!(!FAILED.load(Ordering::Relaxed));
         record(FALLBACK_TARGET, log::Level::Error);

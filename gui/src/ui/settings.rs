@@ -22,6 +22,7 @@ const THEME_CARD_W: f32 = 150.0;
 /// The theme select's width.
 const PICK_W: f32 = 220.0;
 /// The Updates row's status and buttons column.
+#[cfg(not(target_arch = "wasm32"))]
 const UPDATES_W: f32 = 360.0;
 /// The theme select menu's height cap.
 const PICK_MENU_H: f32 = 280.0;
@@ -1914,6 +1915,7 @@ pub struct UpdateState {
 /// The Updates row: what the last release check saw for the engine and
 /// this client, the channel choice, a manual re-check, and the install
 /// buttons a newer build puts on screen.
+#[cfg(not(target_arch = "wasm32"))]
 fn updates(
     ui: &mut egui::Ui,
     store: &Store,
