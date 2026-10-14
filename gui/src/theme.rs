@@ -1157,6 +1157,12 @@ pub fn style(palette: &Palette, mode: Mode) -> egui::Style {
         Mode::Light => egui::Visuals::light(),
     };
     map_visuals(palette, &mut visuals);
+    // GPUI's contrast and gamma correction lands near coverage^0.6 for
+    // light text on dark; dark text on light already matches egui's.
+    if mode == Mode::Dark {
+        visuals.text_options.color_transfer_function =
+            egui::epaint::FontColorTransferFunction::Gamma(0.6);
+    }
     style.visuals = visuals;
     style.spacing.button_padding = egui::vec2(SP_4, SP_2);
     style.spacing.item_spacing = egui::vec2(SP_3, SP_3);
