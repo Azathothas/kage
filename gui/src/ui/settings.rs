@@ -524,8 +524,7 @@ impl SettingsView {
                         .fill(palette.bg)
                         .stroke(egui::Stroke::new(1.0, palette.line))
                         .corner_radius(egui::CornerRadius::same(R_XL as u8))
-                        .shadow(palette.shadow_2)
-                        .show_crisp(ui, |ui| {
+                        .show_shadowed(ui, &palette.shadow_2, |ui| {
                             // The card's size counts its border, as the
                             // reference's box does.
                             let size = card.size() - egui::vec2(2.0, 2.0);
@@ -665,13 +664,10 @@ fn nav(
     picked: &mut Option<Section>,
 ) {
     let rect = ui.max_rect();
-    let corners = egui::CornerRadius {
-        nw: R_XL as u8,
-        sw: R_XL as u8,
-        ne: 0,
-        se: 0,
-    };
-    ui.painter().rect_filled(rect, corners, palette.sidebar);
+    // Square, as the reference clips the dialog to a plain rectangle:
+    // its fill shows past the rounded border, which paints on top.
+    ui.painter()
+        .rect_filled(rect, egui::CornerRadius::ZERO, palette.sidebar);
     ui.painter().vline(
         rect.right() - 0.5,
         rect.y_range(),
@@ -1282,9 +1278,8 @@ fn theme_select(
                     .fill(palette.bg)
                     .stroke(egui::Stroke::new(1.0, palette.line))
                     .corner_radius(egui::CornerRadius::same(R_LG as u8))
-                    .shadow(palette.shadow_menu)
                     .inner_margin(egui::Margin::same(4))
-                    .show_crisp(ui, |ui| {
+                    .show_shadowed(ui, &palette.shadow_menu, |ui| {
                         ui.set_width(PICK_W - 8.0);
                         ui.spacing_mut().item_spacing.y = 1.0;
                         egui::ScrollArea::vertical()

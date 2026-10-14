@@ -239,8 +239,10 @@ pub(crate) fn icon_button_sized(
 }
 
 /// `text` on one line, cut with an ellipsis past `max_width` the way
-/// the reference truncates: the cut keeps only characters that leave
-/// room for the ellipsis, then drops trailing spaces and punctuation.
+/// the reference truncates: a line whose shaped width fits stays
+/// whole, and otherwise the cut sums unkerned character widths and
+/// keeps only the characters that leave room for the ellipsis, then
+/// drops trailing spaces and punctuation.
 pub(crate) fn one_line(
     ui: &egui::Ui,
     text: String,
@@ -253,34 +255,30 @@ pub(crate) fn one_line(
         text.clone(),
         format.clone(),
     ));
-    let Some(row) = full.rows.first() else {
-        return full;
-    };
-    let glyphs = &row.row.glyphs;
-    let unkerned: f32 = glyphs.iter().map(|glyph| glyph.advance_width).sum();
-    if glyphs.len() != text.chars().count() || unkerned.floor() <= max {
+    if full.size().x <= max {
         return full;
     }
-    let ellipsis = painter
-        .layout_job(egui::text::LayoutJob::single_section(
-            "\u{2026}".to_owned(),
-            format.clone(),
-        ))
-        .size()
-        .x;
-    // The widths add up character by character, unkerned, as the
-    // reference measures a line it truncates.
-    let mut cut = 0;
+    let font = &format.font_id;
+    let (widths, ellipsis) = painter.fonts_mut(|fonts| {
+        let widths: Vec<f32> = text.chars().map(|c| fonts.glyph_width(font, c)).collect();
+        (widths, fonts.glyph_width(font, '\u{2026}'))
+    });
+    let mut fits = 0;
     let mut width = 0.0;
-    for ((at, _), glyph) in text.char_indices().zip(glyphs) {
+    let mut cut = None;
+    for ((at, _), advance) in text.char_indices().zip(widths) {
         if width + ellipsis < max {
-            cut = at;
+            fits = at;
         }
-        width += glyph.advance_width;
+        width += advance;
         if f32::floor(width) > max {
+            cut = Some(fits);
             break;
         }
     }
+    let Some(cut) = cut else {
+        return full;
+    };
     let kept =
         text[..cut].trim_end_matches(|c: char| c.is_whitespace() || c.is_ascii_punctuation());
     painter.layout_job(egui::text::LayoutJob::single_section(

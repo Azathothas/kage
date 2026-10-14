@@ -712,6 +712,15 @@ pub(crate) trait ShowCrisp {
         ui: &mut egui::Ui,
         add: impl FnOnce(&mut egui::Ui) -> R,
     ) -> egui::InnerResponse<R>;
+
+    /// [`ShowCrisp::show_crisp`] over `layers` of drop shadow, painted
+    /// under the frame as the reference paints a box's shadow.
+    fn show_shadowed<R>(
+        self,
+        ui: &mut egui::Ui,
+        layers: &[crate::theme::ShadowLayer],
+        add: impl FnOnce(&mut egui::Ui) -> R,
+    ) -> egui::InnerResponse<R>;
 }
 
 impl ShowCrisp for egui::Frame {
@@ -739,6 +748,20 @@ impl ShowCrisp for egui::Frame {
                 .rect_stroke(edge, frame.corner_radius, stroke, egui::StrokeKind::Inside);
         }
         egui::InnerResponse::new(inner, response)
+    }
+
+    fn show_shadowed<R>(
+        self,
+        ui: &mut egui::Ui,
+        layers: &[crate::theme::ShadowLayer],
+        add: impl FnOnce(&mut egui::Ui) -> R,
+    ) -> egui::InnerResponse<R> {
+        let at = ui.painter().add(egui::Shape::Noop);
+        let inner = self.show_crisp(ui, add);
+        let rect = inner.response.rect - self.outer_margin;
+        ui.painter()
+            .set(at, crate::shapes::shadow(rect, self.corner_radius, layers));
+        inner
     }
 }
 

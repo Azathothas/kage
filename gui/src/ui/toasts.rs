@@ -191,7 +191,8 @@ fn toast_card(ui: &mut egui::Ui, draft: &ToastDraft, palette: &Palette) -> egui:
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &draft.text));
     let radius = egui::CornerRadius::same(R_LG as u8);
-    ui.painter().add(palette.shadow_2.as_shape(rect, radius));
+    ui.painter()
+        .add(crate::shapes::shadow(rect, radius, &palette.shadow_2));
     ui.painter().rect_filled(rect, radius, palette.raised);
     let border = if response.hovered() {
         palette.line_strong

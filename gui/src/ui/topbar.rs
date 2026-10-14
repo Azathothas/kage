@@ -328,9 +328,8 @@ fn session_menu(
                 .fill(palette.menu)
                 .stroke(egui::Stroke::new(1.0, palette.line))
                 .corner_radius(egui::CornerRadius::same(R_MD as u8))
-                .shadow(palette.shadow_menu)
                 .inner_margin(egui::Margin::symmetric(0, MENU_PAD_Y as i8))
-                .show_crisp(ui, |ui| {
+                .show_shadowed(ui, &palette.shadow_menu, |ui| {
                     ui.set_width(MENU_W);
                     ui.spacing_mut().item_spacing.y = 0.0;
                     for item in items {

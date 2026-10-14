@@ -542,8 +542,7 @@ impl Palette {
                         .fill(palette.bg)
                         .stroke(egui::Stroke::new(1.0, palette.line))
                         .corner_radius(egui::CornerRadius::same(R_XL as u8))
-                        .shadow(palette.shadow_2)
-                        .show_crisp(ui, |ui| {
+                        .show_shadowed(ui, &palette.shadow_2, |ui| {
                             ui.set_width(DIALOG_W - 2.0);
                             ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
                             self.query_row(ui, palette);

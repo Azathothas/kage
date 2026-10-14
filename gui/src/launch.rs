@@ -824,6 +824,7 @@ impl ShellApp {
     ) -> Self {
         crate::theme::install_fonts(ctx);
         crate::icons::install(ctx);
+        crate::shapes::install(ctx);
         Self {
             shell: Shell::new(cwd, replay, transport, ctx),
             stream: false,

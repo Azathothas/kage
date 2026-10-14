@@ -648,8 +648,7 @@ fn show_suggestion_menu(
                 .stroke(egui::Stroke::new(1.0, palette.line))
                 .corner_radius(egui::CornerRadius::same(crate::theme::R_LG as u8))
                 .inner_margin(egui::Margin::same(SUGGEST_PAD as i8))
-                .shadow(palette.shadow_menu)
-                .show_crisp(ui, |ui| {
+                .show_shadowed(ui, &palette.shadow_menu, |ui| {
                     ui.set_width(width - 2.0 * SUGGEST_PAD - 2.0);
                     egui::ScrollArea::vertical()
                         .max_height(SUGGEST_MAX_H - 2.0 * SUGGEST_PAD - 2.0)
@@ -887,9 +886,8 @@ impl Composer {
             .fill(palette.composer_bg)
             .stroke(egui::Stroke::new(1.0, border))
             .corner_radius(egui::CornerRadius::same(crate::theme::R_COMPOSER as u8))
-            .shadow(palette.shadow_input)
             .outer_margin(egui::Margin::ZERO);
-        let response = frame.show_crisp(ui, |ui| {
+        let response = frame.show_shadowed(ui, &palette.shadow_input, |ui| {
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 egui::Frame::NONE

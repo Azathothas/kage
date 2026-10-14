@@ -513,8 +513,7 @@ pub(crate) fn surface_in(
         .stroke(egui::Stroke::new(1.0, palette.line))
         .corner_radius(egui::CornerRadius::same(R_LG as u8))
         .inner_margin(egui::Margin::same(margin))
-        .shadow(palette.shadow_menu)
-        .show_crisp(ui, |ui| {
+        .show_shadowed(ui, &palette.shadow_menu, |ui| {
             ui.style_mut().interaction.selectable_labels = false;
             ui.allocate_ui_with_layout(
                 egui::vec2(width, 0.0),
@@ -2140,6 +2139,7 @@ fn send_button(
     } else {
         (palette.send_bg_off, palette.send_icon_off)
     };
+    let shadow = ui.painter().add(egui::Shape::Noop);
     let response = crate::ui::forms::icon_btn(
         ui,
         "Send",
@@ -2154,6 +2154,13 @@ fn send_button(
             hover_ink: fg,
         },
     );
+    if has_text {
+        let radius = egui::CornerRadius::same((SEND_D / 2.0) as u8);
+        ui.painter().set(
+            shadow,
+            crate::shapes::shadow(response.rect, radius, &palette.shadow_send),
+        );
+    }
     if response.clicked() && has_text {
         events.push(ToolbarEvent::Submit);
     }

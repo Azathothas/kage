@@ -35,6 +35,7 @@ pub mod prefs;
 // API is carried but unreferenced, and CI denies dead code.
 #[allow(dead_code)]
 pub mod reveal;
+mod shapes;
 #[allow(dead_code)]
 pub mod store;
 pub mod theme;

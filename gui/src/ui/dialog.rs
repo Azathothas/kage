@@ -319,8 +319,7 @@ impl Dialogs {
                         .fill(palette.bg)
                         .stroke(egui::Stroke::new(1.0, palette.line))
                         .corner_radius(egui::CornerRadius::same(R_XL as u8))
-                        .shadow(palette.shadow_2)
-                        .show_crisp(ui, |ui| {
+                        .show_shadowed(ui, &palette.shadow_2, |ui| {
                             ui.set_width(width - 2.0);
                             ui.spacing_mut().item_spacing.y = 0.0;
                             let (head, _) = ui.allocate_exact_size(

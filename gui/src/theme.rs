@@ -715,15 +715,42 @@ pub struct Palette {
     /// The agent avatar hues.
     pub avatars: Avatars,
     /// Small ambient shadow.
-    pub shadow_1: egui::Shadow,
+    pub shadow_1: Vec<ShadowLayer>,
     /// Large flyout shadow.
-    pub shadow_2: egui::Shadow,
+    pub shadow_2: Vec<ShadowLayer>,
     /// Subtle input shadow.
-    pub shadow_input: egui::Shadow,
-    /// The send button's shadow, largest layer of the design's recipe.
-    pub shadow_send: egui::Shadow,
-    /// Menu shadow, largest layer of the design's recipe.
-    pub shadow_menu: egui::Shadow,
+    pub shadow_input: Vec<ShadowLayer>,
+    /// The send button's layered shadow.
+    pub shadow_send: Vec<ShadowLayer>,
+    /// Menu shadow.
+    pub shadow_menu: Vec<ShadowLayer>,
+}
+
+/// One layer of a box shadow as the reference draws it: a Gaussian
+/// under the box moved by `offset` and grown by `spread`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShadowLayer {
+    /// How far the shadow sits from the box.
+    pub offset: egui::Vec2,
+    /// The Gaussian's sigma.
+    pub blur: f32,
+    /// How much the shadow grows past the box, or shrinks when negative.
+    pub spread: f32,
+    /// The shadow's color at full strength.
+    pub color: Color32,
+}
+
+impl ShadowLayer {
+    /// The nearest egui shadow, for the popups egui frames itself.
+    #[must_use]
+    pub fn egui(self) -> egui::Shadow {
+        egui::Shadow {
+            offset: [self.offset.x as i8, self.offset.y as i8],
+            blur: self.blur as u8,
+            spread: self.spread.max(0.0) as u8,
+            color: self.color,
+        }
+    }
 }
 
 /// Converts one hex color to a [`Color32`].
@@ -754,23 +781,21 @@ fn black(alpha: u8) -> Color32 {
     Color32::from_rgba_unmultiplied(0, 0, 0, alpha)
 }
 
-/// Builds one shadow from the design's shadow recipe. Shadow colors
-/// always carry alpha, so `hex` is read as all four bytes. A pure
-/// black shadow such as the design's 55 percent `0x0000008C` has no
-/// top byte for [`color`] to see, so those take the [`black`] path.
-/// The design's negative spreads (which pull a shadow inward) have no
-/// egui equivalent, so they drop.
+/// Builds one shadow layer from the design's shadow recipe. Shadow
+/// colors always carry alpha, so `hex` is read as all four bytes. A
+/// pure black shadow such as the design's 55 percent `0x0000008C` has
+/// no top byte for [`color`] to see, so those take the [`black`] path.
 #[must_use]
-fn layer(hex: u32, x: f32, y: f32, blur: f32, spread: f32) -> egui::Shadow {
+fn layer(hex: u32, x: f32, y: f32, blur: f32, spread: f32) -> ShadowLayer {
     let color = if hex <= 0xFF {
         black(hex as u8)
     } else {
         color(hex)
     };
-    egui::Shadow {
-        offset: [x as i8, y as i8],
-        blur: blur as u8,
-        spread: spread.max(0.0) as u8,
+    ShadowLayer {
+        offset: egui::vec2(x, y),
+        blur,
+        spread,
         color,
     }
 }
@@ -904,11 +929,17 @@ impl Palette {
                     fg: color(0xF29AC1),
                 },
             },
-            shadow_1: layer(0x00000066, 0., 1., 2., 0.),
-            shadow_2: layer(0x0000008C, 0., 16., 40., 0.),
-            shadow_input: layer(0x00000012, 0., 5., 16., -4.),
-            shadow_send: layer(0x00000061, 0., 7., 16., -13.),
-            shadow_menu: layer(0x00000099, 0., 16., 48., 0.),
+            shadow_1: vec![layer(0x00000066, 0., 1., 2., 0.)],
+            shadow_2: vec![layer(0x0000008C, 0., 16., 40., 0.)],
+            shadow_input: vec![layer(0x00000012, 0., 5., 16., -4.)],
+            shadow_send: vec![
+                layer(0x00000061, 0., 7., 16., -13.),
+                layer(0x00000012, 0., 1., 2., 0.),
+            ],
+            shadow_menu: vec![
+                layer(0x00000099, 0., 16., 48., 0.),
+                layer(0x00000066, 0., 2., 8., 0.),
+            ],
         }
     }
 
@@ -1007,11 +1038,17 @@ impl Palette {
                     fg: color(0xAC3A7A),
                 },
             },
-            shadow_1: layer(0x1A142E1A, 0., 1., 2., 0.),
-            shadow_2: layer(0x1A142E29, 0., 12., 32., 0.),
-            shadow_input: layer(0x1A142E14, 0., 5., 16., -4.),
-            shadow_send: layer(0x1A142E4D, 0., 7., 16., -13.),
-            shadow_menu: layer(0x1A142E2E, 0., 12., 40., 0.),
+            shadow_1: vec![layer(0x1A142E1A, 0., 1., 2., 0.)],
+            shadow_2: vec![layer(0x1A142E29, 0., 12., 32., 0.)],
+            shadow_input: vec![layer(0x1A142E14, 0., 5., 16., -4.)],
+            shadow_send: vec![
+                layer(0x1A142E4D, 0., 7., 16., -13.),
+                layer(0x1A142E12, 0., 1., 2., 0.),
+            ],
+            shadow_menu: vec![
+                layer(0x1A142E2E, 0., 12., 40., 0.),
+                layer(0x1A142E14, 0., 2., 8., 0.),
+            ],
         }
     }
 
@@ -1190,8 +1227,8 @@ fn map_visuals(p: &Palette, v: &mut egui::Visuals) {
     v.window_stroke = egui::Stroke::new(1.0, p.line);
     v.window_corner_radius = corner(R_LG);
     v.menu_corner_radius = corner(R_SM);
-    v.window_shadow = p.shadow_2;
-    v.popup_shadow = p.shadow_menu;
+    v.window_shadow = p.shadow_2[0].egui();
+    v.popup_shadow = p.shadow_menu[0].egui();
     // The caret takes the accent, as the reference's does.
     v.text_cursor.stroke.color = p.accent;
     // Selected text keeps the ink, on the selection fill, as the

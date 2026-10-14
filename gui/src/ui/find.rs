@@ -191,7 +191,8 @@ impl FindBar {
             egui::vec2(width, BAR_H),
         );
         let radius = egui::CornerRadius::same(R_LG as u8);
-        ui.painter().add(palette.shadow_menu.as_shape(bar, radius));
+        ui.painter()
+            .add(crate::shapes::shadow(bar, radius, &palette.shadow_menu));
         ui.painter().rect_filled(bar, radius, palette.menu);
         ui.painter().rect_stroke(
             bar,
