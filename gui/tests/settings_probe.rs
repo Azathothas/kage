@@ -309,7 +309,7 @@ fn the_keyboard_page_lists_the_shell_bindings() {
         "the composer keys draw"
     );
     assert_eq!(
-        testutil::count(&harness, "Ctrl"),
+        testutil::count(&harness, "Ctrl") + testutil::count(&harness, "Cmd"),
         10,
         "the modifier caps draw"
     );

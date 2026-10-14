@@ -112,31 +112,29 @@ fn a_program_that_is_not_kage_is_refused_with_why() {
     harness.run();
     testutil::first_field(&harness)
         .expect("the path field draws")
-        .type_text("true");
+        .type_text("rustc");
     harness.run();
     harness.get_by_label("Use").click();
     harness.run();
     assert_eq!(
         harness.state().0.error(),
-        Some("true is not kage"),
+        Some("rustc is not kage"),
         "the probe named what it found"
     );
     assert_eq!(harness.state().1, None, "the shell is not told to run it");
 }
 
+// The stub is a shell script, which only Unix runs directly.
+#[cfg(unix)]
 #[test]
 fn a_probed_binary_is_handed_to_the_shell() {
+    use std::os::unix::fs::PermissionsExt as _;
     let _spawns = SPAWNS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let stub = std::env::temp_dir().join("kage-setup-probe-probe");
     std::fs::write(&stub, "#!/bin/sh\necho 'kage 9.9.9'\n").expect("the stub is written");
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755))
-            .expect("the stub runs");
-    }
+    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).expect("the stub runs");
     let path = stub.to_string_lossy().into_owned();
     let mut harness = harness_for(SetupView::new());
     harness.run();

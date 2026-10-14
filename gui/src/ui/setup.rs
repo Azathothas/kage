@@ -41,10 +41,22 @@ pub enum SetupEvent {
 /// cannot be used.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn probe(program: &str) -> Result<String, String> {
-    let output = std::process::Command::new(program)
-        .arg("--version")
-        .output()
-        .map_err(|error| format!("cannot run {program}: {error}"))?;
+    let run = || {
+        std::process::Command::new(program)
+            .arg("--version")
+            .output()
+    };
+    let mut output = run();
+    for _ in 0..4 {
+        // A binary written moments ago can still be held open for
+        // write by another thread; ETXTBSY clears at once.
+        if !matches!(&output, Err(error) if error.raw_os_error() == Some(26)) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        output = run();
+    }
+    let output = output.map_err(|error| format!("cannot run {program}: {error}"))?;
     let text = String::from_utf8_lossy(&output.stdout);
     let version = text
         .trim()
@@ -362,14 +374,14 @@ fn hairline(ui: &mut egui::Ui, palette: &Palette) {
 
 #[cfg(test)]
 mod tests {
-    use super::{SetupEvent, SetupView, probe};
+    use super::{SetupView, probe};
 
     #[test]
     fn a_path_that_does_not_run_is_refused_with_why() {
         let why = probe("/nonexistent/kage").unwrap_err();
         assert!(why.starts_with("cannot run /nonexistent/kage"), "{why}");
-        let why = probe("true").unwrap_err();
-        assert_eq!(why, "true is not kage");
+        let why = probe("rustc").unwrap_err();
+        assert_eq!(why, "rustc is not kage");
     }
 
     #[test]
@@ -387,16 +399,17 @@ mod tests {
     #[test]
     fn a_refused_probe_keeps_the_typed_path() {
         let mut view = SetupView::new();
-        view.path = "true".to_owned();
+        view.path = "rustc".to_owned();
         assert_eq!(view.use_path(), None);
-        assert_eq!(view.error(), Some("true is not kage"));
-        assert_eq!(view.path(), "true", "the user can fix what they typed");
+        assert_eq!(view.error(), Some("rustc is not kage"));
+        assert_eq!(view.path(), "rustc", "the user can fix what they typed");
     }
 
     // The stub is a shell script, which only Unix runs directly.
     #[cfg(unix)]
     #[test]
     fn a_path_that_runs_is_handed_to_the_shell() {
+        use super::SetupEvent;
         use std::os::unix::fs::PermissionsExt as _;
         // A stub that answers `--version` as kage does.
         let stub = std::env::temp_dir().join("kage-setup-probe-stub");

@@ -156,10 +156,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y mesa-vulkan-drivers libgl1-mesa-dri libegl-mesa0
+          # The CJK probe lays its line out with a system CJK face.
+          sudo apt-get install -y fonts-noto-cjk
           # lavapipe must be the only device the runner sees, so the
           # probes do not depend on whatever driver the image ships.
           echo "LIBGL_ALWAYS_SOFTWARE=1" >> "$GITHUB_ENV"
-          echo "VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json" >> "$GITHUB_ENV"
+          echo "VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json" >> "$GITHUB_ENV"
       # Every probe target, including the parity rig's snapshot
       # comparison. The lib unit tests run here too, so this leg is the
       # gui suite on all three platforms.
