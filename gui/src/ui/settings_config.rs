@@ -607,11 +607,15 @@ fn paint_badge(ui: &egui::Ui, at: egui::Pos2, text: &str, mono: bool, tone: Tone
         egui::FontId::new(10.5, family(face)),
         tone.fg,
     );
+    // The reference's badge: 7px and a 1px border either side, a pixel
+    // and the border above and below one line.
+    let line = crate::theme::line_h(10.5);
+    let height = line + 4.0;
     let rect = egui::Rect::from_min_size(
-        egui::pos2(at.x, at.y - 9.0),
-        egui::vec2(galley.size().x + 16.0, 18.0),
+        egui::pos2(at.x, crate::theme::snap(at.y - height / 2.0)),
+        egui::vec2(galley.size().x.ceil() + 16.0, height),
     );
-    let radius = egui::CornerRadius::same(9);
+    let radius = egui::CornerRadius::same((height / 2.0) as u8);
     ui.painter().rect_filled(rect, radius, tone.bg);
     ui.painter().rect_stroke(
         rect,
@@ -619,8 +623,9 @@ fn paint_badge(ui: &egui::Ui, at: egui::Pos2, text: &str, mono: bool, tone: Tone
         egui::Stroke::new(1.0, tone.line),
         egui::StrokeKind::Inside,
     );
+    let y = crate::theme::line_y(rect.top() + 2.0, line, &galley);
     ui.painter()
-        .galley(rect.center() - galley.size() / 2.0, galley, tone.fg);
+        .galley(egui::pos2(rect.left() + 8.0, y), galley, tone.fg);
     rect
 }
 
@@ -639,6 +644,7 @@ fn badge_width(ui: &egui::Ui, text: &str, mono: bool) -> f32 {
         )
         .size()
         .x
+        .ceil()
         + 16.0
 }
 
@@ -656,29 +662,42 @@ fn list_row(
     clickable: bool,
     palette: &Palette,
 ) -> Hit {
-    let name_h = crate::theme::line_h(FS_SM);
+    // The name line is as tall as its tallest part: a 13px name, a
+    // 12px mono name, or a badge.
+    let name_h = name
+        .iter()
+        .map(|part| match part {
+            Part::Text(_) => crate::theme::line_h(FS_SM),
+            Part::Mono(_) => crate::theme::line_h(FS_XS),
+            Part::Badge(..) => crate::theme::line_h(10.5) + 4.0,
+        })
+        .fold(0.0, f32::max);
     let detail_h = if detail.is_some() {
         crate::theme::line_h(FS_XS)
     } else {
         0.0
     };
-    let height = 10.0
-        + name_h
+    // The reference's row: a 1px top border, 10px above and below, and
+    // the name over its detail centered beside the 28px lead.
+    let column_h = name_h
         + if detail.is_some() {
             2.0 + detail_h
         } else {
             0.0
-        }
-        + 10.0;
+        };
+    let lead_h = match lead {
+        Lead::Logo(..) | Lead::Initials(_) => 28.0,
+        Lead::Icon(_) => 14.0,
+        Lead::Dot(_) => 8.0,
+    };
+    let content_h = column_h.max(lead_h);
+    let height = 1.0 + 10.0 + content_h + 10.0;
     let sense = if clickable {
         egui::Sense::click()
     } else {
         egui::Sense::hover()
     };
-    let (rect, response) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), height.max(28.0 + 20.0)),
-        sense,
-    );
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(ui.available_width(), height), sense);
     let label: String = name
         .iter()
         .map(|part| match part {
@@ -703,7 +722,8 @@ fn list_row(
             .rect_filled(rect, egui::CornerRadius::ZERO, palette.fill_hover);
     }
     crate::ui::settings::row_rule(ui, rect, palette);
-    let mid = rect.center().y;
+    let content_top = rect.top() + 11.0;
+    let mid = content_top + content_h / 2.0;
     let mut x = rect.left() + 16.0;
     match lead {
         Lead::Logo(id, site) => {
@@ -753,9 +773,9 @@ fn list_row(
                 egui::TextFormat::simple(egui::FontId::new(size, family(face)), color),
                 240.0,
             );
-            let left = right - galley.size().x;
-            ui.painter()
-                .galley(egui::pos2(left, mid - galley.size().y / 2.0), galley, color);
+            let left = right - galley.size().x.ceil();
+            let y = crate::theme::line_y(content_top, content_h, &galley);
+            ui.painter().galley(egui::pos2(left, y), galley, color);
             right = left - 12.0;
         }
         Trail::Switch { on, live } => {
@@ -781,7 +801,7 @@ fn list_row(
             right = track.left() - 12.0;
         }
     }
-    let top = rect.top() + 10.0;
+    let top = crate::theme::snap(content_top + (content_h - column_h) / 2.0);
     let mut nx = x;
     for part in name {
         match part {
@@ -796,12 +816,9 @@ fn list_row(
                     egui::TextFormat::simple(egui::FontId::new(size, family(face)), palette.ink),
                     (right - nx).max(0.0),
                 );
-                let width = galley.size().x;
-                ui.painter().galley(
-                    egui::pos2(nx, top + (name_h - galley.size().y) / 2.0),
-                    galley,
-                    palette.ink,
-                );
+                let width = galley.size().x.ceil();
+                let y = crate::theme::line_y(top, name_h, &galley);
+                ui.painter().galley(egui::pos2(nx, y), galley, palette.ink);
                 nx += width + 6.0;
             }
             Part::Badge(text, tone) => {
@@ -824,7 +841,7 @@ fn list_row(
             ),
             (right - x).max(0.0),
         );
-        let y = top + name_h + 2.0 + (detail_h - galley.size().y) / 2.0;
+        let y = crate::theme::line_y(top + name_h + 2.0, detail_h, &galley);
         ui.painter().galley(egui::pos2(x, y), galley, palette.muted);
     }
     if let Some(track) = switch_rect {
@@ -853,13 +870,14 @@ fn group_with(
     let (rect, heading) =
         ui.allocate_exact_size(egui::vec2(ui.available_width(), 26.0), egui::Sense::hover());
     heading.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
-    ui.painter().text(
-        rect.left_center(),
-        egui::Align2::LEFT_CENTER,
-        text,
+    let galley = ui.painter().layout_no_wrap(
+        text.to_owned(),
         egui::FontId::new(FS_SM, family(FAMILY_BODY_SEMIBOLD)),
         palette.ink_strong,
     );
+    let y = crate::theme::line_y(rect.top(), rect.height(), &galley);
+    ui.painter()
+        .galley(egui::pos2(rect.left(), y), galley, palette.ink_strong);
     let mut clicked = false;
     if let Some((label, icon)) = action {
         ui.scope_builder(
@@ -921,7 +939,8 @@ pub(crate) fn btn_sm_at(
 /// one pixel border.
 const BTN_PAD: f32 = 10.0;
 
-fn btn_sm_galley(ui: &egui::Ui, label: &str) -> std::sync::Arc<egui::Galley> {
+/// A small button's label, laid out in its 12px medium face.
+pub(crate) fn btn_sm_galley(ui: &egui::Ui, label: &str) -> std::sync::Arc<egui::Galley> {
     ui.painter().layout_no_wrap(
         label.to_owned(),
         egui::FontId::new(FS_XS, family(FAMILY_BODY_MEDIUM)),
@@ -929,7 +948,8 @@ fn btn_sm_galley(ui: &egui::Ui, label: &str) -> std::sync::Arc<egui::Galley> {
     )
 }
 
-fn btn_sm_size(galley: &egui::Galley, icon: Option<crate::icons::Icon>) -> egui::Vec2 {
+/// A small button's size for `galley` and its optional icon.
+pub(crate) fn btn_sm_size(galley: &egui::Galley, icon: Option<crate::icons::Icon>) -> egui::Vec2 {
     let icon_w = if icon.is_some() { 12.0 + 6.0 } else { 0.0 };
     // The reference rounds a text's measured width up to a whole pixel.
     egui::vec2(BTN_PAD + icon_w + galley.size().x.ceil() + BTN_PAD, 26.0)
@@ -981,9 +1001,9 @@ fn paint_btn_sm(
         );
         x += 12.0 + 6.0;
     }
-    let text_h = galley.size().y;
-    ui.painter()
-        .galley(egui::pos2(x, rect.center().y - text_h / 2.0), galley, ink);
+    // The label's line centers inside the 1px border.
+    let y = crate::theme::line_y(rect.top() + 1.0, rect.height() - 2.0, &galley);
+    ui.painter().galley(egui::pos2(x, y), galley, ink);
     response
 }
 
@@ -995,13 +1015,14 @@ fn subgroup(ui: &mut egui::Ui, text: &str, palette: &Palette) {
         egui::Sense::hover(),
     );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
-    ui.painter().text(
-        rect.left_center(),
-        egui::Align2::LEFT_CENTER,
-        text,
+    let galley = ui.painter().layout_no_wrap(
+        text.to_owned(),
         egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR)),
         palette.faint,
     );
+    let y = crate::theme::line_y(rect.top(), rect.height(), &galley);
+    ui.painter()
+        .galley(egui::pos2(rect.left(), y), galley, palette.faint);
     ui.add_space(6.0);
 }
 
@@ -1102,7 +1123,6 @@ pub fn providers_page(
                 provider_row(ui, snapshot, row, palette, events);
             }
         });
-        ui.add_space(10.0);
     }
     if !snapshot.acp.agents.is_empty() {
         subgroup(
@@ -1660,6 +1680,10 @@ fn mode_card(
 const RULE_TOOL_W: f32 = 180.0;
 const RULE_DEFAULT_W: f32 = 132.0;
 const RULE_REMOVE_W: f32 = 22.0;
+/// A rule's line: the chips' 19px text and their borders.
+const RULE_LINE_H: f32 = 21.0;
+/// A rule row: its top border, 8px above and below, and the line.
+const RULE_ROW_H: f32 = 1.0 + 8.0 + RULE_LINE_H + 8.0;
 
 /// The x ranges of the rule table's columns inside `rect`: tool,
 /// default, allow, deny and remove.
@@ -1678,23 +1702,22 @@ fn rule_columns(rect: egui::Rect) -> [egui::Rangef; 5] {
 
 /// The rule table's header row.
 fn rule_header(ui: &mut egui::Ui, palette: &Palette) {
+    let line = crate::theme::line_h(FS_XS);
     let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(
-            ui.available_width(),
-            8.0 + crate::theme::line_h(FS_XS) + 8.0,
-        ),
+        egui::vec2(ui.available_width(), 1.0 + 8.0 + line + 8.0),
         egui::Sense::hover(),
     );
     crate::ui::settings::row_rule(ui, rect, palette);
     let columns = rule_columns(rect);
     for (column, text) in columns.iter().zip(["Tool", "Default", "Allow", "Deny"]) {
-        ui.painter().text(
-            egui::pos2(column.min, rect.center().y),
-            egui::Align2::LEFT_CENTER,
-            text,
+        let galley = ui.painter().layout_no_wrap(
+            text.to_owned(),
             egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR)),
             palette.faint,
         );
+        let y = crate::theme::line_y(rect.top() + 9.0, line, &galley);
+        ui.painter()
+            .galley(egui::pos2(column.min, y), galley, palette.faint);
     }
 }
 
@@ -1772,13 +1795,15 @@ fn glob_chip(ui: &egui::Ui, at: egui::Pos2, glob: &str, tone: Tone) -> egui::Rec
         egui::FontId::new(10.5, family(FAMILY_MONO_REGULAR)),
         tone.fg,
     );
-    let text_w = galley.size().x;
-    let text_h = galley.size().y;
+    // The reference's badge: 7px and the border either side, a pixel
+    // and the border above and below one line.
+    let text_w = galley.size().x.ceil();
+    let line = crate::theme::line_h(10.5);
     let rect = egui::Rect::from_min_size(
-        egui::pos2(at.x, at.y - 9.0),
-        egui::vec2(7.0 + text_w + 4.0 + 10.0 + 7.0, 18.0),
+        egui::pos2(at.x, crate::theme::snap(at.y - (line + 4.0) / 2.0)),
+        egui::vec2(8.0 + text_w + 4.0 + 10.0 + 8.0, line + 4.0),
     );
-    let radius = egui::CornerRadius::same(9);
+    let radius = egui::CornerRadius::same(((line + 4.0) / 2.0) as u8);
     ui.painter().rect_filled(rect, radius, tone.bg);
     ui.painter().rect_stroke(
         rect,
@@ -1786,15 +1811,13 @@ fn glob_chip(ui: &egui::Ui, at: egui::Pos2, glob: &str, tone: Tone) -> egui::Rec
         egui::Stroke::new(1.0, tone.line),
         egui::StrokeKind::Inside,
     );
-    ui.painter().galley(
-        egui::pos2(rect.left() + 7.0, at.y - text_h / 2.0),
-        galley,
-        tone.fg,
-    );
+    let y = crate::theme::line_y(rect.top() + 2.0, line, &galley);
+    ui.painter()
+        .galley(egui::pos2(rect.left() + 8.0, y), galley, tone.fg);
     crate::icons::themed_image(crate::icons::Icon::X, 10.0, tone.fg).paint_snapped(
         ui,
         egui::Rect::from_min_size(
-            egui::pos2(rect.left() + 7.0 + text_w + 4.0, at.y - 5.0),
+            egui::pos2(rect.left() + 8.0 + text_w + 4.0, rect.center().y - 5.0),
             egui::vec2(10.0, 10.0),
         ),
     );
@@ -1819,12 +1842,14 @@ fn action_chip(
         egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR)),
         if on { tone.fg } else { palette.faint },
     );
+    // 6px and a 1px border either side of one line.
+    let line = crate::theme::line_h(FS_XS);
     let rect = egui::Rect::from_min_size(
-        egui::pos2(at.x, at.y - 10.0),
-        egui::vec2(galley.size().x + 14.0, 20.0),
+        egui::pos2(at.x, crate::theme::snap(at.y - (line + 2.0) / 2.0)),
+        egui::vec2(galley.size().x.ceil() + 14.0, line + 2.0),
     );
     if on {
-        let radius = egui::CornerRadius::same(10);
+        let radius = egui::CornerRadius::same(((line + 2.0) / 2.0) as u8);
         ui.painter().rect_filled(rect, radius, tone.bg);
         ui.painter().rect_stroke(
             rect,
@@ -1834,8 +1859,9 @@ fn action_chip(
         );
     }
     let color = if on { tone.fg } else { palette.faint };
+    let y = crate::theme::line_y(rect.top() + 1.0, line, &galley);
     ui.painter()
-        .galley(rect.center() - galley.size() / 2.0, galley, color);
+        .galley(egui::pos2(rect.left() + 7.0, y), galley, color);
     rect
 }
 
@@ -1850,19 +1876,22 @@ fn tool_rule_row(
     state: &mut PageState,
     palette: &Palette,
 ) {
-    let (rect, row) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 40.0), egui::Sense::hover());
+    let (rect, row) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), RULE_ROW_H),
+        egui::Sense::hover(),
+    );
     row.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, tool));
     crate::ui::settings::row_rule(ui, rect, palette);
     let [tool_col, default_col, allow_col, deny_col, remove_col] = rule_columns(rect);
-    let mid = rect.center().y;
-    ui.painter().text(
-        egui::pos2(tool_col.min, mid),
-        egui::Align2::LEFT_CENTER,
-        tool,
+    let mid = rect.top() + 9.0 + RULE_LINE_H / 2.0;
+    let name = ui.painter().layout_no_wrap(
+        tool.to_owned(),
         egui::FontId::new(FS_XS, family(FAMILY_MONO_REGULAR)),
         palette.ink,
     );
+    let y = crate::theme::line_y(rect.top() + 9.0, RULE_LINE_H, &name);
+    ui.painter()
+        .galley(egui::pos2(tool_col.min, y), name, palette.ink);
     let mut write: Option<ToolRules> = None;
     let mut x = default_col.min;
     for action in ACTIONS {
@@ -1982,23 +2011,26 @@ fn server_rule_row(
     action: &str,
     palette: &Palette,
 ) {
-    let (rect, _) =
-        ui.allocate_exact_size(egui::vec2(ui.available_width(), 40.0), egui::Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), RULE_ROW_H),
+        egui::Sense::hover(),
+    );
     crate::ui::settings::row_rule(ui, rect, palette);
     let [tool_col, default_col, _, _, remove_col] = rule_columns(rect);
-    let mid = rect.center().y;
+    let mid = rect.top() + 9.0 + RULE_LINE_H / 2.0;
     let label = if server == "*" {
         "every MCP server".to_owned()
     } else {
         format!("mcp: {server}")
     };
-    ui.painter().text(
-        egui::pos2(tool_col.min, mid),
-        egui::Align2::LEFT_CENTER,
-        label,
+    let name = ui.painter().layout_no_wrap(
+        label.to_owned(),
         egui::FontId::new(FS_XS, family(FAMILY_MONO_REGULAR)),
         palette.ink,
     );
+    let y = crate::theme::line_y(rect.top() + 9.0, RULE_LINE_H, &name);
+    ui.painter()
+        .galley(egui::pos2(tool_col.min, y), name, palette.ink);
     let mut x = default_col.min;
     for choice in ACTIONS {
         let chip = action_chip(ui, egui::pos2(x, mid), choice, action == choice, palette);
@@ -2048,10 +2080,12 @@ pub fn plugins_page(
     palette: &Palette,
 ) {
     let plugins = &snapshot.plugins;
-    let dir = plugins
-        .dir
-        .clone()
-        .unwrap_or_else(|| "~/.config/kage/plugins".to_owned());
+    let dir = plugins.dir.clone().unwrap_or_else(|| {
+        std::path::Path::new(&crate::prefs::display_config_dir())
+            .join("plugins")
+            .to_string_lossy()
+            .into_owned()
+    });
     boxed(ui, palette, |ui| {
         list_row(
             ui,

@@ -238,19 +238,55 @@ pub(crate) fn icon_button_sized(
     response.on_hover_text(tooltip)
 }
 
-/// `text` on one line, cut with an ellipsis past `max_width`.
+/// `text` on one line, cut with an ellipsis past `max_width` the way
+/// the reference truncates: the cut keeps only characters that leave
+/// room for the ellipsis, then drops trailing spaces and punctuation.
 pub(crate) fn one_line(
     ui: &egui::Ui,
     text: String,
     format: egui::TextFormat,
     max_width: f32,
 ) -> Arc<egui::Galley> {
-    let mut job = egui::text::LayoutJob::single_section(text, format);
-    job.wrap.max_width = max_width.max(0.0);
-    job.wrap.max_rows = 1;
-    job.wrap.break_anywhere = true;
-    job.wrap.overflow_character = Some('\u{2026}');
-    ui.painter().layout_job(job)
+    let max = max_width.max(0.0);
+    let painter = ui.painter();
+    let full = painter.layout_job(egui::text::LayoutJob::single_section(
+        text.clone(),
+        format.clone(),
+    ));
+    let Some(row) = full.rows.first() else {
+        return full;
+    };
+    let glyphs = &row.row.glyphs;
+    let unkerned: f32 = glyphs.iter().map(|glyph| glyph.advance_width).sum();
+    if glyphs.len() != text.chars().count() || unkerned.floor() <= max {
+        return full;
+    }
+    let ellipsis = painter
+        .layout_job(egui::text::LayoutJob::single_section(
+            "\u{2026}".to_owned(),
+            format.clone(),
+        ))
+        .size()
+        .x;
+    // The widths add up character by character, unkerned, as the
+    // reference measures a line it truncates.
+    let mut cut = 0;
+    let mut width = 0.0;
+    for ((at, _), glyph) in text.char_indices().zip(glyphs) {
+        if width + ellipsis < max {
+            cut = at;
+        }
+        width += glyph.advance_width;
+        if f32::floor(width) > max {
+            break;
+        }
+    }
+    let kept =
+        text[..cut].trim_end_matches(|c: char| c.is_whitespace() || c.is_ascii_punctuation());
+    painter.layout_job(egui::text::LayoutJob::single_section(
+        format!("{kept}\u{2026}"),
+        format,
+    ))
 }
 
 /// Paints one meta item with its right edge at `right`, centered on
