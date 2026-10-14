@@ -587,7 +587,6 @@ impl Shell {
         }
     }
 
-    /// Drains the store's outgoing frames into the transport.
     /// Hands the store out for the frame's drawing and takes it
     /// back afterwards. The workbench's panes write to the store, so
     /// its closure needs it in a cell, and the cell outlives the
@@ -596,6 +595,7 @@ impl Shell {
         std::mem::replace(&mut self.store, crate::store::Store::empty())
     }
 
+    /// Drains the store's outgoing frames into the transport.
     fn flush_outgoing(&mut self) {
         if !self.themes_asked && self.store.live() {
             self.themes_asked = true;
@@ -675,6 +675,10 @@ pub struct ShellApp {
     /// Whether the engine runs on another machine, where the local
     /// folder picker would name paths the engine cannot open.
     pub remote: bool,
+    /// The preferences revision last written to disk, once they came
+    /// from disk. A shell built without them, as the tests build it,
+    /// never writes the file.
+    saved_prefs: Option<u64>,
     /// The system folder picker's answer, while it is open. Native
     /// only: the browser has no local folders.
     #[cfg(not(target_arch = "wasm32"))]
@@ -721,6 +725,7 @@ impl eframe::App for ShellApp {
             ctx.copy_text(markdown);
         }
         self.shell.flush_outgoing();
+        self.save_prefs();
         #[cfg(not(target_arch = "wasm32"))]
         {
             self.pump_update_check();
@@ -788,6 +793,26 @@ impl eframe::App for ShellApp {
 }
 
 impl ShellApp {
+    /// Hands the shell the preferences saved on disk. They count as
+    /// saved, so only a change after this writes the file.
+    #[must_use]
+    pub fn with_prefs(mut self, prefs: crate::prefs::Prefs) -> Self {
+        self.prefs_theme = prefs.theme.clone();
+        let store = self.shell.store_take().with_prefs(prefs);
+        self.shell.store = store;
+        self.saved_prefs = Some(self.shell.store.prefs_rev());
+        self
+    }
+
+    /// Writes the preferences when they moved since the last write.
+    fn save_prefs(&mut self) {
+        let rev = self.shell.store.prefs_rev();
+        if self.saved_prefs.is_some_and(|saved| saved != rev) {
+            self.saved_prefs = Some(rev);
+            crate::prefs::save(self.shell.store.prefs());
+        }
+    }
+
     /// Builds the window body over a transport: the native flags and
     /// the browser handoff both land here.
     #[must_use]
@@ -811,6 +836,7 @@ impl ShellApp {
             folder_rx: None,
             announce_update: false,
             install_rx: None,
+            saved_prefs: None,
             installing: None,
             install_note: None,
             row_actions: Vec::new(),
@@ -2757,13 +2783,13 @@ pub fn run() {
         "kage client",
         options,
         Box::new(move |cc| {
-            let mut app = ShellApp::new(cwd, replay, transport, &cc.egui_ctx);
+            let theme = prefs.theme.clone();
+            let mut app = ShellApp::new(cwd, replay, transport, &cc.egui_ctx).with_prefs(prefs);
             app.stream = stream;
             app.remote = remote;
-            app.prefs_theme = prefs.theme.clone();
             #[cfg(target_os = "linux")]
             appearance.attach(&cc.egui_ctx);
-            crate::theme::apply_choice(&prefs.theme, &cc.egui_ctx);
+            crate::theme::apply_choice(&theme, &cc.egui_ctx);
             if let Some(millis) = smoke_millis {
                 app.shell.smoke_deadline =
                     Some((web_time::Instant::now(), Duration::from_millis(millis)));

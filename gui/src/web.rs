@@ -82,12 +82,10 @@ pub async fn start(canvas: web_sys::HtmlCanvasElement) {
                         true,
                     ),
                 };
-                Ok(Box::new(launch::ShellApp::new(
-                    String::new(),
-                    replay,
-                    transport,
-                    &cc.egui_ctx,
-                )))
+                Ok(Box::new(
+                    launch::ShellApp::new(String::new(), replay, transport, &cc.egui_ctx)
+                        .with_prefs(prefs),
+                ))
             }),
         )
         .await;
