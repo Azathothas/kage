@@ -1135,19 +1135,48 @@ fn hint_kbd(ui: &mut egui::Ui, label: &str, palette: &crate::theme::Palette) {
         ),
         palette.faint,
     );
-    let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(galley.size().x + 14.0, 16.0),
+    // The reference's cap: 2px either side, then the 1px border and
+    // 5px around the label, 16px tall on the hint's 18px line.
+    let text_w = galley.size().x.ceil();
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(text_w + 16.0, crate::theme::line_h(crate::theme::FS_2XS)),
         egui::Sense::hover(),
     );
-    let cap = rect.shrink2(egui::vec2(2.0, 0.0));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label));
+    let cap = egui::Rect::from_min_size(
+        egui::pos2(rect.left() + 2.0, crate::theme::snap(rect.center().y - 8.0)),
+        egui::vec2(text_w + 12.0, 16.0),
+    );
     ui.painter().rect_stroke(
         cap,
         egui::CornerRadius::same(5),
         egui::Stroke::new(1.0, palette.line),
         egui::StrokeKind::Inside,
     );
+    let y = crate::theme::line_y(cap.top() + 1.0, 14.0, &galley);
     ui.painter()
-        .galley(cap.center() - galley.size() / 2.0, galley, palette.faint);
+        .galley(egui::pos2(cap.left() + 6.0, y), galley, palette.faint);
+}
+
+/// One word of the hint line, on its 18px line.
+fn hint_word(ui: &mut egui::Ui, text: &str, palette: &crate::theme::Palette) {
+    let galley = ui.painter().layout_no_wrap(
+        text.to_owned(),
+        egui::FontId::new(
+            crate::theme::FS_2XS,
+            crate::theme::family(crate::theme::FAMILY_BODY_REGULAR),
+        ),
+        palette.faint,
+    );
+    let line = crate::theme::line_h(crate::theme::FS_2XS);
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(galley.size().x.ceil(), line),
+        egui::Sense::hover(),
+    );
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
+    let y = crate::theme::line_y(rect.top(), line, &galley);
+    ui.painter()
+        .galley(egui::pos2(rect.left(), y), galley, palette.faint);
 }
 
 /// The hint line under the card: the key table on the left, the
@@ -1156,13 +1185,7 @@ fn hint_kbd(ui: &mut egui::Ui, label: &str, palette: &crate::theme::Palette) {
 fn hint_line(ui: &mut egui::Ui, store: &crate::store::Store, running: bool, enter_sends: bool) {
     let palette = crate::theme::Palette::active_of(ui.ctx());
     let chip = |ui: &mut egui::Ui, keys: &str| hint_kbd(ui, keys, palette);
-    let word = |ui: &mut egui::Ui, text: &str| {
-        ui.label(
-            egui::RichText::new(text)
-                .size(crate::theme::FS_2XS)
-                .color(palette.faint),
-        )
-    };
+    let word = |ui: &mut egui::Ui, text: &str| hint_word(ui, text, palette);
     egui::Frame::NONE
         .inner_margin(egui::Margin {
             left: 6,

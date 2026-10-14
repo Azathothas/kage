@@ -770,7 +770,10 @@ fn option_button(
     );
     let text_w = galley.size().x;
     ui.painter().galley(
-        egui::pos2(rect.left() + 9.0, rect.center().y - galley.size().y / 2.0),
+        egui::pos2(
+            rect.left() + 9.0,
+            crate::theme::line_y(rect.center().y, 0.0, &galley),
+        ),
         galley,
         fg,
     );

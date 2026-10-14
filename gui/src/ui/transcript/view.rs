@@ -259,8 +259,10 @@ impl TranscriptView {
             // bottom is left far below the last, so a row that draws
             // taller than it measured never squeezes the rows after it
             // into a negative height.
+            // The column snaps to a whole pixel as the reference lays it.
+            let left = crate::theme::snap(mid - column_w / 2.0);
             let rect = egui::Rect::from_x_y_ranges(
-                mid - column_w / 2.0..=mid + column_w / 2.0,
+                left..=left + column_w,
                 top + list.offset_of(first)..=top + list.offset_of(last) + MEASURE_MAX_H,
             );
             ui.scope_builder(

@@ -493,18 +493,19 @@ fn brand_row(ui: &mut egui::Ui, version: Option<&str>, events: &mut Vec<SidebarE
         egui::Rect::from_center_size(center, egui::vec2(2.0 * radius, 2.0 * radius)),
         palette,
     );
-    let painter = ui.painter();
-    let wordmark = painter.text(
-        egui::pos2(center.x + radius + 9.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
+    let wordmark = line_at(
+        ui,
+        center.x + radius + 9.0,
+        rect.center().y,
         "kage",
         egui::FontId::new(15.0, family(FAMILY_BODY_BOLD)),
         palette.ink_strong,
     );
     if let Some(version) = version {
-        painter.text(
-            egui::pos2(wordmark.right() + 10.0, rect.center().y),
-            egui::Align2::LEFT_CENTER,
+        line_at(
+            ui,
+            wordmark.right() + 9.0,
+            rect.center().y,
             version,
             egui::FontId::new(FS_XS, family(FAMILY_MONO_REGULAR)),
             palette.faint,
@@ -518,6 +519,26 @@ fn brand_row(ui: &mut egui::Ui, version: Option<&str>, events: &mut Vec<SidebarE
     if ghost_icon(ui, collapse, crate::icons::Icon::PanelLeft, tip, palette).clicked() {
         events.push(SidebarEvent::Collapse);
     }
+}
+
+/// Paints `text` with its line centered on `mid` the way the reference
+/// centers a line, its left edge at `x`. Gives back the line's rect.
+fn line_at(
+    ui: &egui::Ui,
+    x: f32,
+    mid: f32,
+    text: &str,
+    font: egui::FontId,
+    color: egui::Color32,
+) -> egui::Rect {
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
+    let y = crate::theme::line_y(mid, 0.0, &galley);
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(x, y),
+        egui::vec2(galley.size().x.ceil(), galley.size().y),
+    );
+    ui.painter().galley(rect.min, galley, color);
+    rect
 }
 
 /// The eclipse brand mark in `rect`: the gradient disc, its 1px ring,
@@ -592,37 +613,23 @@ fn nav_row(
         egui::vec2(16.0, 16.0),
     );
     crate::icons::themed_image(icon, 16.0, palette.ink).paint_snapped(ui, icon_rect);
-    let painter = ui.painter();
-    painter.text(
-        egui::pos2(rect.left() + 35.0, rect.center().y),
-        egui::Align2::LEFT_CENTER,
+    line_at(
+        ui,
+        rect.left() + 8.0 + 16.0 + 10.0,
+        rect.center().y,
         label,
         egui::FontId::new(FS_BASE, family(FAMILY_BODY_REGULAR)),
         palette.ink,
     );
-    let chip_text = painter.layout_no_wrap(
-        keys.to_owned(),
-        egui::FontId::new(FS_2XS, family(FAMILY_MONO_REGULAR)),
-        palette.faint,
-    );
-    let chip = egui::Rect::from_min_size(
+    // The reference's key cap, 8px in from the row's end.
+    crate::ui::palette::paint_kbd(
+        ui,
         egui::pos2(
-            rect.right() - chip_text.size().x - 20.0,
-            rect.center().y - 9.0,
+            rect.right() - 8.0,
+            crate::theme::snap(rect.center().y - 9.0),
         ),
-        egui::vec2(chip_text.size().x + 12.0, 18.0),
-    );
-    painter.rect_filled(chip, egui::CornerRadius::same(5), palette.fill);
-    painter.rect_stroke(
-        chip,
-        egui::CornerRadius::same(5),
-        egui::Stroke::new(1.0, palette.line),
-        egui::StrokeKind::Inside,
-    );
-    painter.galley(
-        chip.center() - chip_text.size() / 2.0,
-        chip_text,
-        palette.faint,
+        keys,
+        palette,
     );
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
     response.clicked()
@@ -631,38 +638,50 @@ fn nav_row(
 /// The list header: the SESSIONS label and the grouping toggle.
 fn list_header(ui: &mut egui::Ui, grouped: bool, events: &mut Vec<SidebarEvent>) {
     let palette = Palette::active_of(ui.ctx());
-    ui.horizontal(|ui| {
-        ui.add_space(8.0);
-        ui.label(
-            egui::RichText::new("SESSIONS")
-                .size(FS_XS)
-                .family(family(FAMILY_BODY_SEMIBOLD))
-                .color(palette.faint),
-        );
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let (rect, response) =
-                ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
-            let response = response
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .on_hover_text(if grouped {
-                    "Show as one list"
-                } else {
-                    "Group by project"
-                });
-            let glyph = if grouped {
-                crate::icons::Icon::List
-            } else {
-                crate::icons::Icon::Folder
-            };
-            crate::icons::themed_image(glyph, 13.0, palette.faint).paint_snapped(
-                ui,
-                egui::Rect::from_center_size(rect.center(), egui::vec2(13.0, 13.0)),
-            );
-            if response.clicked() {
-                events.push(SidebarEvent::ToggleGrouping);
-            }
+    // One 20px row, the toggle's height, the label's line centered on it.
+    let (row, label) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 20.0), egui::Sense::hover());
+    label.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "SESSIONS"));
+    let galley = ui.painter().layout_no_wrap(
+        "SESSIONS".to_owned(),
+        egui::FontId::new(FS_XS, family(FAMILY_BODY_SEMIBOLD)),
+        palette.faint,
+    );
+    // The row sits on whole pixels in the reference, whose layout rounds
+    // the label's half-pixel offset up.
+    let line = crate::theme::line_h(FS_XS);
+    let line_top = row.top() + ((row.height() - line) / 2.0).round();
+    let y = crate::theme::line_y(line_top, line, &galley);
+    ui.painter()
+        .galley(egui::pos2(row.left() + 8.0, y), galley, palette.faint);
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(row.right() - 20.0, row.top()),
+        egui::vec2(20.0, 20.0),
+    );
+    let response = ui
+        .interact(
+            rect,
+            ui.id().with("sessions-grouping"),
+            egui::Sense::click(),
+        )
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(if grouped {
+            "Show as one list"
+        } else {
+            "Group by project"
         });
-    });
+    let glyph = if grouped {
+        crate::icons::Icon::List
+    } else {
+        crate::icons::Icon::Folder
+    };
+    crate::icons::themed_image(glyph, 13.0, palette.faint).paint_snapped(
+        ui,
+        egui::Rect::from_center_size(rect.center(), egui::vec2(13.0, 13.0)),
+    );
+    if response.clicked() {
+        events.push(SidebarEvent::ToggleGrouping);
+    }
     ui.add_space(4.0);
 }
 
@@ -677,7 +696,11 @@ fn list_body(
 ) {
     let palette = Palette::active_of(ui.ctx());
     let filtered = filter_rows(rows, &sidebar.query().clone());
-    let body_height = (ui.available_height() - (FOOTER_H - SP_4)).max(0.0);
+    // The footer sits on the window's bottom edge, as the reference
+    // pins it; the panel's own rect can run a pixel past the window.
+    let bottom = ui.ctx().content_rect().bottom() - SP_4;
+    let body_height =
+        (bottom - ui.cursor().top() - (FOOTER_H - SP_4) - ui.spacing().item_spacing.y).max(0.0);
     egui::ScrollArea::vertical()
         .max_height(body_height)
         .auto_shrink([false, false])
@@ -784,27 +807,23 @@ fn project_row(
             egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR)),
             palette.faint,
         );
-        let left = right - count.size().x;
+        let left = right - count.size().x.ceil();
         ui.painter().galley(
-            egui::pos2(left, mid - count.size().y / 2.0),
+            egui::pos2(left, crate::theme::line_y(mid, 0.0, &count)),
             count,
             palette.faint,
         );
         right = left - 8.0;
     }
-    let mut job = egui::text::LayoutJob::simple_singleline(
-        project.to_owned(),
-        egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
-        ink,
-    );
     let name_left = folder.right() + 8.0;
-    job.wrap.max_width = (right - name_left).max(0.0);
-    job.wrap.max_rows = 1;
-    job.wrap.break_anywhere = true;
-    job.wrap.overflow_character = Some('\u{2026}');
-    let name = ui.painter().layout_job(job);
-    ui.painter()
-        .galley(egui::pos2(name_left, mid - name.size().y / 2.0), name, ink);
+    let name = crate::ui::transcript::head::one_line(
+        ui,
+        project.to_owned(),
+        egui::TextFormat::simple(egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)), ink),
+        right - name_left,
+    );
+    let y = crate::theme::line_y(mid, 0.0, &name);
+    ui.painter().galley(egui::pos2(name_left, y), name, ink);
     if let Some(add) = &plus_response {
         if add.hovered() {
             ui.painter().rect_filled(
@@ -964,9 +983,9 @@ fn session_row(
             egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR)),
             palette.faint,
         );
-        let left = right - galley.size().x;
+        let left = right - galley.size().x.ceil();
         ui.painter().galley(
-            egui::pos2(left, mid - galley.size().y / 2.0),
+            egui::pos2(left, crate::theme::line_y(mid, 0.0, &galley)),
             galley,
             palette.faint,
         );
@@ -978,9 +997,9 @@ fn session_row(
             egui::FontId::new(10.5, family(FAMILY_MONO_REGULAR)),
             palette.faint,
         );
-        let left = right - count.size().x;
+        let left = right - count.size().x.ceil();
         ui.painter().galley(
-            egui::pos2(left, mid - count.size().y / 2.0),
+            egui::pos2(left, crate::theme::line_y(mid, 0.0, &count)),
             count,
             palette.faint,
         );
@@ -992,24 +1011,18 @@ fn session_row(
             .paint_snapped(ui, icon);
         right = icon.left() - 8.0;
     }
-    let mut job = egui::text::LayoutJob::simple_singleline(
+    let face = if item.unread && !item.active {
+        family(FAMILY_BODY_SEMIBOLD)
+    } else {
+        family(FAMILY_BODY_REGULAR)
+    };
+    let title_galley = crate::ui::transcript::head::one_line(
+        ui,
         title,
-        egui::FontId::new(
-            FS_SM,
-            if item.unread && !item.active {
-                family(FAMILY_BODY_SEMIBOLD)
-            } else {
-                family(FAMILY_BODY_REGULAR)
-            },
-        ),
-        fg,
+        egui::TextFormat::simple(egui::FontId::new(FS_SM, face), fg),
+        right - rect.left() - indent,
     );
-    job.wrap.max_width = (right - rect.left() - indent).max(0.0);
-    job.wrap.max_rows = 1;
-    job.wrap.break_anywhere = true;
-    job.wrap.overflow_character = Some('\u{2026}');
-    let title_galley = ui.painter().layout_job(job);
-    let title_y = mid - title_galley.size().y / 2.0;
+    let title_y = crate::theme::line_y(mid, 0.0, &title_galley);
     ui.painter()
         .galley(egui::pos2(rect.left() + indent, title_y), title_galley, fg);
     if response.clicked() {
@@ -1049,16 +1062,21 @@ fn connect_footer(
         ui.painter().circle_filled(center, 7.0, palette.ok_soft);
     }
     ui.painter().circle_filled(center, 4.0, dot);
-    ui.painter().text(
-        egui::pos2(rect.left() + 36.0, mid - 8.0),
-        egui::Align2::LEFT_CENTER,
+    // The name over the status, one block centered under the border.
+    let (name_h, status_h) = (crate::theme::line_h(FS_SM), crate::theme::line_h(11.0));
+    let top = crate::theme::snap(rect.top() + 1.0 + (FOOTER_H - 1.0 - name_h - status_h) / 2.0);
+    line_at(
+        ui,
+        rect.left() + 36.0,
+        top + name_h / 2.0,
         name,
         egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
         palette.ink,
     );
-    ui.painter().text(
-        egui::pos2(rect.left() + 36.0, mid + 11.0),
-        egui::Align2::LEFT_CENTER,
+    line_at(
+        ui,
+        rect.left() + 36.0,
+        top + name_h + status_h / 2.0,
         status,
         egui::FontId::new(11.0, family(FAMILY_BODY_REGULAR)),
         palette.faint,

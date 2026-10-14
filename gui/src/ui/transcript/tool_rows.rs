@@ -680,8 +680,11 @@ fn detail_head(ui: &mut egui::Ui, head: &DetailHead, palette: &Palette) -> bool 
         egui::TextFormat::simple(mono(FS_XS), palette.ink),
         right - x,
     );
-    ui.painter()
-        .galley(egui::pos2(x, mid - text.size().y / 2.0), text, palette.ink);
+    ui.painter().galley(
+        egui::pos2(x, crate::theme::line_y(mid, 0.0, &text)),
+        text,
+        palette.ink,
+    );
     fired
 }
 
@@ -753,7 +756,7 @@ pub(crate) fn render_diff(ui: &mut egui::Ui, lines: &[DiffLine], palette: &Palet
             row.right() - SP_5 - x,
         );
         ui.painter().galley(
-            egui::pos2(x, row.center().y - body.size().y / 2.0),
+            egui::pos2(x, crate::theme::line_y(row.center().y, 0.0, &body)),
             body,
             color,
         );
@@ -858,7 +861,7 @@ pub fn render_changes(
                 right - x,
             );
             ui.painter().galley(
-                egui::pos2(x, mid - title.size().y / 2.0),
+                egui::pos2(x, crate::theme::line_y(mid, 0.0, &title)),
                 title,
                 palette.ink_strong,
             );
@@ -922,8 +925,11 @@ pub fn render_changes(
                     egui::TextFormat::simple(mono(DETAIL_SIZE), palette.ink),
                     right - x,
                 );
-                ui.painter()
-                    .galley(egui::pos2(x, mid - path.size().y / 2.0), path, palette.ink);
+                ui.painter().galley(
+                    egui::pos2(x, crate::theme::line_y(mid, 0.0, &path)),
+                    path,
+                    palette.ink,
+                );
                 if response.clicked() {
                     actions.push(RowAction::OpenChange(entry.call_id.clone()));
                 }
@@ -1120,7 +1126,7 @@ pub fn render_turn_end(
             .layout_no_wrap(text, body.clone(), palette.faint);
         let width = galley.size().x;
         ui.painter().galley(
-            egui::pos2(*x, mid - galley.size().y / 2.0),
+            egui::pos2(*x, crate::theme::line_y(mid, 0.0, &galley)),
             galley,
             palette.faint,
         );
@@ -1402,7 +1408,7 @@ pub fn render_plan_card(
                     right - x,
                 );
                 ui.painter().galley(
-                    egui::pos2(x, mid - ask.size().y / 2.0),
+                    egui::pos2(x, crate::theme::line_y(mid, 0.0, &ask)),
                     ask,
                     palette.ink_strong,
                 );
@@ -1986,7 +1992,7 @@ fn agent_card(
             band.right() - 12.0 - x,
         );
         ui.painter().galley(
-            egui::pos2(x, mid - text.size().y / 2.0),
+            egui::pos2(x, crate::theme::line_y(mid, 0.0, &text)),
             text,
             palette.muted,
         );
@@ -2210,7 +2216,10 @@ fn swarm_card(
                 (right - left).max(0.0),
             );
             ui.painter().galley(
-                egui::pos2(right - summary.size().x, mid - summary.size().y / 2.0),
+                egui::pos2(
+                    right - summary.size().x,
+                    crate::theme::line_y(mid, 0.0, &summary),
+                ),
                 summary,
                 palette.muted,
             );
@@ -2307,7 +2316,7 @@ fn swarm_head(
     let tally = ui.painter().layout_job(job);
     right -= tally.size().x;
     ui.painter().galley(
-        egui::pos2(right, mid - tally.size().y / 2.0),
+        egui::pos2(right, crate::theme::line_y(mid, 0.0, &tally)),
         tally,
         palette.ink_strong,
     );
@@ -2459,8 +2468,11 @@ fn member_row(
     // The item takes at least its 60px column, so the lines start
     // together, as the reference's flex column sets them.
     let line_x = x + item.size().x.max(item_w) + CHANGES_GAP;
-    ui.painter()
-        .galley(egui::pos2(x, mid - item.size().y / 2.0), item, palette.ink);
+    ui.painter().galley(
+        egui::pos2(x, crate::theme::line_y(mid, 0.0, &item)),
+        item,
+        palette.ink,
+    );
     let line = if member.phase.live() {
         member
             .reason
@@ -2477,7 +2489,7 @@ fn member_row(
         (x + room - line_x).max(0.0),
     );
     ui.painter().galley(
-        egui::pos2(line_x, mid - line.size().y / 2.0),
+        egui::pos2(line_x, crate::theme::line_y(mid, 0.0, &line)),
         line,
         palette.faint,
     );

@@ -1029,8 +1029,11 @@ fn changes_pane(
             ),
             right - x,
         );
-        ui.painter()
-            .galley(egui::pos2(x, mid - path.size().y / 2.0), path, palette.ink);
+        ui.painter().galley(
+            egui::pos2(x, crate::theme::line_y(mid, 0.0, &path)),
+            path,
+            palette.ink,
+        );
         if response.clicked() {
             workbench.select(Some(entry.call_id.clone()));
         }
@@ -1080,7 +1083,7 @@ fn changes_pane(
         opened.rect.left() - 8.0 - x,
     );
     ui.painter().galley(
-        egui::pos2(x, mid - label.size().y / 2.0),
+        egui::pos2(x, crate::theme::line_y(mid, 0.0, &label)),
         label,
         palette.ink,
     );
@@ -1250,8 +1253,11 @@ fn files_pane(
             rect.right() - 14.0 - (x + 19.0) - if unlisted { 14.0 } else { 0.0 },
         );
         let label_right = x + 19.0 + label.size().x;
-        ui.painter()
-            .galley(egui::pos2(x + 19.0, mid - label.size().y / 2.0), label, ink);
+        ui.painter().galley(
+            egui::pos2(x + 19.0, crate::theme::line_y(mid, 0.0, &label)),
+            label,
+            ink,
+        );
         if unlisted {
             ui.painter().text(
                 egui::pos2(label_right + 7.0, mid),
@@ -1349,7 +1355,7 @@ fn file_preview(
         mention.left() - 8.0 - x,
     );
     ui.painter().galley(
-        egui::pos2(x, mid - label.size().y / 2.0),
+        egui::pos2(x, crate::theme::line_y(mid, 0.0, &label)),
         label,
         palette.ink,
     );
@@ -1391,7 +1397,10 @@ fn file_preview(
                     rect.right() - 10.0 - (rect.left() + 10.0 + 28.0 + 12.0),
                 );
                 ui.painter().galley(
-                    egui::pos2(rect.left() + 10.0 + 28.0 + 12.0, mid - text.size().y / 2.0),
+                    egui::pos2(
+                        rect.left() + 10.0 + 28.0 + 12.0,
+                        crate::theme::line_y(mid, 0.0, &text),
+                    ),
                     text,
                     palette.ink,
                 );
@@ -1691,7 +1700,7 @@ fn agent_group(
         );
         right -= galley.size().x;
         ui.painter().galley(
-            egui::pos2(right, mid - galley.size().y / 2.0),
+            egui::pos2(right, crate::theme::line_y(mid, 0.0, &galley)),
             galley,
             palette.faint,
         );
@@ -1708,7 +1717,7 @@ fn agent_group(
         right - x,
     );
     ui.painter().galley(
-        egui::pos2(x, mid - text.size().y / 2.0),
+        egui::pos2(x, crate::theme::line_y(mid, 0.0, &text)),
         text,
         palette.faint,
     );
@@ -2001,8 +2010,11 @@ fn term_run(ui: &mut egui::Ui, run: &TermEntry, open: bool, palette: &Palette) -
                 egui::TextFormat::simple(mono(FS_XS), palette.ink),
                 right - x,
             );
-            ui.painter()
-                .galley(egui::pos2(x, mid - line.size().y / 2.0), line, palette.ink);
+            ui.painter().galley(
+                egui::pos2(x, crate::theme::line_y(mid, 0.0, &line)),
+                line,
+                palette.ink,
+            );
             if !open {
                 return;
             }

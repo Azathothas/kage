@@ -92,6 +92,9 @@ impl Panels {
     }
 }
 
+/// The divider between two columns, its own pixel past the panel.
+const DIVIDER_W: f32 = 1.0;
+
 /// Lays out the three panels and calls `chat` for the middle column,
 /// `sidebar` for the left panel's contents and `workbench` for the
 /// right's. Each callback draws inside the panel's frame.
@@ -111,31 +114,67 @@ pub fn show(
     // `well`, and the chat keeps the app background.
     let palette = Palette::active_of(ui.ctx());
     if panels.sidebar_visible && !narrow {
+        // The reference's sidebar keeps its full width and the divider
+        // takes its own pixel past it, crisp, where egui would draw a
+        // half-pixel line inside the panel.
         let panel = egui::Panel::left("sidebar")
             .resizable(true)
-            .default_size(panels.sidebar_width)
-            .size_range(CHAT_MIN_W.min(SIDE_W)..=f32::MAX)
+            .show_separator_line(false)
+            .default_size(panels.sidebar_width + DIVIDER_W)
+            .size_range(CHAT_MIN_W.min(SIDE_W) + DIVIDER_W..=f32::MAX)
             .frame(
                 egui::Frame::side_top_panel(ui.style())
                     .fill(palette.sidebar)
-                    .inner_margin(egui::Margin::symmetric(SP_4 as i8, SP_4 as i8)),
+                    .stroke(egui::Stroke::NONE)
+                    .inner_margin(egui::Margin {
+                        left: SP_4 as i8,
+                        right: SP_4 as i8 + DIVIDER_W as i8,
+                        top: SP_4 as i8,
+                        bottom: SP_4 as i8,
+                    }),
             )
             .show(ui, |ui| {
                 sidebar(ui);
             });
-        panels.sidebar_width = panel.response.rect.width().max(CHAT_MIN_W);
+        let rect = panel.response.rect;
+        ui.painter().rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(rect.right().round() - DIVIDER_W, rect.top()),
+                egui::pos2(rect.right().round(), rect.bottom()),
+            ),
+            0.0,
+            palette.line,
+        );
+        panels.sidebar_width = (rect.width() - DIVIDER_W).max(CHAT_MIN_W);
     }
 
     if panels.workbench_visible && !mid {
         let panel = egui::Panel::right("workbench")
             .resizable(true)
-            .default_size(panels.workbench_width)
-            .size_range(200.0..=f32::MAX)
-            .frame(egui::Frame::NONE.fill(palette.sidebar))
+            .show_separator_line(false)
+            .default_size(panels.workbench_width + DIVIDER_W)
+            .size_range(200.0 + DIVIDER_W..=f32::MAX)
+            .frame(
+                egui::Frame::NONE
+                    .fill(palette.sidebar)
+                    .inner_margin(egui::Margin {
+                        left: DIVIDER_W as i8,
+                        ..Default::default()
+                    }),
+            )
             .show(ui, |ui| {
                 workbench(ui);
             });
-        panels.workbench_width = panel.response.rect.width().max(200.0);
+        let rect = panel.response.rect;
+        ui.painter().rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(rect.left().round(), rect.top()),
+                egui::pos2(rect.left().round() + DIVIDER_W, rect.bottom()),
+            ),
+            0.0,
+            palette.line,
+        );
+        panels.workbench_width = (rect.width() - DIVIDER_W).max(200.0);
     }
 
     // The chat column keeps what is left.

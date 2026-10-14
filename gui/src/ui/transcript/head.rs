@@ -141,7 +141,7 @@ pub(crate) fn show(ui: &mut egui::Ui, head: Head) -> egui::Response {
     );
     let verb_w = verb.size().x;
     ui.painter().galley(
-        egui::pos2(x, mid - verb.size().y / 2.0),
+        egui::pos2(x, crate::theme::line_y(mid, 0.0, &verb)),
         verb,
         head.verb_color,
     );
@@ -178,7 +178,7 @@ pub(crate) fn show(ui: &mut egui::Ui, head: Head) -> egui::Response {
         let galley = one_line(ui, target.text, format, right - chevron_room - x);
         let width = galley.size().x;
         ui.painter().galley(
-            egui::pos2(x, mid - galley.size().y / 2.0),
+            egui::pos2(x, crate::theme::line_y(mid, 0.0, &galley)),
             galley,
             target.color,
         );
@@ -315,7 +315,7 @@ pub(crate) fn paint_meta(
             let galley = ui.painter().layout_no_wrap(text, font, palette.faint);
             let left = right - galley.size().x;
             ui.painter().galley(
-                egui::pos2(left, mid - galley.size().y / 2.0),
+                egui::pos2(left, crate::theme::line_y(mid, 0.0, &galley)),
                 galley,
                 palette.faint,
             );

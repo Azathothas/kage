@@ -85,12 +85,13 @@ pub fn show(
             if let Some(session) = store.active_session() {
                 ui.scope(|ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
-                    ui.label(
-                        egui::RichText::new(project_name(session.cwd.as_deref()))
-                            .size(FS_SM)
-                            .color(palette.muted),
+                    crumb(
+                        ui,
+                        &project_name(session.cwd.as_deref()),
+                        palette.muted,
+                        egui::Sense::hover(),
                     );
-                    ui.label(egui::RichText::new("/").size(FS_SM).color(palette.ghost));
+                    crumb(ui, "/", palette.ghost, egui::Sense::hover());
                     let title = store.display_title(&session.id);
                     rename_or_title(ui, palette, title, events);
                 });
@@ -155,7 +156,10 @@ fn working_pill(ui: &mut egui::Ui, elapsed: &str, palette: &Palette) {
     ui.ctx()
         .request_repaint_after(std::time::Duration::from_millis(250));
     ui.painter().galley(
-        egui::pos2(mark.right() + 6.0, rect.center().y - galley.size().y / 2.0),
+        egui::pos2(
+            mark.right() + 6.0,
+            crate::theme::line_y(rect.center().y, 0.0, &galley),
+        ),
         galley,
         palette.muted,
     );
@@ -177,6 +181,36 @@ fn pill(ui: &mut egui::Ui, palette: &Palette, content: impl FnOnce(&mut egui::Ui
 
 /// The session title, which a double click or the menu turns into an
 /// inline field. Enter or leaving the field names the session; Escape
+/// One crumb of the topbar: its text on the reference's 13px line, as
+/// wide as the text rounded up, cut with an ellipsis where the bar runs
+/// out.
+fn crumb(
+    ui: &mut egui::Ui,
+    text: &str,
+    color: egui::Color32,
+    sense: egui::Sense,
+) -> egui::Response {
+    let line = crate::theme::line_h(FS_SM);
+    let galley = crate::ui::transcript::head::one_line(
+        ui,
+        text.to_owned(),
+        egui::TextFormat::simple(
+            egui::FontId::new(
+                FS_SM,
+                crate::theme::family(crate::theme::FAMILY_BODY_REGULAR),
+            ),
+            color,
+        ),
+        ui.available_width(),
+    );
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(galley.size().x.ceil(), line), sense);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
+    let y = crate::theme::line_y(crate::theme::snap(rect.top()), line, &galley);
+    ui.painter()
+        .galley(egui::pos2(rect.left(), y), galley, color);
+    response
+}
+
 /// drops the edit.
 fn rename_or_title(
     ui: &mut egui::Ui,
@@ -186,12 +220,7 @@ fn rename_or_title(
 ) {
     let draft_id = egui::Id::new(RENAME_DRAFT);
     let Some(mut draft) = ui.data(|data| data.get_temp::<String>(draft_id)) else {
-        let response = ui
-            .add(
-                egui::Label::new(egui::RichText::new(&title).size(FS_SM).color(palette.ink))
-                    .truncate()
-                    .sense(egui::Sense::click()),
-            )
+        let response = crumb(ui, &title, palette.ink_strong, egui::Sense::click())
             .on_hover_text("Double-click to rename");
         if response.double_clicked() {
             start_rename(ui, title);

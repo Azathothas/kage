@@ -166,7 +166,7 @@ impl Welcome {
         // floor keeps a degenerate first frame from collapsing the
         // cards while the panel widths settle.
         let col_w = WELCOME_W.min(pane.width() - 2.0 * 24.0).max(320.0);
-        let left = pane.left() + (pane.width() - col_w) / 2.0;
+        let left = crate::theme::snap(pane.left() + (pane.width() - col_w) / 2.0);
         // The bottom pad is a share of the window's height, not the
         // pane's, as the reference measures it.
         let viewport = ui.ctx().viewport_rect().height();

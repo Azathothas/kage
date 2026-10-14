@@ -624,7 +624,7 @@ pub fn render_decision(
         .layout_no_wrap(label.to_owned(), small.clone(), palette.muted);
     let label_w = label.size().x;
     ui.painter().galley(
-        egui::pos2(x, mid - label.size().y / 2.0),
+        egui::pos2(x, crate::theme::line_y(mid, 0.0, &label)),
         label,
         palette.muted,
     );
@@ -643,7 +643,7 @@ pub fn render_decision(
             ));
         right -= quote.size().x;
         ui.painter().galley(
-            egui::pos2(right, mid - quote.size().y / 2.0),
+            egui::pos2(right, crate::theme::line_y(mid, 0.0, &quote)),
             quote,
             palette.faint,
         );
@@ -656,7 +656,7 @@ pub fn render_decision(
         right - x,
     );
     ui.painter().galley(
-        egui::pos2(x, mid - subject.size().y / 2.0),
+        egui::pos2(x, crate::theme::line_y(mid, 0.0, &subject)),
         subject,
         palette.ink,
     );

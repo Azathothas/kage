@@ -905,7 +905,7 @@ fn folder_row(ui: &mut egui::Ui, name: &str, palette: &Palette) -> egui::Respons
         rect.right() - 8.0 - x,
     );
     ui.painter().galley(
-        egui::pos2(x, mid - galley.size().y / 2.0),
+        egui::pos2(x, crate::theme::line_y(mid, 0.0, &galley)),
         galley,
         palette.ink,
     );

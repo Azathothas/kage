@@ -2720,7 +2720,10 @@ fn centered_column<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -
     let free = ui.available_rect_before_wrap();
     let width = free.width().min(crate::theme::CONTENT_W);
     let rect = egui::Rect::from_min_size(
-        egui::pos2(free.center().x - width / 2.0, free.top()),
+        egui::pos2(
+            crate::theme::snap(free.center().x - width / 2.0),
+            free.top(),
+        ),
         egui::vec2(width, free.height()),
     );
     ui.scope_builder(

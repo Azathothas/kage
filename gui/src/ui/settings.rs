@@ -1358,8 +1358,11 @@ fn theme_option(
         egui::TextFormat::simple(egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)), ink),
         right - x,
     );
-    ui.painter()
-        .galley(egui::pos2(x, mid - label.size().y / 2.0), label, ink);
+    ui.painter().galley(
+        egui::pos2(x, crate::theme::line_y(mid, 0.0, &label)),
+        label,
+        ink,
+    );
     response
 }
 

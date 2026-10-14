@@ -1204,8 +1204,11 @@ fn mode_chip(
         ),
     );
     let text_x = rect.left() + 9.0 + 12.0 + 5.0;
-    ui.painter()
-        .galley(egui::pos2(text_x, mid - galley.size().y / 2.0), galley, fg);
+    ui.painter().galley(
+        egui::pos2(text_x, crate::theme::line_y(mid, 0.0, &galley)),
+        galley,
+        fg,
+    );
     let exit = egui::Rect::from_center_size(
         egui::pos2(rect.right() - 4.0 - 9.0, mid),
         egui::vec2(18.0, 18.0),
@@ -2004,7 +2007,7 @@ fn gauge_head(ui: &mut egui::Ui, used: u64, size: u64, percent: i64, hot: bool, 
         palette.ink_strong,
     );
     ui.painter().galley(
-        egui::pos2(rect.left(), mid - title.size().y / 2.0),
+        egui::pos2(rect.left(), crate::theme::line_y(mid, 0.0, &title)),
         title,
         palette.ink_strong,
     );
@@ -2034,7 +2037,7 @@ fn gauge_head(ui: &mut egui::Ui, used: u64, size: u64, percent: i64, hot: bool, 
     ui.painter().galley(
         egui::pos2(
             chip.left() - 8.0 - totals.size().x,
-            mid - totals.size().y / 2.0,
+            crate::theme::line_y(mid, 0.0, &totals),
         ),
         totals,
         palette.muted,

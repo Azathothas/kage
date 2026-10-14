@@ -242,7 +242,7 @@ impl FindBar {
         );
         right -= counter.size().x;
         ui.painter().galley(
-            egui::pos2(right, mid - counter.size().y / 2.0),
+            egui::pos2(right, crate::theme::line_y(mid, 0.0, &counter)),
             counter,
             palette.faint,
         );
