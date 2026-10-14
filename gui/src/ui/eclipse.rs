@@ -5,11 +5,10 @@
 //! mark sits on any background. The orbit turns the shade around the
 //! disc's center every 2.2 seconds.
 //!
-//! The design's mark fills the crescent with the orb gradient. egui
-//! fills a path with one flat color, so the gradient is built as a
-//! triangle fan with per-vertex colors interpolated along the 135
-//! degree axis, which is what the old canvas did with its own
-//! gradient.
+//! The crescent and its ring render as SVG through the image loader,
+//! so the edges are antialiased the way the reference's paths are, and
+//! the orb gradient runs as the reference's shader runs it. The orbit
+//! steps through a fixed set of positions, so each one rasterizes once.
 
 use std::f32::consts::TAU;
 use std::time::Duration;
@@ -102,57 +101,77 @@ fn crescent(shade: (f32, f32)) -> Option<Vec<(f32, f32)>> {
     Some(points)
 }
 
-/// The crescent as a mesh with the orb gradient interpolated along the
-/// 135 degree axis, which is how the old canvas filled it.
-fn gradient_mesh(points: &[(f32, f32)], palette: &Palette, rect: egui::Rect) -> egui::Mesh {
-    let scale = rect.width().min(rect.height()) / BOX;
-    let to_screen = |(x, y): (f32, f32)| rect.min + egui::vec2(x * scale, y * scale);
-    let start = palette.orb_1;
-    let end = palette.orb_2;
-    let mut mesh = egui::Mesh::default();
-    let vertex = |p: (f32, f32), color: egui::Color32| egui::epaint::Vertex {
-        pos: to_screen(p),
-        uv: egui::epaint::WHITE_UV,
-        color,
-    };
+/// How many positions one orbit steps through.
+const ORBIT_STEPS: u32 = 120;
 
-    // The gradient axis: 135 degrees, the design's diagonal.
-    let axis = egui::vec2(-1.0, 1.0);
-    let project = |p: (f32, f32)| {
-        let v = to_screen(p) - rect.min;
-        v.x * axis.x + v.y * axis.y
-    };
-    let lo = points
-        .iter()
-        .map(|p| project(*p))
-        .fold(f32::INFINITY, f32::min);
-    let hi = points
-        .iter()
-        .map(|p| project(*p))
-        .fold(f32::NEG_INFINITY, f32::max);
-    let span = (hi - lo).max(f32::EPSILON);
-    let mix = |p: (f32, f32)| {
-        let t = ((project(p) - lo) / span).clamp(0.0, 1.0);
-        egui::Color32::from_rgb(
-            (f32::from(start.r()) + (f32::from(end.r()) - f32::from(start.r())) * t) as u8,
-            (f32::from(start.g()) + (f32::from(end.g()) - f32::from(start.g())) * t) as u8,
-            (f32::from(start.b()) + (f32::from(end.b()) - f32::from(start.b())) * t) as u8,
-        )
-    };
-    let center = {
-        let (sx, sy): (f32, f32) = points
-            .iter()
-            .fold((0.0, 0.0), |(ax, ay), p| (ax + p.0, ay + p.1));
-        (sx / points.len() as f32, sy / points.len() as f32)
-    };
-    mesh.vertices.push(vertex(center, mix(center)));
-    let count = points.len();
-    for (index, p) in points.iter().enumerate() {
-        mesh.vertices.push(vertex(*p, mix(*p)));
-        let next = (index + 1) % count;
-        mesh.add_triangle(0, (index + 1) as u32, (next + 1) as u32);
+/// The mark as SVG in its 24-unit box, the shade `turn` of the way
+/// round: the crescent on the orb gradient, then the ring.
+fn svg(turn: f32, palette: &Palette) -> String {
+    use crate::theme::svg_color;
+
+    let shade = shade_center(turn);
+    let mut body = String::new();
+    if let (Some((first, second)), Some(points)) = (crossings(shade), crescent(shade)) {
+        // The reference's gradient: along 135 degrees over the path's
+        // bounds, the short side stretched to the long one.
+        let (x0, y0, x1, y1) = points.iter().fold(
+            (
+                f32::INFINITY,
+                f32::INFINITY,
+                f32::NEG_INFINITY,
+                f32::NEG_INFINITY,
+            ),
+            |(a, b, c, d), p| (a.min(p.0), b.min(p.1), c.max(p.0), d.max(p.1)),
+        );
+        let (w, h) = (x1 - x0, y1 - y0);
+        let (mut dx, mut dy) = (
+            std::f32::consts::FRAC_1_SQRT_2,
+            std::f32::consts::FRAC_1_SQRT_2,
+        );
+        if w > h {
+            dy *= h / w;
+        } else {
+            dx *= w / h;
+        }
+        let long = if dx.abs() > dy.abs() { w } else { h };
+        let len = (dx * dx + dy * dy).sqrt();
+        let (nx, ny) = (dx / len * long / 2.0, dy / len * long / 2.0);
+        let (cx, cy) = (x0 + w / 2.0, y0 + h / 2.0);
+        body = format!(
+            concat!(
+                "<defs><linearGradient id=\"g\" gradientUnits=\"userSpaceOnUse\" ",
+                "x1=\"{:.3}\" y1=\"{:.3}\" x2=\"{:.3}\" y2=\"{:.3}\">",
+                "<stop offset=\"0\" {}/><stop offset=\"1\" {}/></linearGradient></defs>",
+                "<path d=\"M{:.3} {:.3} A{DISC_R} {DISC_R} 0 1 0 {:.3} {:.3} ",
+                "A{SHADE_R} {SHADE_R} 0 0 1 {:.3} {:.3} Z\" fill=\"url(#g)\"/>"
+            ),
+            cx - nx,
+            cy - ny,
+            cx + nx,
+            cy + ny,
+            svg_color("stop-color", "stop-opacity", palette.orb_1),
+            svg_color("stop-color", "stop-opacity", palette.orb_2),
+            first.0,
+            first.1,
+            second.0,
+            second.1,
+            first.0,
+            first.1,
+            DISC_R = DISC_R,
+            SHADE_R = SHADE_R,
+        );
     }
-    mesh
+    format!(
+        concat!(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{box}\" height=\"{box}\" viewBox=\"0 0 {box} {box}\">",
+            "{}<circle cx=\"12\" cy=\"12\" r=\"{}\" fill=\"none\" stroke-width=\"{}\" {}/></svg>"
+        ),
+        body,
+        DISC_R,
+        RING_W,
+        svg_color("stroke", "stroke-opacity", palette.line_strong),
+        box = BOX,
+    )
 }
 
 /// The mark at `size` pixels in `rect`. With `orbit` the shade turns on
@@ -164,26 +183,18 @@ pub fn paint(
     origin: Option<Instant>,
     palette: &Palette,
 ) {
-    let turn = turn_of(origin);
+    use crate::icons::PaintSnapped as _;
+    use std::hash::{Hash as _, Hasher as _};
+
+    let step = (turn_of(origin) * ORBIT_STEPS as f32).round() as u32 % ORBIT_STEPS;
+    let svg = svg(step as f32 / ORBIT_STEPS as f32, palette);
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    svg.hash(&mut hasher);
+    let uri = format!("bytes://kage-eclipse-{:016x}.svg", hasher.finish());
     let mark = egui::Rect::from_center_size(rect.center(), egui::vec2(size, size));
-    let shade = shade_center(turn);
-    let painter = ui.painter();
-    if let Some(points) = crescent(shade) {
-        painter.add(egui::Shape::mesh(gradient_mesh(&points, palette, mark)));
-    }
-    // The ring, in the palette's stronger line.
-    let ring: Vec<egui::Pos2> = arc(12.0, 12.0, DISC_R, 0.0, TAU, ARC_STEPS)
-        .into_iter()
-        .map(|(x, y)| {
-            let scale = mark.width() / BOX;
-            mark.min + egui::vec2(x * scale, y * scale)
-        })
-        .collect();
-    let scale = mark.width() / BOX;
-    painter.add(egui::Shape::line(
-        ring,
-        egui::Stroke::new(RING_W * scale, palette.line_strong),
-    ));
+    egui::Image::from_bytes(uri, svg.into_bytes())
+        .fit_to_exact_size(mark.size())
+        .paint_snapped(ui, mark);
 }
 
 /// The mark at `size` pixels, drawn with the active palette. With

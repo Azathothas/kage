@@ -234,6 +234,17 @@ pub fn half_lead(galley: &egui::Galley) -> f32 {
         })
 }
 
+/// `color` as SVG attributes: `color_attr` names the hex color and
+/// `opacity_attr` its alpha, as SVG keeps them apart.
+#[must_use]
+pub fn svg_color(color_attr: &str, opacity_attr: &str, color: Color32) -> String {
+    let [r, g, b, a] = color.to_srgba_unmultiplied();
+    format!(
+        "{color_attr}=\"#{r:02x}{g:02x}{b:02x}\" {opacity_attr}=\"{:.3}\"",
+        f32::from(a) / 255.0
+    )
+}
+
 /// `value` snapped to a whole pixel the way the reference snaps text
 /// lines: to the nearest, with a half rounding down.
 #[must_use]

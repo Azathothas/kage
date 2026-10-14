@@ -436,12 +436,12 @@ fn wordmark(ui: &mut egui::Ui, palette: &Palette, dark: bool) {
     let name = ui
         .painter()
         .layout_no_wrap("kage".to_owned(), font.clone(), palette.ink_strong);
-    let total = GLYPH_PX + WORDMARK_GAP + name.size().x;
+    let total = GLYPH_PX + WORDMARK_GAP + name.size().x.ceil();
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), GLYPH_PX),
         egui::Sense::hover(),
     );
-    let left = rect.left() + (rect.width() - total) / 2.0;
+    let left = crate::theme::snap(rect.left() + (rect.width() - total) / 2.0);
     let glyph =
         egui::Rect::from_min_size(egui::pos2(left, rect.top()), egui::vec2(GLYPH_PX, GLYPH_PX));
     // The toolkit's SVG paints the path one flat color, and the file

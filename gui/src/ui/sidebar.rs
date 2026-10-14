@@ -486,16 +486,14 @@ fn brand_row(ui: &mut egui::Ui, version: Option<&str>, events: &mut Vec<SidebarE
         egui::vec2(ui.available_width(), BRAND_H),
         egui::Sense::hover(),
     );
-    let painter = ui.painter();
     let radius = 11.0;
     let center = egui::pos2(rect.left() + 6.0 + radius, rect.center().y);
-    painter.add(orb(center, radius, palette.orb_1, palette.orb_2));
-    painter.circle_filled(center + egui::vec2(5.12, -1.75), 7.79, palette.sidebar);
-    painter.circle_stroke(
-        center,
-        radius - 0.5,
-        egui::Stroke::new(1.0, palette.line_strong),
+    eclipse_mark(
+        ui,
+        egui::Rect::from_center_size(center, egui::vec2(2.0 * radius, 2.0 * radius)),
+        palette,
     );
+    let painter = ui.painter();
     let wordmark = painter.text(
         egui::pos2(center.x + radius + 9.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
@@ -522,25 +520,38 @@ fn brand_row(ui: &mut egui::Ui, version: Option<&str>, events: &mut Vec<SidebarE
     }
 }
 
-/// A disc filled with a diagonal gradient from `from` at its top left
-/// to `to` at its bottom right.
-fn orb(center: egui::Pos2, radius: f32, from: egui::Color32, to: egui::Color32) -> egui::Shape {
-    const STEPS: usize = 48;
-    let mut mesh = egui::Mesh::default();
-    let shade = |at: egui::Pos2| {
-        let t = ((at.x - center.x) + (at.y - center.y)) / (4.0 * radius) + 0.5;
-        from.lerp_to_gamma(to, t.clamp(0.0, 1.0))
-    };
-    mesh.colored_vertex(center, shade(center));
-    for step in 0..=STEPS {
-        let angle = step as f32 / STEPS as f32 * std::f32::consts::TAU;
-        let at = center + egui::vec2(angle.cos(), angle.sin()) * radius;
-        mesh.colored_vertex(at, shade(at));
-    }
-    for step in 0..STEPS as u32 {
-        mesh.add_triangle(0, step + 1, step + 2);
-    }
-    egui::Shape::mesh(mesh)
+/// The eclipse brand mark in `rect`: the gradient disc, its 1px ring,
+/// and the backdrop-colored bite across its upper right, clipped to
+/// the disc, as the reference draws it. It renders through the SVG
+/// rasterizer, so its edges are as crisp as the reference's. The
+/// gradient runs the reference's way: across the mark's width along
+/// the 135 degree diagonal, centered.
+fn eclipse_mark(ui: &egui::Ui, rect: egui::Rect, palette: &Palette) {
+    use crate::theme::svg_color;
+    use std::hash::{Hash as _, Hasher as _};
+
+    let svg = format!(
+        concat!(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"22\" height=\"22\" viewBox=\"0 0 22 22\">",
+            "<defs><linearGradient id=\"g\" gradientUnits=\"userSpaceOnUse\" x1=\"3.222\" y1=\"3.222\" x2=\"18.778\" y2=\"18.778\">",
+            "<stop offset=\"0\" {}/><stop offset=\"1\" {}/></linearGradient>",
+            "<clipPath id=\"c\"><circle cx=\"11\" cy=\"11\" r=\"11\"/></clipPath></defs>",
+            "<circle cx=\"11\" cy=\"11\" r=\"11\" fill=\"url(#g)\"/>",
+            "<circle cx=\"11\" cy=\"11\" r=\"10.5\" fill=\"none\" {}/>",
+            "<circle cx=\"16.12\" cy=\"9.25\" r=\"7.79\" {} clip-path=\"url(#c)\"/>",
+            "</svg>"
+        ),
+        svg_color("stop-color", "stop-opacity", palette.orb_1),
+        svg_color("stop-color", "stop-opacity", palette.orb_2),
+        svg_color("stroke", "stroke-opacity", palette.line_strong),
+        svg_color("fill", "fill-opacity", palette.sidebar),
+    );
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    svg.hash(&mut hasher);
+    let uri = format!("bytes://kage-mark-{:016x}.svg", hasher.finish());
+    egui::Image::from_bytes(uri, svg.into_bytes())
+        .fit_to_exact_size(rect.size())
+        .paint_snapped(ui, rect);
 }
 
 /// The New session and Search nav rows.
