@@ -192,6 +192,7 @@ fn agent_files(workdir: &Path) -> serde_json::Map<String, Value> {
             out.insert(name, Value::String(text));
         }
     }
+    out.sort_keys();
     out
 }
 
@@ -221,6 +222,7 @@ fn skill_files(workdir: &Path) -> serde_json::Map<String, Value> {
             out.insert(name, Value::String(text));
         }
     }
+    out.sort_keys();
     out
 }
 
