@@ -26,7 +26,7 @@ pub mod icon;
 #[allow(dead_code)]
 pub mod icons;
 pub mod launch;
-mod logos;
+pub mod logos;
 mod modes;
 #[cfg(not(target_arch = "wasm32"))]
 mod picker;

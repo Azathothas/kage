@@ -26,8 +26,9 @@ pub const CANVAS: egui::Vec2 = egui::Vec2::new(1000.0, 760.0);
 pub const NARROW: egui::Vec2 = egui::Vec2::new(900.0, 700.0);
 
 /// Installs the fonts, the icons and the shadow theme on the first
-/// frame. Returns `true` while that install is still owed, so the
-/// caller returns from its draw without laying anything out.
+/// frame, and keeps provider logos from fetching. Returns `true` while
+/// that install is still owed, so the caller returns from its draw
+/// without laying anything out.
 ///
 /// egui refuses a family it has no face for, so a probe that drew
 /// before this ran panicked on the first `RichText::family`.
@@ -35,6 +36,7 @@ pub fn theme_installed(installed: &mut bool, ctx: &egui::Context) -> bool {
     if *installed {
         return false;
     }
+    kage_desktop::logos::stay_offline();
     kage_desktop::theme::install_fonts(ctx);
     kage_desktop::icons::install(ctx);
     kage_desktop::theme::apply_choice(
@@ -46,12 +48,13 @@ pub fn theme_installed(installed: &mut bool, ctx: &egui::Context) -> bool {
 }
 
 /// Installs the fonts, the icons and the named theme on this frame,
-/// every time it is called.
+/// every time it is called, and keeps provider logos from fetching.
 ///
 /// A measurement probe (row windows, font metrics, panel geometry)
 /// lays out on every frame and needs the theme there, not once. The
 /// once-per-probe contract is [`theme_installed`].
 pub fn install_theme(ctx: &egui::Context, theme: &str) {
+    kage_desktop::logos::stay_offline();
     kage_desktop::theme::install_fonts(ctx);
     kage_desktop::icons::install(ctx);
     kage_desktop::theme::apply_choice(

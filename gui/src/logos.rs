@@ -26,6 +26,7 @@
 use std::collections::BTreeMap;
 use std::io::Read as _;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
 /// The logo an id resolves to, after at most one fetch.
@@ -47,6 +48,16 @@ enum Logo {
 /// instead of stacking fetches.
 static CACHE: LazyLock<Mutex<BTreeMap<String, Logo>>> =
     LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
+static OFFLINE: AtomicBool = AtomicBool::new(false);
+
+/// Stops this process fetching logos, so an id it has not seen yet
+/// resolves to nothing. The probes call it: they must not reach the
+/// network or the user's cache, and a fetch that lands mid-frame
+/// would repaint under them.
+pub fn stay_offline() {
+    OFFLINE.store(true, Ordering::Relaxed);
+}
 
 /// Kage ids whose models.dev logo lives under another name. Only ids
 /// kage's own catalog registers get aliases; a custom provider's id
@@ -177,7 +188,7 @@ pub fn ensure(
     cache.insert(id.to_owned(), Logo::Missing);
     drop(cache);
     #[cfg(not(target_arch = "wasm32"))]
-    {
+    if !OFFLINE.load(Ordering::Relaxed) {
         let id = id.to_owned();
         let site = site.map(str::to_owned);
         let ctx = ctx.clone();
