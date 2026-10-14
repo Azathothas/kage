@@ -30,7 +30,6 @@ const INLINE_CODE_SIZE: f32 = 12.0;
 pub(crate) struct Span {
     text: String,
     strong: bool,
-    em: bool,
     strike: bool,
     code: bool,
 }
@@ -75,7 +74,7 @@ pub(crate) fn parse(text: &str) -> Option<Block> {
         | Options::ENABLE_DEFINITION_LIST;
     let mut stack: Vec<Open> = Vec::new();
     let mut done: Vec<Block> = Vec::new();
-    let (mut strong, mut em, mut strike) = (0u32, 0u32, 0u32);
+    let (mut strong, mut strike) = (0u32, 0u32);
     for event in Parser::new_ext(text, options) {
         match event {
             Event::Start(tag) => {
@@ -92,14 +91,14 @@ pub(crate) fn parse(text: &str) -> Option<Block> {
                     Tag::List(start) => stack.push(Open::List(start, Vec::new())),
                     Tag::Item => stack.push(Open::Item(Vec::new(), Vec::new())),
                     Tag::Strong => strong += 1,
-                    Tag::Emphasis => em += 1,
+                    Tag::Emphasis => {}
                     Tag::Strikethrough => strike += 1,
                     _ => return None,
                 }
             }
             Event::End(tag) => match tag {
                 TagEnd::Strong => strong = strong.saturating_sub(1),
-                TagEnd::Emphasis => em = em.saturating_sub(1),
+                TagEnd::Emphasis => {}
                 TagEnd::Strikethrough => strike = strike.saturating_sub(1),
                 _ => {
                     let block = match stack.pop()? {
@@ -130,14 +129,14 @@ pub(crate) fn parse(text: &str) -> Option<Block> {
                 if let Some(Open::Code(code)) = stack.last_mut() {
                     code.push_str(&text);
                 } else {
-                    inline(&mut stack)?.push(span(&text, strong, em, strike, false));
+                    inline(&mut stack)?.push(span(&text, strong, strike, false));
                 }
             }
             Event::Code(text) => {
-                inline(&mut stack)?.push(span(&text, strong, em, strike, true));
+                inline(&mut stack)?.push(span(&text, strong, strike, true));
             }
-            Event::SoftBreak => inline(&mut stack)?.push(span(" ", strong, em, strike, false)),
-            Event::HardBreak => inline(&mut stack)?.push(span("\n", strong, em, strike, false)),
+            Event::SoftBreak => inline(&mut stack)?.push(span(" ", strong, strike, false)),
+            Event::HardBreak => inline(&mut stack)?.push(span("\n", strong, strike, false)),
             Event::Rule => {
                 flush_item(&mut stack);
                 match stack.last_mut() {
@@ -186,11 +185,10 @@ fn inline(stack: &mut [Open]) -> Option<&mut Vec<Span>> {
     }
 }
 
-fn span(text: &str, strong: u32, em: u32, strike: u32, code: bool) -> Span {
+fn span(text: &str, strong: u32, strike: u32, code: bool) -> Span {
     Span {
         text: text.to_owned(),
         strong: strong > 0,
-        em: em > 0,
         strike: strike > 0,
         code,
     }
@@ -390,7 +388,6 @@ fn layout(
         let mut format = egui::TextFormat {
             font_id: egui::FontId::new(font_size, family(face)),
             color: ink,
-            italics: span.em,
             valign: egui::Align::Center,
             ..Default::default()
         };

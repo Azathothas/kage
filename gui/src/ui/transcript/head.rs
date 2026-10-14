@@ -58,8 +58,6 @@ pub(crate) struct Target {
     pub font: egui::FontId,
     /// Its color.
     pub color: egui::Color32,
-    /// Whether it slants, as the live reasoning peek does.
-    pub italics: bool,
 }
 
 impl Target {
@@ -69,7 +67,6 @@ impl Target {
             text: text.into(),
             font: egui::FontId::new(12.0, family(FAMILY_MONO_REGULAR)),
             color: palette.muted,
-            italics: false,
         }
     }
 }
@@ -175,7 +172,6 @@ pub(crate) fn show(ui: &mut egui::Ui, head: Head) -> egui::Response {
         let format = egui::TextFormat {
             font_id: target.font,
             color: target.color,
-            italics: target.italics,
             ..Default::default()
         };
         let galley = one_line(ui, target.text, format, right - chevron_room - x);

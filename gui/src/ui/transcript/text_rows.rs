@@ -439,7 +439,6 @@ pub fn render_thinking(
         text: last_sentence(text),
         font: egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
         color: palette.faint,
-        italics: true,
     });
     let response = head::show(
         ui,
@@ -639,7 +638,6 @@ pub fn render_decision(
                 egui::TextFormat {
                     font_id: small,
                     color: palette.faint,
-                    italics: true,
                     ..Default::default()
                 },
             ));

@@ -46,9 +46,10 @@ pub struct Entry {
     /// The text this entry last rendered, so a repeat render with no
     /// change is not a parse.
     last_text: Option<String>,
-    /// The top-level blocks of `last_text`, each read into the block
-    /// the transcript renders itself, or `None` for the viewer's.
-    blocks: Vec<(Range<usize>, Option<super::prose::Block>)>,
+    /// The top-level blocks of `last_text`, each as the source the
+    /// viewer renders and the block the transcript renders itself, or
+    /// `None` for the viewer's.
+    blocks: Vec<(String, Option<super::prose::Block>)>,
 }
 
 /// The parsed form of the transcript, keyed by the entry's id.
@@ -86,8 +87,8 @@ impl Pipeline {
             entry.blocks = blocks(text)
                 .into_iter()
                 .map(|range| {
-                    let block = super::prose::parse(&text[range.clone()]);
-                    (range, block)
+                    let source = &text[range];
+                    (upright(source), super::prose::parse(source))
                 })
                 .collect();
             self.parses.record(id);
@@ -117,7 +118,7 @@ impl Pipeline {
             ui.spacing_mut().item_spacing.y = 0.0;
             let palette = crate::theme::Palette::active_of(ui.ctx());
             let mut prev = None;
-            for (n, (range, block)) in entry.blocks.iter().enumerate() {
+            for (n, (source, block)) in entry.blocks.iter().enumerate() {
                 if n > 0 {
                     ui.add_space(super::prose::gap_after(prev));
                 }
@@ -127,7 +128,7 @@ impl Pipeline {
                         egui_commonmark::CommonMarkViewer::new()
                             .syntax_theme_light(THEME_DAWN)
                             .syntax_theme_dark(THEME_SHADOW)
-                            .show(ui, &mut entry.cache, &text[range.clone()]);
+                            .show(ui, &mut entry.cache, source);
                     }
                 });
                 prev = block.as_ref();
@@ -176,6 +177,33 @@ fn blocks(text: &str) -> Vec<Range<usize>> {
         }
     }
     if out.is_empty() { whole() } else { out }
+}
+
+/// `source` with its emphasis markers dropped, so the viewer sets
+/// emphasized text upright, as the reference does for want of an
+/// italic face.
+fn upright(source: &str) -> String {
+    use pulldown_cmark::{Event, Options, Parser, Tag};
+
+    let options = Options::ENABLE_TABLES
+        | Options::ENABLE_TASKLISTS
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_FOOTNOTES
+        | Options::ENABLE_DEFINITION_LIST;
+    let mut cut: Vec<usize> = Parser::new_ext(source, options)
+        .into_offset_iter()
+        .filter(|(event, range)| matches!(event, Event::Start(Tag::Emphasis)) && range.len() > 1)
+        .flat_map(|(_, range)| [range.start, range.end - 1])
+        .collect();
+    cut.sort_unstable();
+    let mut out = String::with_capacity(source.len());
+    let mut from = 0;
+    for at in cut {
+        out.push_str(&source[from..at]);
+        from = at + 1;
+    }
+    out.push_str(&source[from..]);
+    out
 }
 
 /// The syntect theme the kage palette implies, as `.tmTheme` bytes.
@@ -238,7 +266,7 @@ pub fn theme_bytes(palette: &crate::theme::Palette) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Parses, Pipeline, blocks, theme_bytes};
+    use super::{Parses, Pipeline, blocks, theme_bytes, upright};
 
     #[test]
     fn the_text_splits_into_its_top_level_blocks() {
@@ -259,6 +287,17 @@ mod tests {
     fn a_text_with_link_definitions_stays_whole() {
         let text = "See [the docs][d].\n\n[d]: https://example.com";
         assert_eq!(blocks(text), vec![0..text.len()]);
+    }
+
+    #[test]
+    fn the_viewer_source_drops_only_emphasis_markers() {
+        assert_eq!(
+            upright("| a | b |\n|---|---|\n| *x* | _y_ |"),
+            "| a | b |\n|---|---|\n| x | y |"
+        );
+        assert_eq!(upright("***both*** and **bold**"), "**both** and **bold**");
+        assert_eq!(upright("`*code*` and 2 * 3 * 4"), "`*code*` and 2 * 3 * 4");
+        assert_eq!(upright("[*link*](https://e.com)"), "[link](https://e.com)");
     }
     use crate::theme::Palette;
 
