@@ -477,3 +477,37 @@ fn a_focused_form_field_draws_the_reference_focus_border() {
         "the focused border is not drawn in the strong ink"
     );
 }
+
+#[test]
+fn a_directory_row_chooses_its_provider_from_its_detail_line() {
+    use egui_kittest::kittest::NodeT as _;
+    let mut harness = harness_for(configured());
+    harness.state_mut().1.open(Section::Providers);
+    settle(&mut harness);
+    harness.get_by_label("Add provider").click();
+    harness.run();
+    harness.get_by_label("From models.dev").click();
+    harness.run();
+    harness.run();
+    let row = harness
+        .get_by_label("Lab")
+        .accesskit_node()
+        .bounding_box()
+        .expect("the row has bounds");
+    // The row is one target holding both lines, as the reference's is,
+    // so a press on its second line chooses the provider.
+    assert!(
+        row.height() >= 44.0,
+        "the row holds the name and the detail: {row:?}"
+    );
+    let detail = egui::pos2(row.x0 as f32 + 20.0, row.y1 as f32 - 8.0);
+    harness.hover_at(detail);
+    harness.drag_at(detail);
+    harness.drop_at(detail);
+    harness.run();
+    assert_eq!(
+        testutil::count(&harness, "Select all"),
+        1,
+        "the provider's models show"
+    );
+}

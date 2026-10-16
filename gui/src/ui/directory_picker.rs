@@ -283,20 +283,9 @@ impl DirectoryPicker {
                     ""
                 },
             );
-            let row = egui::Button::new(
-                egui::RichText::new(provider.name.clone())
-                    .size(FS_SM)
-                    .color(palette.ink),
-            )
-            .fill(egui::Color32::TRANSPARENT)
-            .stroke(egui::Stroke::NONE)
-            .corner_radius(egui::CornerRadius::same(6))
-            .min_size(egui::vec2(ui.available_width().max(120.0), 34.0));
-            let response = ui.add(row).on_hover_text(detail.clone());
-            if response.clicked() {
+            if provider_row(ui, &provider.name, &detail, palette).clicked() {
                 edit.chosen = Some(ix);
             }
-            ui.label(egui::RichText::new(detail).size(FS_XS).color(palette.muted));
         }
     }
 
@@ -446,6 +435,45 @@ impl PickerEdit {
             picker.asked.import = true;
         }
     }
+}
+
+/// One provider in the list: its name over its endpoint and model
+/// count, the whole row one target, as the reference draws it.
+fn provider_row(ui: &mut egui::Ui, name: &str, detail: &str, palette: &Palette) -> egui::Response {
+    use crate::theme::{FAMILY_BODY_REGULAR, family, line_h};
+    let name_h = line_h(FS_SM);
+    let detail_h = line_h(FS_XS);
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), 8.0 + name_h + 2.0 + detail_h + 8.0),
+        egui::Sense::click(),
+    );
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name));
+    if response.hovered() {
+        ui.painter().rect_filled(
+            rect,
+            egui::CornerRadius::same(crate::theme::R_MD as u8),
+            palette.fill_hover,
+        );
+    }
+    let width = rect.width() - 24.0;
+    let x = rect.left() + 12.0;
+    let line = |text: &str, size: f32, color: egui::Color32| {
+        crate::ui::transcript::head::one_line(
+            ui,
+            text.to_owned(),
+            egui::TextFormat::simple(egui::FontId::new(size, family(FAMILY_BODY_REGULAR)), color),
+            width,
+        )
+    };
+    let top = rect.top() + 8.0;
+    let galley = line(name, FS_SM, palette.ink);
+    let y = crate::theme::line_y(top, name_h, &galley);
+    ui.painter().galley(egui::pos2(x, y), galley, palette.ink);
+    let galley = line(detail, FS_XS, palette.muted);
+    let y = crate::theme::line_y(top + name_h + 2.0, detail_h, &galley);
+    ui.painter().galley(egui::pos2(x, y), galley, palette.muted);
+    response
 }
 
 /// The entry provider `provider` makes with the models in `picked`.
