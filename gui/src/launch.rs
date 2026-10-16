@@ -1129,6 +1129,12 @@ impl ShellApp {
             });
         };
         crate::ui::shell::show(ui, &mut panels, sidebar_draw, chat, workbench);
+        // The real store comes back before the bar's and the rows'
+        // asks run: carried out earlier, they would land on the empty
+        // placeholder `store_take` left and vanish with it.
+        self.shell.sidebar = sidebar.into_inner();
+        self.shell.store = store.into_inner();
+        self.shell.workbench = workbench_state.into_inner();
         for event in topbar_events.into_inner() {
             match event {
                 crate::ui::topbar::TopbarEvent::ShowSidebar => panels.toggle_sidebar(),
@@ -1144,9 +1150,6 @@ impl ShellApp {
         for action in std::mem::take(&mut self.row_actions) {
             self.carry_row(ui.ctx(), &mut panels, action);
         }
-        self.shell.sidebar = sidebar.into_inner();
-        self.shell.store = store.into_inner();
-        self.shell.workbench = workbench_state.into_inner();
         let sidebar_events = sidebar_events.into_inner();
         // The palette draws from this frame's clone, so an open from
         // the sidebar has to land in the clone: opening the field

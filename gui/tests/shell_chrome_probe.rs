@@ -213,3 +213,16 @@ fn renaming_from_the_session_menu_opens_the_field_with_focus() {
         "Esc closes the field"
     );
 }
+
+#[test]
+fn a_session_menu_action_lands_on_the_live_store() {
+    let mut harness = harness(egui::vec2(1200.0, 800.0));
+    booted(&mut harness);
+    harness.get_by_label("Session actions").click();
+    steps(&mut harness, 3);
+    harness.get_by_label("Pin").click();
+    steps(&mut harness, 3);
+    harness.get_by_label("Session actions").click();
+    steps(&mut harness, 3);
+    assert!(shows(&harness, "Unpin"), "the pin held");
+}
