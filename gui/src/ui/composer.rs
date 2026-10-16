@@ -2,9 +2,9 @@
 //!
 //! The composer holds one plain-text draft. A leading `/command` and an
 //! `@mention` are detected against the session's available commands and
-//! the filesystem listing, and the active token draws as a chip on the
-//! input's edge, but the stored value stays byte-identical to what was
-//! typed: the token is a rendering, never an edit.
+//! the filesystem listing, and the active token draws in the accent
+//! color in place, but the stored value stays byte-identical to what
+//! was typed: the token is a rendering, never an edit.
 //!
 //! The key table: Enter sends by default (or adds a newline, with the
 //! preference's Ctrl+Enter send), Shift+Enter adds a newline, Ctrl+Enter
@@ -176,6 +176,47 @@ pub fn command_len(text: &str, commands: &[Value]) -> Option<usize> {
     (!name.is_empty() && known).then_some(1 + name.len())
 }
 
+/// The field's layout job: `text` in the body font with `ink`, the
+/// token's bytes in `accent`, wrapped at `wrap_width` and keeping
+/// trailing whitespace as the field's default layouter does. The line
+/// height stays unset; the layouter sets it from the live fonts.
+fn token_job(
+    text: &str,
+    wrap_width: f32,
+    font_id: egui::FontId,
+    ink: egui::Color32,
+    accent: egui::Color32,
+    token: Option<std::ops::Range<usize>>,
+) -> egui::text::LayoutJob {
+    let mut job =
+        egui::text::LayoutJob::simple(text.to_owned(), font_id, ink, wrap_width);
+    job.keep_trailing_whitespace = true;
+    let Some(range) = token else {
+        return job;
+    };
+    let base = job.sections[0].format.clone();
+    let mut marked = base.clone();
+    marked.color = accent;
+    let section = |start: usize, end: usize, format: egui::TextFormat| egui::text::LayoutSection {
+        leading_space: 0.0,
+        byte_range: egui::text::ByteIndex(start)..egui::text::ByteIndex(end),
+        format,
+    };
+    job.sections = if range.start == 0 {
+        vec![
+            section(0, range.end, marked),
+            section(range.end, text.len(), base),
+        ]
+    } else {
+        vec![
+            section(0, range.start, base.clone()),
+            section(range.start, range.end, marked),
+            section(range.end, text.len(), base),
+        ]
+    };
+    job
+}
+
 /// The slash menu rows the session's available commands deliver for
 /// `query`, in the order the agent listed them.
 #[must_use]
@@ -296,18 +337,25 @@ impl Draft {
     /// under the caret, or `None` when no token is active.
     #[must_use]
     pub fn token(&self, commands: &[Value]) -> Option<String> {
+        self.token_range(commands)
+            .map(|range| self.text[range].to_owned())
+    }
+
+    /// The byte range of the active `/command` or the `@mention` under
+    /// the caret, the text `token` names.
+    #[must_use]
+    pub fn token_range(&self, commands: &[Value]) -> Option<std::ops::Range<usize>> {
         if let Some(len) = command_len(&self.text, commands) {
-            return Some(self.text[..len].to_owned());
+            return Some(0..len);
         }
-        match self.suggest()? {
-            Suggest::Mention { at, .. } => {
-                let end = self.text[self.caret..]
-                    .find(char::is_whitespace)
-                    .map_or(self.text.len(), |at| self.caret + at);
-                Some(self.text[at..end].to_owned())
-            }
-            Suggest::Slash { .. } => None,
-        }
+        let at = match self.suggest()? {
+            Suggest::Mention { at, .. } => at,
+            Suggest::Slash { .. } => return None,
+        };
+        let end = self.text[self.caret..]
+            .find(char::is_whitespace)
+            .map_or(self.text.len(), |off| self.caret + off);
+        Some(at..end)
     }
 
     /// The byte offset the mention token under the caret starts at,
@@ -384,6 +432,36 @@ mod tests {
             None,
             "a bare slash is not a command"
         );
+    }
+
+    #[test]
+    fn the_token_job_marks_only_the_tokens_bytes() {
+        let font = egui::FontId::monospace(12.0);
+        let ink = egui::Color32::WHITE;
+        let accent = egui::Color32::RED;
+        let job = token_job("/plan on", 200.0, font.clone(), ink, accent, Some(0..5));
+        let spans: Vec<(std::ops::Range<usize>, egui::Color32)> = job
+            .sections
+            .iter()
+            .map(|s| (s.byte_range.start.0..s.byte_range.end.0, s.format.color))
+            .collect();
+        assert_eq!(spans, vec![(0..5, accent), (5..8, ink)]);
+
+        let job = token_job("fix @a/b now", 200.0, font.clone(), ink, accent, Some(4..8));
+        let spans: Vec<(std::ops::Range<usize>, egui::Color32)> = job
+            .sections
+            .iter()
+            .map(|s| (s.byte_range.start.0..s.byte_range.end.0, s.format.color))
+            .collect();
+        assert_eq!(
+            spans,
+            vec![(0..4, ink), (4..8, accent), (8..12, ink)],
+            "a mention mid-line splits three ways"
+        );
+
+        let job = token_job("just words", 200.0, font, ink, accent, None);
+        assert_eq!(job.sections.len(), 1);
+        assert_eq!(job.sections[0].format.color, ink);
     }
 
     #[test]
@@ -475,15 +553,18 @@ mod tests {
     }
 
     #[test]
-    fn the_token_chip_names_the_active_command_or_mention() {
+    fn the_active_token_names_the_command_or_mention() {
         let commands = vec![serde_json::json!({"name": "review"})];
         let draft = Draft::new("/plan on");
         assert_eq!(draft.token(&commands).as_deref(), Some("/plan"));
+        assert_eq!(draft.token_range(&commands), Some(0..5));
         let mut draft = Draft::new("fix @src/main.rs now");
         draft.caret = 15;
         assert_eq!(draft.token(&commands).as_deref(), Some("@src/main.rs"));
+        assert_eq!(draft.token_range(&commands), Some(4..16));
         let draft = Draft::new("just words");
         assert_eq!(draft.token(&commands), None);
+        assert_eq!(draft.token_range(&commands), None);
     }
 
     #[test]
@@ -787,7 +868,7 @@ const SUGGEST_W: f32 = 460.0;
 /// The suggestion surface's max height, before it scrolls.
 const SUGGEST_MAX_H: f32 = 300.0;
 
-/// The composer's input surface: the text field, its token chip and
+/// The composer's input surface: the text field, its token color and
 /// its send or stop control.
 ///
 /// The field holds one [`Draft`]. Enter sends, or adds a newline when
@@ -840,9 +921,9 @@ impl Composer {
     }
 
     /// Draws the composer and reports what the frame's keys asked for.
-    /// `commands` are the session's available commands, for the token
-    /// chip; `running` selects the stop button; `enter_sends` is the
-    /// preference.
+    /// `commands` are the session's available commands, for the
+    /// colored token; `running` selects the stop button; `enter_sends`
+    /// is the preference.
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
@@ -882,12 +963,29 @@ impl Composer {
         } else {
             palette.composer_line
         };
+        // The field's layout: the body text as the default layouter
+        // draws it, with the active `/command` or `@mention` recolored
+        // in place.
+        let token = self.draft.token_range(commands);
+        let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
+            let body = text.as_str();
+            let font_id = egui::TextStyle::Body.resolve(ui.style());
+            let ink = ui.visuals().widgets.inactive.text_color();
+            let mut job =
+                token_job(body, wrap_width, font_id.clone(), ink, palette.accent, token.clone());
+            let line_height = ui.fonts_mut(|fonts| fonts.row_height(&font_id))
+                + ui.spacing().extra_text_line_spacing;
+            for section in &mut job.sections {
+                section.format.line_height = Some(line_height);
+            }
+            ui.fonts_mut(|fonts| fonts.layout_job(job))
+        };
         let frame = egui::Frame::NONE
             .fill(palette.composer_bg)
             .stroke(egui::Stroke::new(1.0, border))
             .corner_radius(egui::CornerRadius::same(crate::theme::R_COMPOSER as u8))
             .outer_margin(egui::Margin::ZERO);
-        let response = frame.show_shadowed(ui, &palette.shadow_input, |ui| {
+        frame.show_shadowed(ui, &palette.shadow_input, |ui| {
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 0.0;
                 egui::Frame::NONE
@@ -907,6 +1005,7 @@ impl Composer {
                             .min_size(egui::vec2(width, FIELD_H - FIELD_TOP - 4.0))
                             .frame(egui::Frame::NONE)
                             .margin(egui::Margin::ZERO)
+                            .layouter(&mut layouter)
                             .lock_focus(true);
                         let output = edit.show(ui);
                         if let Some(range) = output.cursor_range {
@@ -984,42 +1083,6 @@ impl Composer {
         // The hint line under the card: the key table on the left, the
         // session's cost on the right, as the reference draws it.
         hint_line(ui, store, running, enter_sends);
-
-        // The token chip: the active `/command` or `@mention` drawn as
-        // a badge on the input's top edge. The stored text stays plain;
-        // the chip is a rendering.
-        if let Some(token) = self.draft.token(commands) {
-            let rect = response.response.rect;
-            let chip_font = egui::FontId::new(
-                crate::theme::FS_2XS,
-                crate::theme::family(crate::theme::FAMILY_MONO_REGULAR),
-            );
-            let galley = ui
-                .painter()
-                .layout_no_wrap(token.clone(), chip_font, palette.accent);
-            let width = galley.size().x + 12.0;
-            let height = galley.size().y + 5.0;
-            let chip_rect = egui::Rect::from_min_size(
-                egui::pos2(rect.left() + crate::theme::SP_4, rect.top() - height / 2.0),
-                egui::vec2(width, height),
-            );
-            ui.painter().rect_filled(
-                chip_rect,
-                egui::CornerRadius::same(crate::theme::R_FULL as u8),
-                palette.accent_soft,
-            );
-            ui.painter().rect_stroke(
-                chip_rect,
-                egui::CornerRadius::same(crate::theme::R_FULL as u8),
-                egui::Stroke::new(1.0, palette.accent_bd),
-                egui::StrokeKind::Inside,
-            );
-            ui.painter().galley(
-                chip_rect.center() - galley.size() / 2.0,
-                galley,
-                palette.accent,
-            );
-        }
 
         if let Some(rows) = menu_rows {
             show_suggestion_menu(
