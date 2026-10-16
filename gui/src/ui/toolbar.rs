@@ -608,7 +608,7 @@ fn plus_button(
     let plan_on = store.plan_on();
     let swarm_on = store.swarm_on();
     let swarm_known = store.composer_option("swarm").is_some();
-    egui::Window::new("plus-popover")
+    let card = egui::Window::new("plus-popover")
         .title_bar(false)
         .collapsible(false)
         .resizable(false)
@@ -716,6 +716,12 @@ fn plus_button(
                 });
             });
         });
+    let escape = ui.input(|input| input.key_pressed(egui::Key::Escape));
+    if let Some(card) = card
+        && (escape || (card.response.clicked_elsewhere() && !response.clicked()))
+    {
+        toolbar.close_plus();
+    }
     Some(())
 }
 

@@ -1,0 +1,127 @@
+//! Headless probes: the composer's plus popover closes on Escape and
+//! on a click outside its card, and a row click still runs the row
+//! and closes the popover.
+
+use egui_kittest::Harness;
+use egui_kittest::kittest::Queryable as _;
+use kage_desktop::store::{Command, Store};
+use kage_desktop::transport::{State, replay};
+use kage_desktop::ui::toolbar::{Toolbar, ToolbarEvent, self};
+
+mod testutil;
+
+/// Carries out the store's pending commands the way the shell does.
+fn run_commands(store: &mut Store) {
+    for command in store.take_commands() {
+        match command {
+            Command::Handshake { replay_sessions } => store.handshake(replay_sessions),
+            Command::NewSession => store.new_session(),
+            Command::ReplayPrompt => {
+                store.prompt("fix the null check");
+            }
+        }
+    }
+}
+
+/// A store driven through the recording the way the replay smoke runs.
+fn replayed_store() -> Store {
+    let mut store = Store::new("/w", true);
+    store.set_connect(State::Connected);
+    run_commands(&mut store);
+    let _ = store.take_outgoing();
+    let frames = replay::transcript();
+    for frame in &frames[..2] {
+        store.absorb(frame.clone());
+        run_commands(&mut store);
+        let _ = store.take_outgoing();
+    }
+    for frame in &frames[2..] {
+        store.absorb(frame.clone());
+    }
+    store
+}
+
+type Pane = (Store, Toolbar, bool, bool);
+
+const SIZE: egui::Vec2 = egui::Vec2::new(900.0, 760.0);
+
+fn harness() -> Harness<'static, Pane> {
+    Harness::builder().with_size(SIZE).build_ui_state(
+        |ui, (store, toolbar, opened, installed): &mut Pane| {
+            if testutil::theme_installed(installed, ui.ctx()) {
+                return;
+            }
+            if !*opened {
+                toolbar.toggle_plus();
+                *opened = true;
+            }
+            egui::CentralPanel::default().show(ui, |ui| {
+                let rect = egui::Rect::from_min_size(
+                    egui::pos2(40.0, 300.0),
+                    egui::vec2(800.0, 40.0),
+                );
+                let mut strip = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(rect)
+                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                );
+                for event in toolbar::show(&mut strip, toolbar, store, false, false) {
+                    if let ToolbarEvent::TogglePlan = event {
+                        if store.plan_on() {
+                            store.exit_plan();
+                        } else {
+                            store.enter_plan();
+                        }
+                    }
+                }
+            });
+        },
+        (replayed_store(), Toolbar::new(), false, false),
+    )
+}
+
+#[test]
+fn escape_and_a_click_elsewhere_close_the_plus_popover() {
+    let mut harness = harness();
+    for _ in 0..3 {
+        harness.run();
+    }
+    assert!(harness.state().1.plus_open(), "the popover starts open");
+
+    harness.drag_at(egui::pos2(60.0, 60.0));
+    harness.run();
+    harness.drop_at(egui::pos2(60.0, 60.0));
+    harness.run();
+    assert!(
+        !harness.state().1.plus_open(),
+        "a click outside the card closes the popover"
+    );
+
+    harness.state_mut().1.toggle_plus();
+    harness.run();
+    harness.run();
+    assert!(harness.state().1.plus_open(), "the popover reopens");
+    harness.key_press(egui::Key::Escape);
+    harness.run();
+    assert!(!harness.state().1.plus_open(), "Escape closes the popover");
+}
+
+#[test]
+fn a_click_on_a_plus_row_runs_the_row_and_closes() {
+    let mut harness = harness();
+    for _ in 0..3 {
+        harness.run();
+    }
+    let plan = harness.query_by_label("Plan").expect("the popover lists Plan");
+    plan.click();
+    harness.run();
+    harness.run();
+    assert!(
+        !harness.state().1.plus_open(),
+        "the row click closes the popover"
+    );
+    assert!(
+        harness.state().0.plan_on(),
+        "the row click turns plan mode on"
+    );
+}
