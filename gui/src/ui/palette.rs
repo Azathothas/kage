@@ -591,7 +591,10 @@ impl Palette {
             self.close();
             return None;
         }
-        if run.is_some() {
+        if let Some(index) = run {
+            // A click carries its own row: the run goes to the row
+            // under the pointer, not to the keyboard highlight.
+            self.selected = index;
             return self.run(rows);
         }
         if self.query != query_before {

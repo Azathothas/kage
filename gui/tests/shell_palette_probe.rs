@@ -138,3 +138,96 @@ fn clicking_search_opens_the_palette_and_it_stays_open() {
         "a click outside the card closes the palette"
     );
 }
+
+#[test]
+fn clicking_a_session_row_switches_to_it() {
+    // A row click used to run the keyboard-highlighted row instead of
+    // the one under the pointer, so a session click ran the first
+    // command (New session) and the session never switched.
+    let mut harness = harness();
+    booted(&mut harness);
+
+    // The replay streams the transcript in after boot; wait for its
+    // rows before judging what the click did.
+    for _ in 0..2_000 {
+        harness.step();
+        if harness
+            .state()
+            .app
+            .as_ref()
+            .is_some_and(|app| app.shell.transcript().row_count() > 5)
+        {
+            break;
+        }
+    }
+
+    // Open the palette by Search, the way the user does.
+    harness
+        .query_by_label("Search")
+        .expect("Search row")
+        .click();
+    harness.step();
+    harness.step();
+    assert!(
+        harness.query_by_label("Settings").is_some(),
+        "the click on Search opens the palette"
+    );
+
+    // The palette's rows stream in with the replay; wait for the
+    // session's row, scrolling the list to it if it sits past the
+    // viewport. The row is a button carrying the session's title; the
+    // transcript's own user message is a label with the same words,
+    // so the role tells them apart.
+    let session_row = {
+        let mut found = None;
+        harness.hover_at(egui::pos2(500.0, 300.0));
+        for _ in 0..200 {
+            harness.step();
+            let row = harness
+                .query_all_by(|node| {
+                    node.role() == egui::accesskit::Role::Button
+                        && node.label() == Some("fix the null check".to_owned())
+                })
+                .next();
+            if let Some(node) = row {
+                // The tree reports clipped rows too; only a row the
+                // scroll viewport fully shows can take the click.
+                let rect = node.rect();
+                if rect.center().y < 540.0 {
+                    found = Some(rect);
+                    break;
+                }
+            }
+            harness.event(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, -80.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        found.expect("the palette lists the replay's session")
+    };
+
+    // Click the session row: press and release land in their own
+    // frames, the way the shell's other probes click.
+    harness.hover_at(session_row.center());
+    harness.step();
+    harness.drag_at(session_row.center());
+    harness.step();
+    harness.drop_at(session_row.center());
+    harness.step();
+    harness.step();
+    let app = harness.state().app.as_ref().expect("the shell");
+    assert!(
+        app.shell.store().active_id().is_some(),
+        "the session row ran the session: the welcome screen would have cleared it"
+    );
+    assert!(
+        app.shell.transcript().row_count() > 5,
+        "the transcript keeps its rows"
+    );
+    assert!(
+        harness.query_by_label("Settings").is_none(),
+        "the palette closed after the run"
+    );
+}
