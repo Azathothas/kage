@@ -267,6 +267,15 @@ impl FindBar {
                 .margin(egui::Margin::ZERO)
                 .vertical_align(egui::Align::Center)
                 .hint_text("Find in chat")
+                // egui drops a field's focus on Escape before the frame
+                // runs; holding the key keeps the find context alive
+                // until the router closes the bar.
+                .event_filter(egui::EventFilter {
+                    horizontal_arrows: true,
+                    vertical_arrows: true,
+                    escape: true,
+                    ..Default::default()
+                })
                 .text_color(palette.ink)
                 .font(egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)))
                 .desired_width(field.width()),

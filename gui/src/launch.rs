@@ -2103,15 +2103,20 @@ impl ShellApp {
                 },
                 repeat: false,
             };
-            // The find bar's Enter and Escape answer in `find_keys`;
-            // routed here they would reopen the bar over an empty
-            // query. Around it the shell's own bindings keep working,
-            // as the reference's do.
+            // The find bar's keys answer while its field holds the
+            // keyboard, and around them the shell's own bindings keep
+            // working, as the reference's do.
+            let find_focused = ctx.memory(|memory| memory.has_focus(egui::Id::new("find-query")));
             let context = match self.context() {
-                crate::ui::keys::Context::Find => crate::ui::keys::Context::Shell,
+                crate::ui::keys::Context::Find if !find_focused => crate::ui::keys::Context::Shell,
                 context => context,
             };
-            let Some(action) = crate::ui::keys::dispatch(context, &press) else {
+            let action = crate::ui::keys::dispatch(context, &press).or_else(|| {
+                (context == crate::ui::keys::Context::Find)
+                    .then(|| crate::ui::keys::dispatch(crate::ui::keys::Context::Shell, &press))
+                    .flatten()
+            });
+            let Some(action) = action else {
                 // The approval card's digits are not the shell's
                 // bindings: they answer the oldest open ask while the
                 // card holds the keys and no field has them, so a digit
