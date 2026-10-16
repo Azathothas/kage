@@ -195,3 +195,46 @@ fn a_running_agent_opens_in_the_workbench_and_streams_there() {
     }
     panic!("the child's reply never reached the agent's transcript");
 }
+
+#[test]
+fn the_swarm_pill_lists_its_members_on_a_click() {
+    use egui_kittest::kittest::Queryable as _;
+
+    let mut harness = harness();
+    opened(&mut harness);
+    update(
+        &mut harness,
+        PARENT,
+        serde_json::json!({"sessionUpdate": "_kage/turn", "phase": "start"}),
+    );
+    update(
+        &mut harness,
+        PARENT,
+        serde_json::json!({
+            "sessionUpdate": "plan",
+            "entries": [{"content": "Survey", "priority": "medium", "status": "in_progress"}]
+        }),
+    );
+    update(
+        &mut harness,
+        PARENT,
+        serde_json::json!({
+            "sessionUpdate": "subagent_update", "subagentSessionId": CHILD,
+            "name": "surveyor", "task": "list files"
+        }),
+    );
+    assert_eq!(
+        testutil::count(&harness, "running"),
+        0,
+        "the list starts shut"
+    );
+    harness.get_by_label("Swarm").click();
+    harness.step();
+    harness.step();
+    assert_eq!(
+        testutil::count(&harness, "surveyor"),
+        1,
+        "the click lists the member"
+    );
+    assert_eq!(testutil::count(&harness, "running"), 1, "with its state");
+}

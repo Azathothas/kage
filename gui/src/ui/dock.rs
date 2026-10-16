@@ -479,27 +479,92 @@ fn plan_pill(
 }
 
 /// The swarm pill: the done/total count, the paused count, and the
-/// member list popover.
+/// member list a click opens above it.
 fn swarm_pill(ui: &mut egui::Ui, palette: &crate::theme::Palette, swarm: &SwarmState) {
-    let count = format!("{}/{}", swarm.done, swarm.total);
-    let label = if swarm.paused > 0 {
-        format!("Swarm {count} {} paused", swarm.paused)
-    } else {
-        format!("Swarm {count}")
-    };
-    let response = pill(ui, palette, |ui| {
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = crate::theme::SP_3;
-            crate::icons::icon(ui, crate::icons::Icon::Waypoints, 12.0, palette.done);
+    let response = pill(ui, palette, "dock-swarm-pill", |ui| {
+        crate::icons::icon(ui, crate::icons::Icon::Waypoints, 12.0, palette.done);
+        ui.label(
+            egui::RichText::new("Swarm")
+                .size(crate::theme::FS_XS)
+                .color(palette.done),
+        );
+        ui.label(
+            egui::RichText::new(format!("{}/{}", swarm.done, swarm.total))
+                .size(crate::theme::FS_XS)
+                .family(crate::theme::family(crate::theme::FAMILY_MONO_REGULAR))
+                .color(palette.ink_strong),
+        );
+        if swarm.paused > 0 {
             ui.label(
-                egui::RichText::new(label)
+                egui::RichText::new(format!("{} paused", swarm.paused))
                     .size(crate::theme::FS_XS)
                     .color(palette.done),
             );
+        }
+    })
+    .on_hover_text("delegated members and their states");
+    egui::Popup::menu(&response)
+        .align(egui::RectAlign::TOP_START)
+        .gap(crate::theme::SP_3)
+        .frame(
+            egui::Frame::NONE
+                .fill(palette.menu)
+                .stroke(egui::Stroke::new(1.0, palette.line))
+                .corner_radius(egui::CornerRadius::same(crate::theme::R_LG as u8))
+                .inner_margin(egui::Margin::same(5)),
+        )
+        .show(|ui| {
+            ui.set_width(SWARM_MENU_W - 10.0);
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for (name, word) in &swarm.members {
+                let color = match *word {
+                    "paused" => palette.warn,
+                    "failed" => palette.danger,
+                    "done" => palette.ok,
+                    _ => palette.muted,
+                };
+                egui::Frame::NONE
+                    .inner_margin(egui::Margin::symmetric(9, 4))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = crate::theme::SP_4;
+                            let word = egui::RichText::new(*word)
+                                .size(crate::theme::FS_2XS)
+                                .color(color);
+                            let word_w = egui::WidgetText::from(word.clone())
+                                .into_galley(
+                                    ui,
+                                    Some(egui::TextWrapMode::Extend),
+                                    f32::INFINITY,
+                                    egui::TextStyle::Body,
+                                )
+                                .size()
+                                .x;
+                            ui.scope(|ui| {
+                                ui.set_max_width(
+                                    ui.available_width() - word_w - crate::theme::SP_4,
+                                );
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(name.clone())
+                                            .size(crate::theme::FS_XS)
+                                            .color(palette.ink),
+                                    )
+                                    .truncate(),
+                                );
+                            });
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| ui.label(word),
+                            );
+                        });
+                    });
+            }
         });
-    });
-    let _ = response.on_hover_text("delegated members and their states");
 }
+
+/// The swarm member list's width.
+const SWARM_MENU_W: f32 = 240.0;
 
 /// The background agents pill: a spinner and how many run while any
 /// does, else how many there were.
@@ -515,7 +580,7 @@ fn background_pill(
     } else {
         format!("{} background {}", state.total, noun(state.total))
     };
-    let response = pill(ui, palette, |ui| {
+    let response = pill(ui, palette, "dock-background-pill", |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = crate::theme::SP_3;
             let icon = if state.live > 0 {
@@ -545,7 +610,7 @@ fn todos_pill(
     entries: Vec<(String, String)>,
 ) {
     let count = format!("{}/{}", todos.done, todos.total);
-    let response = pill(ui, palette, |ui| {
+    let response = pill(ui, palette, "dock-todos-pill", |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = crate::theme::SP_3;
             crate::icons::icon(ui, crate::icons::Icon::ListTodo, 12.0, palette.muted);
@@ -683,10 +748,13 @@ fn queue_row(
     }
 }
 
-/// One pill: 28px tall, fully round, bordered, in the surface color.
+/// One pill named `name`: 28px tall, fully round, bordered, in the
+/// surface color. Each pill keeps its own name, so two pills on one
+/// row never share their click and hover state.
 fn pill(
     ui: &mut egui::Ui,
     palette: &crate::theme::Palette,
+    name: &str,
     body: impl FnOnce(&mut egui::Ui),
 ) -> egui::Response {
     let inner = egui::Frame::NONE
@@ -703,9 +771,7 @@ fn pill(
             .response
         })
         .inner;
-    let rect = inner.rect;
-    let id = egui::Id::new("dock-pill").with(rect.top().to_bits());
-    ui.interact(rect, id, egui::Sense::click())
+    ui.interact(inner.rect, ui.id().with(name), egui::Sense::click())
 }
 
 #[cfg(test)]
