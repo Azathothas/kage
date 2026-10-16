@@ -4,7 +4,10 @@
 //! the shell's key router runs before the layers draw, as it does in
 //! the window.
 
-use egui_kittest::{Harness, kittest::Queryable};
+use egui_kittest::{
+    Harness,
+    kittest::{NodeT as _, Queryable},
+};
 
 mod testutil;
 
@@ -74,6 +77,15 @@ fn composer_focused(harness: &Harness<'static, Rig>) -> bool {
         .memory(|memory| memory.has_focus(egui::Id::new("composer-input")))
 }
 
+/// The composer's text.
+fn composer_text(harness: &Harness<'static, Rig>) -> String {
+    harness
+        .query_all_by(|node| node.role() == egui::accesskit::Role::MultilineTextInput)
+        .map(|node| node.accesskit_node().value().unwrap_or_default())
+        .next()
+        .unwrap_or_default()
+}
+
 /// Opens the settings dialog with its shortcut.
 fn open_settings(harness: &mut Harness<'static, Rig>) {
     harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::Comma);
@@ -135,5 +147,64 @@ fn a_theme_menu_does_not_outlive_the_dialog() {
     assert!(
         !theme_menu_open(&harness),
         "the dialog opens again without the menu it closed over"
+    );
+}
+
+#[test]
+fn keys_typed_over_settings_do_not_reach_the_composer() {
+    let mut harness = harness();
+    booted(&mut harness);
+    open_settings(&mut harness);
+    harness.event(egui::Event::Text("abc".to_owned()));
+    steps(&mut harness, 2);
+    assert_eq!(
+        composer_text(&harness),
+        "",
+        "the composer under the dialog takes no text"
+    );
+}
+
+#[test]
+fn closing_settings_hands_the_keyboard_back_to_the_composer() {
+    let mut harness = harness();
+    booted(&mut harness);
+    open_settings(&mut harness);
+    harness.key_press(egui::Key::Escape);
+    steps(&mut harness, 3);
+    assert!(!settings_open(&harness), "Escape closed the dialog");
+    assert!(
+        composer_focused(&harness),
+        "the composer has the keys again"
+    );
+    harness.event(egui::Event::Text("xyz".to_owned()));
+    steps(&mut harness, 2);
+    assert_eq!(
+        composer_text(&harness),
+        "xyz",
+        "typing lands in the composer"
+    );
+}
+
+#[test]
+fn closing_a_dialog_hands_the_keyboard_back_to_the_composer() {
+    let mut harness = harness();
+    booted(&mut harness);
+    harness.key_press_modifiers(egui::Modifiers::CTRL, egui::Key::K);
+    steps(&mut harness, 3);
+    harness.event(egui::Event::Text("goal".to_owned()));
+    steps(&mut harness, 3);
+    harness.key_press(egui::Key::Enter);
+    steps(&mut harness, 3);
+    assert_eq!(
+        testutil::count(&harness, "Set goal"),
+        1,
+        "the goal dialog shows"
+    );
+    harness.key_press(egui::Key::Escape);
+    steps(&mut harness, 3);
+    assert_eq!(testutil::count(&harness, "Set goal"), 0, "Escape closed it");
+    assert!(
+        composer_focused(&harness),
+        "the composer has the keys again"
     );
 }

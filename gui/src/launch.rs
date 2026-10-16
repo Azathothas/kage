@@ -294,6 +294,11 @@ pub struct Shell {
     /// The session the composer last took the keyboard for, so a new
     /// session takes it again.
     composer_focus_for: Option<Option<String>>,
+    /// The widget that held the keyboard before a modal layer opened,
+    /// handed back once the last layer closes.
+    focus_return: Option<egui::Id>,
+    /// Whether a modal layer showed at the end of the last frame.
+    modal_shown: bool,
     /// The theme catalog the last theme was applied with.
     theme_catalog: crate::themes::Catalog,
     /// The welcome pane, shown in the chat column while no session is
@@ -360,6 +365,8 @@ impl Shell {
             find: crate::ui::find::FindBar::new(),
             composer: crate::ui::composer::Composer::new(),
             composer_focus_for: None,
+            focus_return: None,
+            modal_shown: false,
             theme_catalog: crate::themes::Catalog::default(),
             welcome: crate::ui::welcome::Welcome::new(),
             sidebar: crate::ui::sidebar::Sidebar::new(),
@@ -1202,6 +1209,33 @@ impl ShellApp {
         }
         self.shell.toasts = toasts;
         self.carry_toast_actions();
+        self.follow_modal_focus(ui.ctx());
+    }
+
+    /// Keeps the keyboard with the top layer, as the reference's
+    /// overlays do: a modal opening over the shell takes the focus from
+    /// the field under it, so typing never lands in a hidden composer,
+    /// and the last one closing hands the focus back.
+    fn follow_modal_focus(&mut self, ctx: &egui::Context) {
+        let modal = self.shell.settings.is_open()
+            || self.shell.dialogs.is_open()
+            || self.shell.palette.is_open();
+        let focused = ctx.memory(|memory| memory.focused());
+        if !modal {
+            if !self.shell.modal_shown {
+                self.shell.focus_return = focused;
+            } else if let Some(id) = self.shell.focus_return.take() {
+                ctx.memory_mut(|memory| memory.request_focus(id));
+            }
+        } else if !self.shell.modal_shown
+            && let Some(id) = focused
+            && self.shell.focus_return == Some(id)
+        {
+            // The layer's own field did not take the keys this frame,
+            // so the field under it still holds them.
+            ctx.memory_mut(|memory| memory.surrender_focus(id));
+        }
+        self.shell.modal_shown = modal;
     }
 
     /// Carries out what clicks on toasts asked for. A click already
