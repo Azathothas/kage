@@ -443,11 +443,38 @@ pub fn text_field_w(
     width: f32,
     palette: &Palette,
 ) -> egui::Response {
+    add_field(
+        ui,
+        one_line(value, placeholder, mono, width, palette),
+        palette,
+    )
+}
+
+/// A one-line field for a secret, full width: what it holds draws as
+/// dots, never in the clear.
+pub fn secret_field(
+    ui: &mut egui::Ui,
+    value: &mut String,
+    placeholder: &str,
+    palette: &Palette,
+) -> egui::Response {
+    let field = one_line(value, placeholder, false, f32::INFINITY, palette).password(true);
+    add_field(ui, field, palette)
+}
+
+/// The one-line text edit the form fields share.
+fn one_line<'t>(
+    value: &'t mut String,
+    placeholder: &str,
+    mono: bool,
+    width: f32,
+    palette: &Palette,
+) -> egui::TextEdit<'t> {
     let mut font = egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR));
     if mono {
         font = egui::FontId::new(FS_XS, family(FAMILY_MONO_REGULAR));
     }
-    let field = egui::TextEdit::singleline(value)
+    egui::TextEdit::singleline(value)
         .hint_text(
             egui::RichText::new(placeholder)
                 .size(FS_XS)
@@ -455,8 +482,7 @@ pub fn text_field_w(
         )
         .font(font)
         .desired_width(width)
-        .margin(egui::Margin::symmetric(8, 6));
-    add_field(ui, field, palette)
+        .margin(egui::Margin::symmetric(8, 6))
 }
 
 /// A multi-line text field, one entry per line, drawn full width.

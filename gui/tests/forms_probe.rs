@@ -511,3 +511,37 @@ fn a_directory_row_chooses_its_provider_from_its_detail_line() {
         "the provider's models show"
     );
 }
+
+#[test]
+fn a_pasted_key_is_masked_as_it_is_typed() {
+    let mut harness = harness_for(configured());
+    harness.state_mut().1.open(Section::Providers);
+    settle(&mut harness);
+    harness.get_by_label("lab").click();
+    harness.run();
+    let row = harness
+        .query_by_label("Forget saved key")
+        .expect("a saved key draws the key row")
+        .rect();
+    harness
+        .query_all_by(|node| {
+            node.role() == egui::accesskit::Role::PasswordInput
+                || node.role() == egui::accesskit::Role::TextInput
+        })
+        .find(|node| node.rect().y_range().contains(row.center().y))
+        .expect("the key field sits beside the forget button")
+        .click();
+    harness.run();
+    harness.event(egui::Event::Text("sk-secret".to_owned()));
+    harness.run();
+    let shown = harness
+        .query_all_by(|node| node.role() == egui::accesskit::Role::PasswordInput)
+        .count();
+    assert_eq!(shown, 1, "the key field is a password field");
+    assert!(
+        !testutil::field_values(&harness)
+            .iter()
+            .any(|value| value.contains("sk-secret")),
+        "the typed key never shows in the clear"
+    );
+}

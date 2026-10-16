@@ -637,8 +637,12 @@ impl ProviderForm {
                                 }
                             }
                             let mut key = self.key.clone();
-                            let response =
-                                forms::text_field(ui, &mut key, "sk-...", false, palette);
+                            let hint = if saved {
+                                "saved; type to replace"
+                            } else {
+                                "sk-..."
+                            };
+                            let response = forms::secret_field(ui, &mut key, hint, palette);
                             if response.changed() {
                                 edit.key = key;
                                 edit.key_set = true;
