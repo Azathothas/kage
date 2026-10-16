@@ -57,7 +57,7 @@ fn harness() -> Harness<'static, Pane> {
             }
             egui::CentralPanel::default().show(ui, |ui| {
                 let rect = egui::Rect::from_min_size(
-                    egui::pos2(40.0, 300.0),
+                    egui::pos2(40.0, 500.0),
                     egui::vec2(800.0, 40.0),
                 );
                 let mut strip = ui.new_child(
@@ -88,9 +88,9 @@ fn escape_and_a_click_elsewhere_close_the_plus_popover() {
     }
     assert!(harness.state().1.plus_open(), "the popover starts open");
 
-    harness.drag_at(egui::pos2(60.0, 60.0));
+    harness.drag_at(egui::pos2(700.0, 60.0));
     harness.run();
-    harness.drop_at(egui::pos2(60.0, 60.0));
+    harness.drop_at(egui::pos2(700.0, 60.0));
     harness.run();
     assert!(
         !harness.state().1.plus_open(),
@@ -104,6 +104,28 @@ fn escape_and_a_click_elsewhere_close_the_plus_popover() {
     harness.key_press(egui::Key::Escape);
     harness.run();
     assert!(!harness.state().1.plus_open(), "Escape closes the popover");
+}
+
+#[test]
+fn the_plus_popover_opens_above_its_pill() {
+    let mut harness = harness();
+    for _ in 0..3 {
+        harness.run();
+    }
+    let card = harness
+        .ctx
+        .memory(|memory| memory.area_rect(egui::Id::new("plus-popover")))
+        .expect("the popover is up");
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, SIZE);
+    assert!(
+        screen.contains_rect(card),
+        "the popover {card:?} stays inside the window"
+    );
+    assert!(
+        card.bottom() <= 500.0,
+        "the popover opens above the strip, not over it: bottom {}",
+        card.bottom()
+    );
 }
 
 #[test]

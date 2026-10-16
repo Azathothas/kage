@@ -46,6 +46,9 @@ const PICKER_FOOT_H: f32 = 200.0;
 /// The mode card's height, for picking the side it opens on.
 const MODE_PICKER_H: f32 = 420.0;
 
+/// The plus card's height, for picking the side it opens on.
+const PLUS_H: f32 = 420.0;
+
 /// Which picker popover shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Picker {
@@ -608,11 +611,20 @@ fn plus_button(
     let plan_on = store.plan_on();
     let swarm_on = store.swarm_on();
     let swarm_known = store.composer_option("swarm").is_some();
+    let (at, pivot) = picker_anchor(
+        ui.ctx(),
+        egui::Id::new("plus-popover"),
+        response.rect,
+        PLUS_H,
+        false,
+    );
     let card = egui::Window::new("plus-popover")
+        .id(egui::Id::new("plus-popover"))
         .title_bar(false)
         .collapsible(false)
         .resizable(false)
-        .fixed_pos(response.rect.left_bottom() + egui::vec2(0.0, SP_2))
+        .fixed_pos(at)
+        .pivot(pivot)
         .min_width(MENU_W)
         .order(egui::Order::Foreground)
         .frame(egui::Frame::NONE)
