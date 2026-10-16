@@ -101,6 +101,9 @@ pub struct Toolbar {
     plus_open: bool,
     /// Whether the context gauge shows.
     gauge_open: bool,
+    /// Whether the model picker still owes the current model its
+    /// highlight and a scroll into view, as it does once it opens.
+    reveal_model: bool,
 }
 
 impl Toolbar {
@@ -1320,6 +1323,11 @@ fn model_button(
     let response = response.on_hover_text("Model and thinking");
     if response.clicked() {
         toolbar.toggle_picker(Picker::Model);
+        if toolbar.picker() == Some(Picker::Model) {
+            toolbar.model_query().clear();
+            store.ask_models();
+            toolbar.reveal_model = true;
+        }
     }
     if !open {
         return Some(());
@@ -1376,6 +1384,17 @@ fn model_button(
                     toolbar.close_pickers();
                     return;
                 }
+                let mut reveal = up || down;
+                if std::mem::take(&mut toolbar.reveal_model) {
+                    let current = store
+                        .composer_option("model")
+                        .map(|option| option.current_value);
+                    toolbar.model_highlight = rows
+                        .iter()
+                        .position(|row| Some(&row.id) == current.as_ref())
+                        .unwrap_or(0);
+                    reveal = true;
+                }
                 if up {
                     toolbar.step_model(-1, total);
                 }
@@ -1408,18 +1427,20 @@ fn model_button(
                         ui.horizontal(|ui| {
                             ui.spacing_mut().item_spacing.x = 8.0;
                             crate::icons::icon(ui, Icon::Search, 14.0, palette.faint);
-                            ui.add(
+                            let query = ui.add(
                                 egui::TextEdit::singleline(toolbar.model_query())
                                     .hint_text("Search models...")
                                     .desired_width(ui.available_width())
                                     .frame(egui::Frame::NONE)
                                     .id(egui::Id::new("model-picker-query")),
-                            )
+                            );
+                            query.request_focus();
+                            query
                         })
                         .inner
                     });
-                if search.inner.gained_focus() {
-                    toolbar.model_query().clear();
+                if search.inner.changed() {
+                    toolbar.model_highlight = 0;
                 }
                 let line = search.response.rect;
                 ui.painter().hline(
@@ -1441,7 +1462,19 @@ fn model_button(
                                     pop_label(ui, &section.label, palette);
                                     for row in &section.rows {
                                         let highlighted = index == highlight;
-                                        match model_row(ui, row, highlighted, store, palette) {
+                                        let top = ui.cursor().top();
+                                        let ask = model_row(ui, row, highlighted, store, palette);
+                                        if highlighted && reveal {
+                                            let rows = top..=ui.cursor().top();
+                                            ui.scroll_to_rect(
+                                                egui::Rect::from_x_y_ranges(
+                                                    ui.max_rect().x_range(),
+                                                    rows,
+                                                ),
+                                                None,
+                                            );
+                                        }
+                                        match ask {
                                             RowAsk::Star => store.toggle_star(&row.id),
                                             RowAsk::Choose => {
                                                 store.set_option("model", &row.id);

@@ -170,6 +170,28 @@ fn enter_in_the_mode_picker_chooses_and_does_not_send() {
 }
 
 #[test]
+fn the_model_picker_search_takes_the_typing() {
+    let mut harness = booted();
+    harness
+        .query_all_by(|node| {
+            node.role() == egui::accesskit::Role::Button
+                && node
+                    .label()
+                    .is_some_and(|label| label.starts_with("GLM 4.7"))
+        })
+        .next()
+        .expect("the model pill draws")
+        .click();
+    steps(&mut harness, 3);
+    type_text(&mut harness, "glm 5");
+    assert!(
+        testutil::field_holds(&harness, "glm 5"),
+        "the query field holds the typing"
+    );
+    assert_eq!(composer_text(&harness), "", "the composer took none of it");
+}
+
+#[test]
 fn esc_twice_arms_then_interrupts_and_keeps_the_field() {
     let mut harness = booted();
     harness.key_press(egui::Key::Escape);
