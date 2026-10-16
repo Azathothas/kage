@@ -60,8 +60,6 @@ fn booted(harness: &mut Harness<'static, Rig>) {
     panic!("the sidebar's Search row never drew");
 }
 
-
-
 /// How many of the builtin slash rows the menu shows now.
 fn slash_rows(harness: &Harness<'static, Rig>) -> usize {
     ["/swarm", "/plan", "/goal", "/new"]
@@ -113,7 +111,6 @@ fn the_menu_matches_the_field_one_frame_after_each_key() {
     println!("after send and /: {again}");
     assert!(again >= 4, "a bare slash lists every command again");
 }
-
 
 /// The suggestion menu's height on screen, when it is open.
 fn menu_height(harness: &Harness<'static, Rig>) -> Option<f32> {

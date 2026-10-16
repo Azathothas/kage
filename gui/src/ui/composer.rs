@@ -208,8 +208,7 @@ fn token_job(
     accent: egui::Color32,
     token: Option<std::ops::Range<usize>>,
 ) -> egui::text::LayoutJob {
-    let mut job =
-        egui::text::LayoutJob::simple(text.to_owned(), font_id, ink, wrap_width);
+    let mut job = egui::text::LayoutJob::simple(text.to_owned(), font_id, ink, wrap_width);
     job.keep_trailing_whitespace = true;
     // The span can outlive the text it came from when the field edits
     // mid-frame, so a span past the end lays out plain.

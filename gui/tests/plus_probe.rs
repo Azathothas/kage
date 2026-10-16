@@ -6,7 +6,7 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable as _;
 use kage_desktop::store::{Command, Store};
 use kage_desktop::transport::{State, replay};
-use kage_desktop::ui::toolbar::{Toolbar, ToolbarEvent, self};
+use kage_desktop::ui::toolbar::{self, Toolbar, ToolbarEvent};
 
 mod testutil;
 
@@ -56,10 +56,8 @@ fn harness() -> Harness<'static, Pane> {
                 *opened = true;
             }
             egui::CentralPanel::default().show(ui, |ui| {
-                let rect = egui::Rect::from_min_size(
-                    egui::pos2(40.0, 500.0),
-                    egui::vec2(800.0, 40.0),
-                );
+                let rect =
+                    egui::Rect::from_min_size(egui::pos2(40.0, 500.0), egui::vec2(800.0, 40.0));
                 let mut strip = ui.new_child(
                     egui::UiBuilder::new()
                         .max_rect(rect)
@@ -134,7 +132,9 @@ fn a_click_on_a_plus_row_runs_the_row_and_closes() {
     for _ in 0..3 {
         harness.run();
     }
-    let plan = harness.query_by_label("Plan").expect("the popover lists Plan");
+    let plan = harness
+        .query_by_label("Plan")
+        .expect("the popover lists Plan");
     plan.click();
     harness.run();
     harness.run();
