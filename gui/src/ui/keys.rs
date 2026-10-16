@@ -111,6 +111,12 @@ pub enum Action {
     SendPrompt,
     /// Open find over the transcript.
     OpenFind,
+    /// Step the find bar to its next match.
+    FindNext,
+    /// Step the find bar to its previous match.
+    FindPrev,
+    /// Close the find bar.
+    FindClose,
     /// Open the command palette.
     OpenPalette,
     /// Open the settings window.
@@ -213,7 +219,7 @@ pub fn bindings() -> Vec<Binding> {
             context: Context::Find,
             key: "Enter",
             mods: Mods::default(),
-            action: OpenFind,
+            action: FindNext,
         },
         Binding {
             context: Context::Find,
@@ -223,13 +229,13 @@ pub fn bindings() -> Vec<Binding> {
                 shift: true,
                 alt: false,
             },
-            action: OpenFind,
+            action: FindPrev,
         },
         Binding {
             context: Context::Find,
             key: "Escape",
             mods: Mods::default(),
-            action: OpenFind,
+            action: FindClose,
         },
         Binding {
             context: Context::Dialog,
@@ -423,8 +429,11 @@ mod tests {
                 alt: false,
             },
         );
-        assert!(dispatch(Context::Find, &enter).is_some());
-        assert!(dispatch(Context::Find, &shift_enter).is_some());
+        assert_eq!(dispatch(Context::Find, &enter), Some(Action::FindNext));
+        assert_eq!(
+            dispatch(Context::Find, &shift_enter),
+            Some(Action::FindPrev)
+        );
         // The shell's ctrl-enter still sends while find is open? No:
         // the modal wins.
         assert_eq!(dispatch(Context::Find, &ctrl("Enter")), None);

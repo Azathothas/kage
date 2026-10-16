@@ -662,6 +662,15 @@ impl Shell {
     }
 }
 
+/// Hands the keys back once the find bar closed: to the composer,
+/// unless vim's normal mode or an open ask holds them.
+fn find_closed(ctx: &egui::Context, store: &crate::store::Store) {
+    if store.prefs().vim || !store.active_asks().is_empty() {
+        return;
+    }
+    ctx.memory_mut(|memory| memory.request_focus(egui::Id::new("composer-input")));
+}
+
 /// The window's body: the shell plus the frame clock.
 pub struct ShellApp {
     /// The shell under the window.
@@ -787,7 +796,6 @@ impl eframe::App for ShellApp {
         let now = web_time::Instant::now();
         self.frame_times
             .end_frame(now, now.saturating_duration_since(draw_started));
-        self.find_keys();
     }
 
     /// Prints the frame-time summary when the window closes, so a run
@@ -1039,6 +1047,9 @@ impl ShellApp {
                             self.shell.find.show(ui, &rows)
                         {
                             self.shell.transcript.scroll_to_row(key);
+                        }
+                        if !self.shell.find.is_open() {
+                            find_closed(ui.ctx(), store);
                         }
                     }
                     self.shell.transcript.set_find(self.shell.find.marks());
@@ -2486,6 +2497,15 @@ impl ShellApp {
             Action::ToggleWorkbench => self.shell.panels.toggle_workbench(),
             Action::OpenPalette => self.shell.palette.open(),
             Action::OpenFind => self.shell.find.open(),
+            Action::FindNext | Action::FindPrev => {
+                if let Some(key) = self.shell.find.step(action == Action::FindPrev) {
+                    self.shell.transcript.scroll_to_row(key);
+                }
+            }
+            Action::FindClose => {
+                self.shell.find.close();
+                find_closed(&self.ctx, &self.shell.store);
+            }
             Action::OpenSettings => self
                 .shell
                 .settings
@@ -2515,38 +2535,6 @@ impl ShellApp {
                     .show_dialog(crate::ui::dialog::DialogKind::Goal, &mut self.shell.store);
             }
             Action::SendPrompt | Action::ToggleSwarm | Action::TogglePlan => {}
-        }
-    }
-
-    /// The find bar's keys, in its own context: Enter steps forward,
-    /// Shift+Enter back, Escape closes. The keys answer only while the
-    /// bar is open, so they never reach the shell's own bindings.
-    fn find_keys(&mut self) {
-        if !self.shell.find.is_open() {
-            return;
-        }
-        let ctx = self.ctx.clone();
-        let events: Vec<egui::Event> = ctx.input(|i| i.events.clone());
-        for event in events {
-            let egui::Event::Key {
-                key,
-                modifiers,
-                pressed: true,
-                ..
-            } = event
-            else {
-                continue;
-            };
-            let back = modifiers.shift;
-            match key {
-                egui::Key::Enter => {
-                    if let Some(key) = self.shell.find.step(back) {
-                        self.shell.transcript.scroll_to_row(key);
-                    }
-                }
-                egui::Key::Escape => self.shell.find.close(),
-                _ => {}
-            }
         }
     }
 
