@@ -140,6 +140,13 @@ lto = true
 panic = "abort"
 strip = true
 
+# Unoptimized egui, epaint and syntect miss a 120 Hz frame budget on a
+# long transcript, so a debug run animated in visible steps. The
+# dependencies build optimized once; the client itself stays quick to
+# rebuild.
+[profile.dev.package."*"]
+opt-level = 2
+
 [dev-dependencies]
 # The headless harness the E01 theme and icon probes render through.
 egui_kittest = { version = "0.36", features = ["snapshot", "wgpu"] }
