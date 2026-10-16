@@ -133,10 +133,16 @@ impl Toasts {
 
     /// Draws the stack, top-right, dropping what expired first.
     pub fn show(&mut self, ui: &mut egui::Ui) {
-        self.expire(Instant::now());
-        if self.items.is_empty() {
+        let now = Instant::now();
+        self.expire(now);
+        let Some(oldest) = self.items.first() else {
             return;
-        }
+        };
+        // An idle window draws no frame of its own, so it wakes for
+        // the oldest toast's expiry or the toast would stay up.
+        ui.ctx().request_repaint_after(
+            TOAST_TTL.saturating_sub(now.saturating_duration_since(oldest.at)),
+        );
         let palette = Palette::active_of(ui.ctx());
         let mut clicked = None;
         egui::Area::new(egui::Id::new("kage-toasts"))
