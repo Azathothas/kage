@@ -1251,12 +1251,16 @@ impl Composer {
         // Enter sends per the preference, and Ctrl+Enter steers while
         // Enter sends; the field itself adds the newlines. The
         // toolbar's own ask wins, so a click and a keypress in one
-        // frame do not race.
-        if focused && event == ComposerEvent::None && ui.input(|i| i.key_pressed(egui::Key::Enter))
+        // frame do not race. Ctrl+Enter also sends while no other field
+        // holds the keys, as the reference's global binding does.
+        let elsewhere = !focused && ui.ctx().memory(|memory| memory.focused()).is_some();
+        if event == ComposerEvent::None
+            && !elsewhere
+            && ui.input(|i| i.key_pressed(egui::Key::Enter))
         {
             let modifiers = ui.input(|i| i.modifiers);
             let secondary = modifiers.ctrl || modifiers.command;
-            if enter_sends && !modifiers.shift {
+            if enter_sends && !modifiers.shift && (focused || secondary) {
                 event = ComposerEvent::Send { steer: secondary };
             } else if !enter_sends && secondary {
                 event = ComposerEvent::Send { steer: false };

@@ -62,6 +62,14 @@ fn steps(harness: &mut Harness<'static, Rig>, n: usize) {
     }
 }
 
+/// The composer's field, a multiline input.
+fn composer<'a>(harness: &'a Harness<'static, Rig>) -> egui_kittest::Node<'a> {
+    harness
+        .query_all_by(|node| node.role() == egui::accesskit::Role::MultilineTextInput)
+        .next()
+        .expect("the composer draws")
+}
+
 /// Whether some node carries `label`.
 fn shows(harness: &Harness<'static, Rig>, label: &str) -> bool {
     harness.query_by_label(label).is_some()
@@ -284,4 +292,31 @@ fn nothing_lays_out_below_the_window() {
         })
         .collect();
     assert!(below.is_empty(), "drawn off screen: {below:?}");
+}
+
+#[test]
+fn enter_in_the_palette_runs_its_row_and_leaves_the_draft() {
+    let mut harness = harness(egui::vec2(1200.0, 800.0));
+    booted(&mut harness);
+    steps(&mut harness, 400);
+    composer(&harness).click();
+    steps(&mut harness, 2);
+    harness.event(egui::Event::Text("half a thought".to_owned()));
+    steps(&mut harness, 2);
+    assert_eq!(
+        composer(&harness).value().as_deref(),
+        Some("half a thought"),
+        "the draft lands"
+    );
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
+    steps(&mut harness, 3);
+    harness.event(egui::Event::Text("workbench".to_owned()));
+    steps(&mut harness, 2);
+    harness.key_press(egui::Key::Enter);
+    steps(&mut harness, 3);
+    assert_eq!(
+        composer(&harness).value().as_deref(),
+        Some("half a thought"),
+        "the draft stays"
+    );
 }
