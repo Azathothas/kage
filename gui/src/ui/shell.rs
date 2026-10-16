@@ -40,6 +40,8 @@ pub struct Panels {
     pub sidebar_width: f32,
     /// The workbench's current width.
     pub workbench_width: f32,
+    /// The session the shell followed when the sidebar last floated.
+    followed: Option<String>,
 }
 
 impl Default for Panels {
@@ -54,6 +56,7 @@ impl Default for Panels {
             viewport_width: f32::MAX,
             sidebar_width: SIDE_W,
             workbench_width: WORKBENCH_W,
+            followed: None,
         }
     }
 }
@@ -62,6 +65,15 @@ impl Panels {
     /// Measures the viewport, so the overlays follow the window.
     pub fn measure(&mut self, width: f32) {
         self.viewport_width = width;
+    }
+
+    /// Closes the floating sidebar once the followed session changes,
+    /// so picking a row in it shows that session.
+    pub fn follow(&mut self, active: Option<&str>) {
+        if self.followed.as_deref() != active {
+            self.followed = active.map(str::to_owned);
+            self.side_float = false;
+        }
     }
 
     /// Toggles the sidebar. Under the narrow breakpoint it floats over
@@ -186,48 +198,78 @@ pub fn show(
             chat(ui);
         });
 
-    // The narrow overlays, over the chat column.
-    if narrow && panels.side_float && panels.sidebar_visible {
-        let palette = Palette::active_of(ui.ctx());
-        let width = panels.sidebar_width;
-        let clicked = ui.ctx().input(|i| i.pointer.any_pressed());
+    // The narrow overlays, over the chat column. Each draws into the
+    // screen rect it computes itself: an area's own bounds are last
+    // frame's size, so a panel laid out in them would keep a stale
+    // height.
+    let screen = ui.ctx().content_rect();
+    if narrow && panels.side_float {
+        let width = panels.sidebar_width.min(screen.width() * 0.85);
+        let mut close = false;
         egui::Area::new(egui::Id::new("side-scrim"))
             .order(egui::Order::Foreground)
-            .fixed_pos(egui::pos2(0.0, 0.0))
+            .fixed_pos(screen.min)
             .show(ui.ctx(), |ui| {
-                let screen = ui.max_rect();
+                // The scrim takes the clicks the sidebar does not, so
+                // nothing under it answers while the sidebar floats.
+                let scrim = ui.allocate_rect(screen, egui::Sense::click());
                 ui.painter().rect_filled(
                     screen,
                     0.0,
                     egui::Color32::from_black_alpha((0.3 * 255.0) as u8),
                 );
-                egui::Panel::left("side-float")
-                    .resizable(false)
-                    .exact_size(width)
-                    .frame(egui::Frame::NONE.fill(palette.sidebar))
-                    .show(ui, |ui| {
-                        sidebar(ui);
-                    });
+                let rect =
+                    egui::Rect::from_min_size(screen.min, egui::vec2(width, screen.height()));
+                ui.painter().add(crate::shapes::shadow(
+                    rect,
+                    egui::CornerRadius::ZERO,
+                    &palette.shadow_2,
+                ));
+                ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                    egui::Panel::left("side-float")
+                        .resizable(false)
+                        .exact_size(width)
+                        .frame(
+                            egui::Frame::NONE
+                                .fill(palette.sidebar)
+                                .inner_margin(SP_4 as i8),
+                        )
+                        .show(ui, |ui| {
+                            sidebar(ui);
+                        });
+                });
+                let on_sidebar = ui
+                    .input(|i| i.pointer.interact_pos())
+                    .is_some_and(|at| rect.contains(at));
+                close = scrim.clicked() && !on_sidebar;
             });
-        if clicked {
+        if close {
             panels.side_float = false;
         }
     }
 
     if mid && panels.workbench_visible {
-        let palette = Palette::active_of(ui.ctx());
-        let width = panels.workbench_width;
+        let width = panels.workbench_width.min(screen.width());
+        let rect =
+            egui::Rect::from_min_max(egui::pos2(screen.right() - width, screen.top()), screen.max);
         egui::Area::new(egui::Id::new("workbench-float"))
             .order(egui::Order::Foreground)
-            .anchor(egui::Align2::RIGHT_TOP, egui::vec2(0.0, 0.0))
+            .fixed_pos(rect.min)
             .show(ui.ctx(), |ui| {
-                egui::Panel::right("workbench-float-panel")
-                    .resizable(false)
-                    .exact_size(width)
-                    .frame(egui::Frame::NONE.fill(palette.sidebar))
-                    .show(ui, |ui| {
-                        workbench(ui);
-                    });
+                ui.painter().add(crate::shapes::shadow(
+                    rect,
+                    egui::CornerRadius::ZERO,
+                    &palette.shadow_2,
+                ));
+                ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                    egui::Panel::right("workbench-float-panel")
+                        .resizable(false)
+                        .exact_size(width)
+                        .frame(egui::Frame::NONE.fill(palette.sidebar))
+                        .show(ui, |ui| {
+                            workbench(ui);
+                        });
+                });
             });
     }
 }

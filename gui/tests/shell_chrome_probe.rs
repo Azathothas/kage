@@ -76,3 +76,73 @@ fn the_sidebars_collapse_button_hides_it() {
     steps(&mut harness, 3);
     assert!(!shows(&harness, "Search"), "the click hides the sidebar");
 }
+
+#[test]
+fn a_narrow_window_offers_the_sidebar_and_its_rows_take_clicks() {
+    let mut harness = harness(egui::vec2(800.0, 600.0));
+    booted(&mut harness);
+    assert!(
+        !shows(&harness, "Search"),
+        "a narrow window takes no column"
+    );
+    harness
+        .query_by_label("Show sidebar (Ctrl \\)")
+        .expect("a narrow window offers the sidebar")
+        .click();
+    steps(&mut harness, 3);
+    harness
+        .query_by_label("Search")
+        .expect("the sidebar floats over the content")
+        .click();
+    steps(&mut harness, 3);
+    assert!(
+        shows(&harness, "Set goal"),
+        "a click inside the floating sidebar reaches its row"
+    );
+}
+
+#[test]
+fn a_sidebar_collapsed_while_wide_still_floats_when_narrow() {
+    let mut harness = harness(egui::vec2(1200.0, 800.0));
+    booted(&mut harness);
+    harness.get_by_label("Collapse sidebar (Ctrl \\)").click();
+    steps(&mut harness, 3);
+    harness.set_size(egui::vec2(800.0, 600.0));
+    steps(&mut harness, 3);
+    harness.get_by_label("Show sidebar (Ctrl \\)").click();
+    steps(&mut harness, 3);
+    assert!(
+        shows(&harness, "Search"),
+        "the sidebar floats over the content"
+    );
+}
+
+#[test]
+fn the_floating_workbench_spans_the_window_height() {
+    let mut harness = harness(egui::vec2(800.0, 600.0));
+    booted(&mut harness);
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::B);
+    steps(&mut harness, 5);
+    let rect = harness
+        .ctx
+        .memory(|memory| memory.area_rect(egui::Id::new("workbench-float")))
+        .expect("the workbench floats while narrow");
+    assert!(
+        rect.height() >= 600.0 - 1.0,
+        "the workbench runs top to bottom: {rect:?}"
+    );
+}
+
+#[test]
+fn picking_a_row_in_the_floating_sidebar_closes_it() {
+    let mut harness = harness(egui::vec2(800.0, 600.0));
+    booted(&mut harness);
+    harness.get_by_label("Show sidebar (Ctrl \\)").click();
+    steps(&mut harness, 3);
+    harness.get_by_label("New session").click();
+    steps(&mut harness, 3);
+    assert!(
+        !shows(&harness, "Search"),
+        "the sidebar steps aside once the followed session changes"
+    );
+}

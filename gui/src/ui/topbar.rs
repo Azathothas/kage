@@ -8,7 +8,6 @@ use kage_client::Session;
 use crate::icons::Icon;
 use crate::store::Store;
 use crate::theme::{FS_SM, FS_XS, PANEL_HEAD_H, Palette, R_LG, R_MD, R_SM, SP_4};
-use crate::ui::forms::icon_button;
 use crate::ui::sidebar::project_name;
 
 /// What the top bar asked for; the shell carries it out after its
@@ -76,9 +75,14 @@ pub fn show(
         |ui| {
             ui.spacing_mut().item_spacing.x = SP_4;
             if sidebar_hidden
-                && icon_button(ui, "show-sidebar", Icon::PanelLeft, palette)
-                    .on_hover_text("Show sidebar (Ctrl \\)")
-                    .clicked()
+                && ghost(
+                    ui,
+                    Icon::PanelLeft,
+                    false,
+                    "Show sidebar (Ctrl \\)",
+                    palette,
+                )
+                .clicked()
             {
                 events.push(TopbarEvent::ShowSidebar);
             }

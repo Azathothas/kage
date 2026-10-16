@@ -937,6 +937,7 @@ impl ShellApp {
         let context = self.context();
         let gate = self.shell.store.gate().clone();
         let mut banner = self.shell.gate_banner.clone();
+        self.shell.panels.follow(self.shell.store.active_id());
         let mut panels = self.shell.panels.clone();
         let mut palette = self.shell.palette.clone();
         let mut toasts = std::mem::take(&mut self.shell.toasts);
@@ -1004,7 +1005,10 @@ impl ShellApp {
         };
         let topbar_events: std::cell::RefCell<Vec<crate::ui::topbar::TopbarEvent>> =
             std::cell::RefCell::new(Vec::new());
-        let sidebar_hidden = !self.shell.panels.sidebar_visible;
+        // Under the narrow breakpoint the sidebar takes no column, so
+        // the bar keeps its show button up, as the reference does.
+        let sidebar_hidden =
+            !self.shell.panels.sidebar_visible || self.shell.panels.sidebar_floats();
         let workbench_visible = self.shell.panels.workbench_visible;
         let chat = |ui: &mut egui::Ui| {
             // The column is the transcript above and the composer
