@@ -2077,7 +2077,15 @@ impl ShellApp {
                 },
                 repeat: false,
             };
-            let Some(action) = crate::ui::keys::dispatch(self.context(), &press) else {
+            // The find bar's Enter and Escape answer in `find_keys`;
+            // routed here they would reopen the bar over an empty
+            // query. Around it the shell's own bindings keep working,
+            // as the reference's do.
+            let context = match self.context() {
+                crate::ui::keys::Context::Find => crate::ui::keys::Context::Shell,
+                context => context,
+            };
+            let Some(action) = crate::ui::keys::dispatch(context, &press) else {
                 // The approval card's digits are not the shell's
                 // bindings: they answer the oldest open ask while the
                 // card holds the keys and no field has them.

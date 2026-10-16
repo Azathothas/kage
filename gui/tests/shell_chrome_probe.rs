@@ -246,3 +246,21 @@ fn an_idle_window_repaints_to_drop_its_toast() {
         "the window wakes for the toast's expiry: {delay:?}"
     );
 }
+
+#[test]
+fn enter_in_the_find_bar_keeps_its_query() {
+    let mut harness = harness(egui::vec2(1200.0, 800.0));
+    booted(&mut harness);
+    steps(&mut harness, 400);
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::F);
+    steps(&mut harness, 3);
+    harness.event(egui::Event::Text("null".to_owned()));
+    steps(&mut harness, 3);
+    assert!(testutil::field_holds(&harness, "null"), "the query lands");
+    harness.key_press(egui::Key::Enter);
+    steps(&mut harness, 3);
+    assert!(
+        testutil::field_holds(&harness, "null"),
+        "Enter steps through the matches and keeps the query"
+    );
+}
