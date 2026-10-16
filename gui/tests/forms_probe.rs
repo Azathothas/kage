@@ -35,6 +35,7 @@ fn config_answer() -> serde_json::Value {
                 "models": [{"id": "m1", "name": "Lab One", "context": 128000}]}},
             "deepseek": {"api_key_env": "DS", "headers": {"X-Org": "x"}}
         },
+        "providerKeys": {"lab": {"env": "LAB_KEY", "source": "auth"}},
         "mcp": {"servers": {
             "lab": {"command": "lab-mcp", "args": ["--port", "9"]},
             "web": {"url": "https://mcp.example.com"}
@@ -214,6 +215,39 @@ fn a_provider_row_opens_the_form_on_that_provider() {
     assert!(
         testutil::field_holds(&harness, "http://lab:8080"),
         "the endpoint field carries the saved value"
+    );
+}
+
+#[test]
+fn the_forget_saved_key_button_stays_inside_the_page_column() {
+    // The key row lays itself out right-to-left, so a field drawn
+    // before the button once pushed the button past the column's left
+    // edge, and the vertical layout followed it, dragging every later
+    // label out of the card with it.
+    let mut harness = harness_for(configured());
+    harness.state_mut().1.open(Section::Providers);
+    settle(&mut harness);
+    harness.get_by_label("lab").click();
+    harness.run();
+    // The saved key makes paste the default source, so the button
+    // draws with the field.
+    let forget = harness
+        .query_by_label("Forget saved key")
+        .expect("a saved key draws the forget button");
+    // The card sits at x 20..980 and the nav ends at 244, so anything
+    // left of 244 is over the nav, not the form.
+    assert!(
+        forget.rect().left() > 244.0,
+        "the forget button stays inside the page column: {:?}",
+        forget.rect()
+    );
+    let base = harness
+        .query_by_label("Base URL")
+        .expect("the endpoint field draws under the key row");
+    assert!(
+        base.rect().left() > 244.0,
+        "the key row's overflow must not drag the labels after it: {:?}",
+        base.rect()
     );
 }
 

@@ -622,34 +622,27 @@ impl ProviderForm {
                         "Saved to the engine's auth.json with 0600 permissions, never to config.toml.",
                     ),
                     |ui| {
-                        ui.horizontal(|ui| {
-                            // The forget button takes the right edge
-                            // first, so the key field fills what is left
-                            // instead of pushing the row wider.
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    ui.spacing_mut().item_spacing.x = 8.0;
-                                    let mut key = self.key.clone();
-                                    let response =
-                                        forms::text_field(ui, &mut key, "sk-...", false, palette);
-                                    if response.changed() {
-                                        edit.key = key;
-                                        edit.key_set = true;
-                                    }
-                                    if saved {
-                                        let forget = forms::button(
-                                            ui,
-                                            "Forget saved key",
-                                            Tone::Plain,
-                                            palette,
-                                        );
-                                        if forget.clicked() {
-                                            edit.forget = true;
-                                        }
-                                    }
-                                },
-                            );
+                        // The forget button takes the right edge first
+                        // (right-to-left draws its first widget
+                        // rightmost), so the key field fills what is
+                        // left instead of pushing the button outside
+                        // the column.
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.spacing_mut().item_spacing.x = 8.0;
+                            if saved {
+                                let forget =
+                                    forms::button(ui, "Forget saved key", Tone::Plain, palette);
+                                if forget.clicked() {
+                                    edit.forget = true;
+                                }
+                            }
+                            let mut key = self.key.clone();
+                            let response =
+                                forms::text_field(ui, &mut key, "sk-...", false, palette);
+                            if response.changed() {
+                                edit.key = key;
+                                edit.key_set = true;
+                            }
                         });
                     },
                 );
