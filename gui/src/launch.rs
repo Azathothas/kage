@@ -1179,8 +1179,6 @@ impl ShellApp {
         }
         self.carry_workbench(workbench_events);
 
-        crate::ui::status::status_bar(ui, self.shell.store());
-
         let mut chosen = None;
         if self.shell.palette.is_open() {
             let registry = crate::ui::palette::RegistryOwned::of(self.shell.store());

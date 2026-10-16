@@ -1,76 +1,15 @@
-//! The status bar and the gate banner.
+//! The gate banner.
 //!
-//! The bottom bar names the connection state, the agent once it is
-//! known, and the model in effect. The banner sits above it when the
-//! initialize answer fell short of what the shell gates on, and
-//! dismisses for that answer; a reconnect that still falls short
-//! brings it back.
+//! The banner shows when the initialize answer fell short of what the
+//! shell gates on, and dismisses for that answer; a reconnect that
+//! still falls short brings it back. The connection itself reads in
+//! the sidebar's footer, as the reference has it.
 
 use crate::gate::Report;
-use crate::store::Store;
 use crate::theme::{FS_XS, Palette, SP_4, SP_6};
 
-/// The status bar's height.
-const BAR_H: f32 = 26.0;
-
-/// The bottom bar: the connection state, the agent and the model.
-///
-/// The connection string comes from the store's own state, which the
-/// pump keeps in step; the agent name and version arrive with the
-/// handshake, and the model label with the first session's config.
-pub fn status_bar(ui: &mut egui::Ui, store: &Store) {
-    let palette = Palette::active_of(ui.ctx());
-    let state = store.state();
-    let connect = store.connect().label();
-    let agent = state
-        .agent
-        .as_ref()
-        .map(|agent| format!("{} {}", agent.name, agent.version.as_deref().unwrap_or("?")))
-        .unwrap_or_else(|| "connecting".to_owned());
-    let model = store
-        .active_session()
-        .and_then(|session| crate::modes::select_option(session, "model"))
-        .map(|option| option.current_value.clone())
-        .unwrap_or_else(|| "default".to_owned());
-
-    egui::Panel::bottom("status")
-        .exact_size(BAR_H)
-        .frame(
-            egui::Frame::NONE
-                .fill(palette.bg)
-                .inner_margin(egui::Margin::symmetric(SP_6 as i8, 0)),
-        )
-        .show(ui, |ui| {
-            ui.horizontal_centered(|ui| {
-                ui.set_height(BAR_H);
-                ui.spacing_mut().item_spacing.x = SP_6;
-                let dot = match store.connect() {
-                    crate::transport::State::Connected => palette.ok,
-                    crate::transport::State::Refused(_) => palette.danger,
-                    crate::transport::State::Reconnecting { .. } => palette.warn,
-                    _ => palette.muted,
-                };
-                let (rect, _) = ui.allocate_exact_size(egui::vec2(8.0, 8.0), egui::Sense::hover());
-                ui.painter().circle_filled(rect.center(), 4.0, dot);
-                ui.label(
-                    egui::RichText::new(connect)
-                        .size(FS_XS)
-                        .color(palette.muted),
-                );
-                ui.separator();
-                ui.label(
-                    egui::RichText::new(agent)
-                        .size(FS_XS)
-                        .color(palette.ink_strong),
-                );
-                ui.separator();
-                ui.label(egui::RichText::new(model).size(FS_XS).color(palette.muted));
-            });
-        });
-}
-
-/// The gate banner over the status bar, when the initialize answer
-/// fell short. Dismissible for that answer: the shell calls
+/// The gate banner, when the initialize answer fell short.
+/// Dismissible for that answer: the shell calls
 /// [`Banner::dismiss`] on the close click and [`Banner::reset`] when a
 /// reconnect starts, so a still-short answer shows again.
 #[derive(Debug, Clone, Default)]

@@ -264,3 +264,24 @@ fn enter_in_the_find_bar_keeps_its_query() {
         "Enter steps through the matches and keeps the query"
     );
 }
+
+#[test]
+fn nothing_lays_out_below_the_window() {
+    let mut harness = harness(egui::vec2(1200.0, 800.0));
+    booted(&mut harness);
+    steps(&mut harness, 50);
+    use egui_kittest::kittest::NodeT as _;
+    let below: Vec<String> = harness
+        .query_all_by(|_| true)
+        .filter(|node| {
+            node.accesskit_node()
+                .bounding_box()
+                .is_some_and(|rect| rect.y0 >= 800.0)
+        })
+        .map(|node| {
+            let node = node.accesskit_node();
+            node.label().or_else(|| node.value()).unwrap_or_default()
+        })
+        .collect();
+    assert!(below.is_empty(), "drawn off screen: {below:?}");
+}
