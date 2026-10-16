@@ -941,10 +941,8 @@ impl Composer {
         let has_text = !self.draft.text.trim().is_empty();
         self.sync_placeholder(store, running);
 
-        // The suggestion menu, over the field: the slash rows or the
-        // mention rows the draft points at.
-        let suggestion = self.draft.suggest();
-        let menu_rows = suggestion_rows(suggestion.as_ref(), commands, self.listing.as_ref());
+        // The suggestion menu opens over the field, so its position is
+        // the card's own, taken before the card lays out.
         let menu_top = ui.next_widget_position().y - 6.0;
         let menu_left = ui.next_widget_position().x;
 
@@ -1084,6 +1082,11 @@ impl Composer {
         // session's cost on the right, as the reference draws it.
         hint_line(ui, store, running, enter_sends);
 
+        // The suggestion menu, over the field: the slash rows or the
+        // mention rows the draft points at, read after the field took
+        // the frame's keys, so the rows match the text it shows now.
+        let suggestion = self.draft.suggest();
+        let menu_rows = suggestion_rows(suggestion.as_ref(), commands, self.listing.as_ref());
         if let Some(rows) = menu_rows {
             show_suggestion_menu(
                 ui.ctx(),
