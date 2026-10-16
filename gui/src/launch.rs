@@ -1122,7 +1122,18 @@ impl ShellApp {
         self.shell.sidebar = sidebar.into_inner();
         self.shell.store = store.into_inner();
         self.shell.workbench = workbench_state.into_inner();
-        self.carry_sidebar(sidebar_events.into_inner());
+        let sidebar_events = sidebar_events.into_inner();
+        // The palette draws from this frame's clone, so an open from
+        // the sidebar has to land in the clone: opening the field
+        // here would be overwritten by the write-back at the end of
+        // the frame, and the palette would flash for one frame.
+        if sidebar_events
+            .iter()
+            .any(|event| matches!(event, crate::ui::sidebar::SidebarEvent::OpenPalette))
+        {
+            palette.open();
+        }
+        self.carry_sidebar(sidebar_events);
         let workbench_events = workbench_events.into_inner();
         if workbench_events
             .iter()
@@ -1217,9 +1228,9 @@ impl ShellApp {
                 crate::ui::sidebar::SidebarEvent::Activate(id) => {
                     self.shell.store.set_active(id);
                 }
-                crate::ui::sidebar::SidebarEvent::OpenPalette => {
-                    self.shell.palette.open();
-                }
+                // An open goes to the frame's palette clone before the
+                // show, not to the field this frame overwrites.
+                crate::ui::sidebar::SidebarEvent::OpenPalette => {}
                 crate::ui::sidebar::SidebarEvent::OpenSettings => self
                     .shell
                     .settings

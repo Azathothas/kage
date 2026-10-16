@@ -21,13 +21,41 @@ fn harness() -> Harness<'static, (Store, Palette, Option<PaletteEntry>, bool)> {
                 if testutil::theme_installed(installed, ui.ctx()) {
                     return;
                 }
-                let rows = kage_desktop::ui::palette::RegistryOwned::of(store)
-                    .view()
-                    .rows(palette.query());
-                *chosen = palette.show(ui, &rows).or(chosen.take());
+                // The sidebar's Search row sits before the palette in
+                // the frame, the way the shell draws them, so a click
+                // that opens the palette lands in the frame the
+                // palette first draws in.
+                if ui.button("Search").clicked() {
+                    palette.open();
+                }
+                // The shell only shows an open palette.
+                if palette.is_open() {
+                    let rows = kage_desktop::ui::palette::RegistryOwned::of(store)
+                        .view()
+                        .rows(palette.query());
+                    *chosen = palette.show(ui, &rows).or(chosen.take());
+                }
             },
             (Store::new("/w", false), Palette::default(), None, false),
         )
+}
+
+#[test]
+fn clicking_search_opens_the_palette_and_it_stays_open() {
+    let mut harness = harness();
+    harness.run();
+    harness.run();
+    harness.get_by_label("Search").click();
+    harness.run();
+    harness.run();
+    assert!(
+        harness.state().1.is_open(),
+        "the click on Search opens the palette"
+    );
+    assert!(
+        harness.query_by_label("Settings").is_some(),
+        "the open palette lists its rows"
+    );
 }
 
 #[test]

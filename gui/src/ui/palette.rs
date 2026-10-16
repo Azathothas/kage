@@ -24,7 +24,7 @@ use crate::theme::{
 /// The dialog's width, the old palette's 620px.
 const DIALOG_W: f32 = 620.0;
 
-/// The dialog's height cap, the old palette's 520px.
+/// TEMP: height cap for the bisect.
 const DIALOG_MAX_H: f32 = 520.0;
 
 /// The list's height cap, the old palette's 420px.
@@ -496,6 +496,8 @@ impl Palette {
         let selected = self.selected;
         let mut run = None;
         let mut backdrop_clicked = false;
+        let mut backdrop_pos = None;
+        let mut card_rect = egui::Rect::NOTHING;
         let (up, down, enter, escape) = ui.input(|input| {
             (
                 input.key_pressed(egui::Key::ArrowUp),
@@ -533,11 +535,14 @@ impl Palette {
                     egui::Color32::from_black_alpha(115),
                 );
                 backdrop_clicked = backdrop.clicked();
+                backdrop_pos = ui.input(|input| input.pointer.interact_pos());
+                // The dialog caps at the design's height: the content
+                // below draws at its own height inside it.
                 let dialog = egui::Rect::from_min_size(
                     egui::pos2((screen.width() - DIALOG_W) / 2.0, screen.height() * 0.12),
                     egui::vec2(DIALOG_W, DIALOG_MAX_H),
                 );
-                ui.scope_builder(egui::UiBuilder::new().max_rect(dialog), |ui| {
+                let card = ui.scope_builder(egui::UiBuilder::new().max_rect(dialog), |ui| {
                     egui::Frame::NONE
                         .fill(palette.bg)
                         .stroke(egui::Stroke::new(1.0, palette.line))
@@ -577,8 +582,12 @@ impl Palette {
                                 });
                         });
                 });
+                card_rect = card.response.rect;
             });
-        if backdrop_clicked {
+        // The backdrop closes the palette, but only for clicks beside
+        // the card: it answers the card's dead space too, and a click
+        // there must not close what the user is using.
+        if backdrop_clicked && backdrop_pos.is_none_or(|pos| !card_rect.contains(pos)) {
             self.close();
             return None;
         }
