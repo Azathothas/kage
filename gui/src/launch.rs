@@ -1154,6 +1154,14 @@ impl ShellApp {
         {
             palette.open();
         }
+        // The same holds for the collapse: the frame writes `panels`
+        // back over the shell's own at its end.
+        if sidebar_events
+            .iter()
+            .any(|event| matches!(event, crate::ui::sidebar::SidebarEvent::Collapse))
+        {
+            panels.toggle_sidebar();
+        }
         self.carry_sidebar(sidebar_events);
         let workbench_events = workbench_events.into_inner();
         if workbench_events
@@ -1283,9 +1291,9 @@ impl ShellApp {
                     .shell
                     .settings
                     .open(crate::ui::settings::Section::General),
-                crate::ui::sidebar::SidebarEvent::Collapse => {
-                    self.shell.panels.toggle_sidebar();
-                }
+                // A collapse goes to the frame's panels, as the open
+                // does to its palette.
+                crate::ui::sidebar::SidebarEvent::Collapse => {}
                 crate::ui::sidebar::SidebarEvent::ToggleGrouping => {
                     self.shell.store.update_prefs(|prefs| {
                         prefs.group_by_project = !prefs.group_by_project;
