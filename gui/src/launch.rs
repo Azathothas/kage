@@ -1158,9 +1158,6 @@ impl ShellApp {
                 }
             }
         }
-        for action in std::mem::take(&mut self.row_actions) {
-            self.carry_row(ui.ctx(), &mut panels, action);
-        }
         let sidebar_events = sidebar_events.into_inner();
         // The palette draws from this frame's clone, so an open from
         // the sidebar has to land in the clone: opening the field
@@ -1189,6 +1186,11 @@ impl ShellApp {
             panels.toggle_workbench();
         }
         self.carry_workbench(workbench_events);
+        // The rows' asks land on the store and the workbench, so they
+        // run once both are back from the frame's cells.
+        for action in std::mem::take(&mut self.row_actions) {
+            self.carry_row(ui.ctx(), &mut panels, action);
+        }
 
         let mut chosen = None;
         if self.shell.palette.is_open() {
