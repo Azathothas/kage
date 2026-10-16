@@ -430,6 +430,19 @@ pub fn text_field(
     mono: bool,
     palette: &Palette,
 ) -> egui::Response {
+    text_field_w(ui, value, placeholder, mono, f32::INFINITY, palette)
+}
+
+/// A one-line text field at an explicit width; [`f32::INFINITY`] takes
+/// the column's remaining width.
+pub fn text_field_w(
+    ui: &mut egui::Ui,
+    value: &mut String,
+    placeholder: &str,
+    mono: bool,
+    width: f32,
+    palette: &Palette,
+) -> egui::Response {
     let mut font = egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR));
     if mono {
         font = egui::FontId::new(FS_XS, family(FAMILY_MONO_REGULAR));
@@ -441,7 +454,7 @@ pub fn text_field(
                 .color(palette.faint),
         )
         .font(font)
-        .desired_width(f32::INFINITY)
+        .desired_width(width)
         .margin(egui::Margin::symmetric(8, 6));
     ui.add(field)
 }
@@ -600,6 +613,11 @@ pub fn preview_block(
     response
 }
 
+/// Width of the fixed name cell of a [`pairs`] row.
+const PAIR_NAME_W: f32 = 160.0;
+/// Width of the remove button of a [`pairs`] row: [`icon_button`]'s cell.
+pub(crate) const ROW_REMOVE_W: f32 = 26.0;
+
 /// The name and value rows of a map a form edits, then an add button.
 /// The rows report their edits through `edit` and the add button's
 /// response is returned for the caller to read.
@@ -607,15 +625,20 @@ pub fn pairs(ui: &mut egui::Ui, id: &str, pairs: &mut Pairs, palette: &Palette) 
     for ix in 0..pairs.rows().len() {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 6.0;
+            // The value cell fills what the name cell and the remove
+            // button leave, so the row never grows past its column.
+            let value_w =
+                (ui.available_width() - PAIR_NAME_W - ROW_REMOVE_W - 2.0 * 6.0).max(120.0);
             let mut name = pairs.rows()[ix].name.clone();
             let mut value = pairs.rows()[ix].value.clone();
-            let name_response = text_field(ui, &mut name, "NAME", true, palette);
+            let name_response = text_field_w(ui, &mut name, "NAME", true, PAIR_NAME_W, palette);
             let value_placeholder = if pairs.rows()[ix].kept {
                 "unchanged"
             } else {
                 "value"
             };
-            let value_response = text_field(ui, &mut value, value_placeholder, false, palette);
+            let value_response =
+                text_field_w(ui, &mut value, value_placeholder, false, value_w, palette);
             if name_response.changed() {
                 pairs.set_name(ix, name);
             }

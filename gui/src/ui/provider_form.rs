@@ -623,21 +623,33 @@ impl ProviderForm {
                     ),
                     |ui| {
                         ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 8.0;
-                            let mut key = self.key.clone();
-                            let response =
-                                forms::text_field(ui, &mut key, "sk-...", false, palette);
-                            if response.changed() {
-                                edit.key = key;
-                                edit.key_set = true;
-                            }
-                            if saved {
-                                let forget =
-                                    forms::button(ui, "Forget saved key", Tone::Plain, palette);
-                                if forget.clicked() {
-                                    edit.forget = true;
-                                }
-                            }
+                            // The forget button takes the right edge
+                            // first, so the key field fills what is left
+                            // instead of pushing the row wider.
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    ui.spacing_mut().item_spacing.x = 8.0;
+                                    let mut key = self.key.clone();
+                                    let response =
+                                        forms::text_field(ui, &mut key, "sk-...", false, palette);
+                                    if response.changed() {
+                                        edit.key = key;
+                                        edit.key_set = true;
+                                    }
+                                    if saved {
+                                        let forget = forms::button(
+                                            ui,
+                                            "Forget saved key",
+                                            Tone::Plain,
+                                            palette,
+                                        );
+                                        if forget.clicked() {
+                                            edit.forget = true;
+                                        }
+                                    }
+                                },
+                            );
                         });
                     },
                 );
@@ -664,6 +676,16 @@ impl ProviderForm {
                 for (ix, row) in self.models.iter().enumerate() {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 6.0;
+                        // The id cell fills what the fixed cells and the
+                        // remove button leave, so the row never grows
+                        // past its column.
+                        let id_w = (ui.available_width()
+                            - 96.0
+                            - 96.0
+                            - 160.0
+                            - forms::ROW_REMOVE_W
+                            - 4.0 * 6.0)
+                            .max(120.0);
                         let mut cells = [
                             row.id.clone(),
                             row.context.clone(),
@@ -671,13 +693,25 @@ impl ProviderForm {
                             row.name.clone(),
                         ];
                         let id_response =
-                            forms::text_field(ui, &mut cells[0], "model-id", true, palette);
+                            forms::text_field_w(ui, &mut cells[0], "model-id", true, id_w, palette);
                         let context_response =
-                            forms::text_field(ui, &mut cells[1], "tokens", false, palette);
-                        let output_response =
-                            forms::text_field(ui, &mut cells[2], "optional", false, palette);
-                        let name_response =
-                            forms::text_field(ui, &mut cells[3], "optional", false, palette);
+                            forms::text_field_w(ui, &mut cells[1], "tokens", false, 96.0, palette);
+                        let output_response = forms::text_field_w(
+                            ui,
+                            &mut cells[2],
+                            "optional",
+                            false,
+                            96.0,
+                            palette,
+                        );
+                        let name_response = forms::text_field_w(
+                            ui,
+                            &mut cells[3],
+                            "optional",
+                            false,
+                            160.0,
+                            palette,
+                        );
                         if id_response.changed() {
                             edit.models.push((ix, 0, cells[0].clone()));
                         }

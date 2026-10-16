@@ -207,6 +207,38 @@ fn the_close_button_closes_the_dialog() {
 }
 
 #[test]
+fn dead_space_inside_the_card_keeps_the_dialog_open() {
+    // The scrim behind the card closes the dialog, so the card has to
+    // answer its own dead space before the click reaches the scrim.
+    let mut harness = harness_for(booted());
+    harness.state_mut().1.open(Section::General);
+    harness.run();
+    harness.run();
+    // A press over the nav column's empty foot, inside the card.
+    let dead = egui::pos2(120.0, 700.0);
+    harness.hover_at(dead);
+    harness.drag_at(dead);
+    harness.drop_at(dead);
+    harness.run();
+    harness.run();
+    assert!(
+        harness.state().1.is_open(),
+        "a dead-space press inside the card does not close the dialog"
+    );
+    // A press on the scrim, outside the card, still closes it.
+    let outside = egui::pos2(10.0, 990.0);
+    harness.hover_at(outside);
+    harness.drag_at(outside);
+    harness.drop_at(outside);
+    harness.run();
+    harness.run();
+    assert!(
+        !harness.state().1.is_open(),
+        "a press outside the card closes the dialog"
+    );
+}
+
+#[test]
 fn the_providers_page_reads_the_snapshot_and_the_session() {
     let mut harness = harness_for(configured());
     harness.state_mut().1.open(Section::Providers);

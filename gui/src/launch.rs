@@ -1834,6 +1834,9 @@ impl ShellApp {
                     .settings
                     .open(crate::ui::settings::Section::Providers);
             }
+            crate::ui::composer::ComposerEvent::Stop => {
+                store.cancel();
+            }
             _ => {}
         }
         if let crate::ui::composer::ComposerEvent::Send { steer } = event

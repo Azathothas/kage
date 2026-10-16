@@ -744,13 +744,17 @@ fn render_row(
             Some(TranscriptItem::User { .. })
                 if let Some(summary) = text_rows::summary_of(text) =>
             {
-                text_rows::render_summary(
+                let response = text_rows::render_summary(
                     ui,
                     pipeline,
                     *ix,
                     summary,
                     ui_state.expanded.contains(&RowKey::Item(*ix)),
-                )
+                );
+                if response.clicked() {
+                    tool_rows::toggle(ui_state, RowKey::Item(*ix));
+                }
+                response
             }
             Some(TranscriptItem::User { .. }) if let Some(note) = text_rows::note_of(text) => {
                 text_rows::render_engine_note(ui, *ix, &note)
@@ -798,13 +802,19 @@ fn render_row(
             _ => blank_row(ui),
         },
         Row::Thinking { ix, live, expanded } => match session.items.get(*ix) {
-            Some(TranscriptItem::Thinking { text, .. }) => text_rows::render_thinking(
-                ui,
-                shown(revealed, *ix, text),
-                *live,
-                *expanded,
-                times.and_then(|t| t.thinking(*ix)),
-            ),
+            Some(TranscriptItem::Thinking { text, .. }) => {
+                let response = text_rows::render_thinking(
+                    ui,
+                    shown(revealed, *ix, text),
+                    *live,
+                    *expanded,
+                    times.and_then(|t| t.thinking(*ix)),
+                );
+                if response.clicked() {
+                    tool_rows::toggle(ui_state, RowKey::Item(*ix));
+                }
+                response
+            }
             _ => blank_row(ui),
         },
         Row::Tool { ix, .. } => match session.items.get(*ix) {

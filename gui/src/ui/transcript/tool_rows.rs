@@ -348,7 +348,7 @@ fn run_texts(session: &Session, end: usize) -> (Option<String>, String) {
 
 /// Opens or closes one row key in the expansion set, the way the old
 /// view's `toggle` did.
-fn toggle(ui_state: &mut UiState, key: RowKey) {
+pub(crate) fn toggle(ui_state: &mut UiState, key: RowKey) {
     if !ui_state.expanded.remove(&key) {
         ui_state.expanded.insert(key);
     }

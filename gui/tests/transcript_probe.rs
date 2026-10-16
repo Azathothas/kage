@@ -90,6 +90,40 @@ fn the_transcript_draws_the_recorded_rows() {
 }
 
 #[test]
+fn a_thought_head_click_unfolds_its_body() {
+    use egui_kittest::kittest::Queryable as _;
+
+    let mut harness = harness_for(900.0);
+    harness.run();
+    harness.run();
+    let body = "The read confirms main dereferences an Option, so the fix is a match.";
+    assert_eq!(
+        testutil::count(&harness, body),
+        0,
+        "the thought starts folded"
+    );
+    // The head's own text starts with the thought's verb, whatever
+    // duration the recording carried.
+    harness
+        .query_all_by(|node| {
+            node.role() == egui::accesskit::Role::Button
+                && node
+                    .label()
+                    .is_some_and(|label| label.starts_with("Thought"))
+        })
+        .next()
+        .expect("the recording carries a thought head")
+        .click();
+    harness.run();
+    harness.run();
+    assert_eq!(
+        testutil::count(&harness, body),
+        1,
+        "the click unfolds the thought"
+    );
+}
+
+#[test]
 fn the_transcript_paints_the_palette_over_the_rows() {
     let mut harness = harness_for(900.0);
     harness.run();

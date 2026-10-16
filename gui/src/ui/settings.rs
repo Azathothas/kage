@@ -519,6 +519,13 @@ impl SettingsView {
                 if scrim.clicked() {
                     close = true;
                 }
+                // The card takes its own clicks before its contents draw
+                // over it, so only the scrim around it closes the dialog.
+                let _ = ui.interact(
+                    card,
+                    egui::Id::new("kage-settings-card"),
+                    egui::Sense::click(),
+                );
                 ui.scope_builder(egui::UiBuilder::new().max_rect(card), |ui| {
                     egui::Frame::NONE
                         .fill(palette.bg)

@@ -87,6 +87,54 @@ fn a_typed_draft_sends_through_the_composer() {
 }
 
 #[test]
+fn the_stop_button_reports_stop_while_running() {
+    // The stop click used to report Stop and no shell listened, so a
+    // turn never interrupted; this pins the composer's half of it.
+    use egui_kittest::kittest::Queryable;
+
+    let store = booted();
+    let composer = kage_desktop::ui::composer::Composer::new();
+    let mut harness = Harness::builder()
+        .with_size(egui::Vec2::new(900.0, 600.0))
+        .build_ui_state(
+            |ui,
+             (store, composer, events, installed): &mut (
+                Store,
+                kage_desktop::ui::composer::Composer,
+                Vec<kage_desktop::ui::composer::ComposerEvent>,
+                bool,
+            )| {
+                if testutil::theme_installed(installed, ui.ctx()) {
+                    return;
+                }
+                egui::CentralPanel::default().show(ui, |ui| {
+                    ui.vertical(|ui| {
+                        let commands = store.composer_commands().to_vec();
+                        events.push(composer.show(ui, store, &commands, true, true));
+                    });
+                });
+            },
+            (store, composer, Vec::new(), false),
+        );
+    harness.run();
+    harness.run();
+    assert!(
+        harness.query_by_label("Interrupt").is_some(),
+        "a running turn draws the stop button"
+    );
+    harness
+        .query_by_label("Interrupt")
+        .expect("the stop button draws while a turn runs")
+        .click();
+    harness.run();
+    let (_, _, events, _) = harness.state();
+    assert!(
+        events.contains(&kage_desktop::ui::composer::ComposerEvent::Stop),
+        "the stop click reports Stop: {events:?}"
+    );
+}
+
+#[test]
 fn the_mode_picker_writes_the_store_when_a_row_is_picked() {
     // The pickers used to record their pick into a local and drop it,
     // so a click closed the menu and changed nothing. This opens the
