@@ -905,6 +905,20 @@ impl ShellApp {
         self.shell.store.set_link(link);
         let active = self.shell.store.active_id().map(str::to_owned);
         if self.shell.composer_focus_for.as_ref() != Some(&active) {
+            // Each session keeps its own draft: the text typed for the
+            // one left behind is banked, and the new one's comes back.
+            if let Some(previous) = &self.shell.composer_focus_for {
+                let held = self.shell.composer.draft.text.clone();
+                self.shell.store.set_draft(previous.as_deref(), &held);
+                let draft = active
+                    .as_deref()
+                    .and_then(|id| self.shell.store.draft(id))
+                    .unwrap_or_default()
+                    .to_owned();
+                if draft != held {
+                    self.shell.composer.set_draft(draft);
+                }
+            }
             if !self.shell.store.prefs().vim {
                 ui.ctx().memory_mut(|memory| {
                     memory.request_focus(egui::Id::new("composer-input"));

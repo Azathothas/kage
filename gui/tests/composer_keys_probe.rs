@@ -224,3 +224,27 @@ fn a_bare_goal_command_opens_the_goal_dialog() {
         "a bare /goal asks for the goal rather than clearing it"
     );
 }
+
+#[test]
+fn a_session_gets_its_own_draft_back() {
+    let mut harness = booted();
+    type_text(&mut harness, "half a thought");
+    click(&mut harness, "New session");
+    steps(&mut harness, 3);
+    assert_eq!(composer_text(&harness), "", "the welcome pane starts empty");
+    // The sidebar's one session row, under its project header. The
+    // row carries no accessible name, so the click lands by position.
+    let at = egui::pos2(140.0, 220.0);
+    harness.event(egui::Event::PointerMoved(at));
+    for pressed in [true, false] {
+        harness.event(egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        steps(&mut harness, 1);
+    }
+    steps(&mut harness, 5);
+    assert_eq!(composer_text(&harness), "half a thought");
+}
