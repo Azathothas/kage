@@ -768,7 +768,11 @@ fn show_suggestion_menu(
                 .corner_radius(egui::CornerRadius::same(crate::theme::R_LG as u8))
                 .inner_margin(egui::Margin::same(SUGGEST_PAD as i8))
                 .show_shadowed(ui, &palette.shadow_menu, |ui| {
+                    // An area's bounds are last frame's size, so the
+                    // height is set outright or a menu that once shrank
+                    // to one row never grows back.
                     ui.set_width(width - 2.0 * SUGGEST_PAD - 2.0);
+                    ui.set_height(height - 2.0 * SUGGEST_PAD - 2.0);
                     egui::ScrollArea::vertical()
                         .max_height(SUGGEST_MAX_H - 2.0 * SUGGEST_PAD - 2.0)
                         .show(ui, |ui| {

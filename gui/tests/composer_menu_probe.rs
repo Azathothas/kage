@@ -114,3 +114,43 @@ fn the_menu_matches_the_field_one_frame_after_each_key() {
     assert!(again >= 4, "a bare slash lists every command again");
 }
 
+
+/// The suggestion menu's height on screen, when it is open.
+fn menu_height(harness: &Harness<'static, Rig>) -> Option<f32> {
+    harness
+        .ctx
+        .memory(|memory| memory.area_rect(egui::Id::new("composer-suggest")))
+        .map(|rect| rect.height())
+}
+
+#[test]
+fn a_menu_reopened_after_one_row_draws_every_row() {
+    let mut harness = harness();
+    booted(&mut harness);
+
+    harness.event(egui::Event::Text("/".to_owned()));
+    harness.step();
+    harness.step();
+    let full = menu_height(&harness).expect("a bare slash opens the menu");
+
+    harness.event(egui::Event::Text("plan".to_owned()));
+    harness.step();
+    harness.step();
+    let one = menu_height(&harness).expect("/plan keeps the menu open");
+    assert!(one < full, "one row is shorter than four: {one} vs {full}");
+
+    for _ in 0.."/plan".len() {
+        harness.key_press(egui::Key::Backspace);
+    }
+    harness.step();
+    harness.step();
+    harness.event(egui::Event::Text("/".to_owned()));
+    harness.step();
+    harness.step();
+    let again = menu_height(&harness).expect("a bare slash opens the menu again");
+    println!("full {full}, one {one}, again {again}");
+    assert!(
+        (again - full).abs() < 1.0,
+        "the reopened menu is as tall as the first: {again} vs {full}"
+    );
+}
