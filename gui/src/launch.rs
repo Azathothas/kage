@@ -1478,8 +1478,23 @@ impl ShellApp {
         let open = store.active_asks().len();
         let events = self.shell.approval.show(ui, store);
         self.carry_approval(store, events);
-        // A first ask takes the digit keys; the last one closing hands
-        // them back to the shell.
+        // A first ask takes the keys from whatever field held them, so
+        // its digits answer; the last one closing while nothing holds
+        // the keys hands them back to the composer.
+        let focus = ui.ctx().memory(|memory| memory.focused());
+        match self.shell.approval.sync_open(open) {
+            Some(true) => {
+                if let Some(id) = focus {
+                    ui.ctx().memory_mut(|memory| memory.surrender_focus(id));
+                }
+            }
+            Some(false) if focus.is_none() => {
+                ui.ctx().memory_mut(|memory| {
+                    memory.request_focus(egui::Id::new("composer-input"));
+                });
+            }
+            _ => {}
+        }
         if open > 0 {
             if let Some(ask) = store.active_asks().first() {
                 let request = ask.1.request_id.clone();
@@ -2099,8 +2114,10 @@ impl ShellApp {
             let Some(action) = crate::ui::keys::dispatch(context, &press) else {
                 // The approval card's digits are not the shell's
                 // bindings: they answer the oldest open ask while the
-                // card holds the keys and no field has them.
+                // card holds the keys and no field has them, so a digit
+                // typed into the composer stays text.
                 if press.mods == crate::ui::keys::Mods::default()
+                    && ctx.memory(|memory| memory.focused()).is_none()
                     && let Some(digit) = press.key.parse::<usize>().ok()
                     && self.approve_digit(digit)
                 {

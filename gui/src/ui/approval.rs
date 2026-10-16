@@ -166,6 +166,8 @@ pub struct Approval {
     picks: HashMap<RequestId, BTreeSet<usize>>,
     /// Which ask holds the keys for the digit answers.
     focused: Option<RequestId>,
+    /// How many asks were open at the last [`Approval::sync_open`].
+    seen: usize,
 }
 
 impl Approval {
@@ -183,6 +185,18 @@ impl Approval {
     /// Hands the keys back, so a digit reaches the shell again.
     pub fn blur(&mut self) {
         self.focused = None;
+    }
+
+    /// Records that `open` asks are open now and reports the edge:
+    /// `Some(true)` when a first ask opened, `Some(false)` when the
+    /// last one closed, `None` otherwise.
+    pub fn sync_open(&mut self, open: usize) -> Option<bool> {
+        let was = std::mem::replace(&mut self.seen, open);
+        match (was, open) {
+            (0, 1..) => Some(true),
+            (1.., 0) => Some(false),
+            _ => None,
+        }
     }
 
     /// What the 1-based `digit` does to the oldest open ask `ask`, or
