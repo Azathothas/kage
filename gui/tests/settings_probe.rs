@@ -551,3 +551,20 @@ fn escape_drops_the_plugin_field_and_the_rule_field() {
         "the dialog has Escape back"
     );
 }
+
+#[test]
+fn opening_the_about_page_clears_the_update_badge() {
+    let mut store = booted();
+    store.update_prefs(|prefs| prefs.update_badge = true);
+    let mut harness = harness_for(store);
+    harness.state_mut().1.open(Section::General);
+    harness.run();
+    harness.run();
+    harness.get_by_label("About").click();
+    harness.run();
+    harness.run();
+    assert!(
+        !harness.state().0.prefs().update_badge,
+        "the About page was seen, so the badge clears"
+    );
+}

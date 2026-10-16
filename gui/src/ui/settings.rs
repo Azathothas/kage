@@ -596,6 +596,9 @@ impl SettingsView {
             if section == Section::Agents {
                 store.ask_engine_options();
             }
+            if section == Section::About {
+                store.update_prefs(|prefs| prefs.update_badge = false);
+            }
         }
         for event in &events {
             match event {
