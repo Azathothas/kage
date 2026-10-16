@@ -10,8 +10,10 @@
 //!   models.dev lacks, curate the subset kage needs with
 //!   `kage_provider::catalog::source`, and rewrite
 //!   `crates/kage-provider/src/catalog/generated.rs`. The manual
-//!   fixture is drift-checked against Command Code's live model list
-//!   and synced to the official CLI catalog's thinking levels. This
+//!   fixture's Command Code rows are drift-checked against its live
+//!   model list and synced to the official CLI catalog's thinking
+//!   levels; its Kenari rows are rebuilt from Kenari's plans and model
+//!   list. This
 //!   is run by maintainers; `cargo build` itself is offline. `--check`
 //!   re-renders and diffs without writing (the CI drift gate).
 //! * `gen-lua-types`: regenerate `plugins/types/kage.lua`.
@@ -127,6 +129,14 @@ const COMMAND_CODE_MODELS_URL: &str = "https://api.commandcode.ai/provider/v1/mo
 /// the endpoint above publishes no effort metadata.
 const COMMAND_CODE_CLI_CATALOG_URL: &str = "https://cdn.jsdelivr.net/npm/command-code/dist/bundled/command-code-knowledge/reference/models.md";
 
+/// Kenari's public model list: context windows and served endpoints
+/// for every model, no key needed.
+const KENARI_MODELS_URL: &str = "https://kenari.id/v1/models";
+
+/// Kenari's subscription plans. The union of their `scope_models` is
+/// the model set the manual fixture lists for Kenari.
+const KENARI_PLANS_URL: &str = "https://kenari.id/api/plans";
+
 /// Hard cap on a downloaded catalog body.
 const DOWNLOAD_LIMIT: usize = 32 * 1024 * 1024;
 
@@ -137,17 +147,23 @@ fn refresh_models(source_url: &str, check: bool) -> Result<PathBuf, String> {
         .map_err(|e| format!("read {}: {e}", manual_path.display()))?;
     // The manual fixture must track Command Code: the endpoint is the
     // authority for ids, names, context windows and wire placement, the
-    // official CLI catalog for the reasoning shapes. Both checks are
-    // skipped when `--source` overrides upstream for offline testing.
+    // official CLI catalog for the reasoning shapes. Kenari's rows are
+    // rebuilt from its plans and model list. All of it is skipped when
+    // `--source` overrides upstream for offline testing.
     if source_url == MODELS_DEV_URL {
-        let live = fetch(COMMAND_CODE_MODELS_URL)?;
-        check_command_code_drift(&manual, &live)?;
+        let kenari = sync_kenari(
+            &manual,
+            &fetch(KENARI_MODELS_URL)?,
+            &fetch(KENARI_PLANS_URL)?,
+            &raw,
+        )?;
+        check_command_code_drift(&kenari, &fetch(COMMAND_CODE_MODELS_URL)?)?;
         let cli = fetch(COMMAND_CODE_CLI_CATALOG_URL)?;
-        let synced = sync_commandcode_reasoning(&manual, &cli)?;
+        let synced = sync_commandcode_reasoning(&kenari, &cli)?;
         if synced != manual {
             if check {
                 return Err(format!(
-                    "{CATALOG_MANUAL} is out of date with the Command Code CLI catalog; run `cargo xtask refresh-models`"
+                    "{CATALOG_MANUAL} is out of date with the Kenari or Command Code catalogs; run `cargo xtask refresh-models`"
                 ));
             }
             kage_core::fsutil::atomic_write(&manual_path, synced.as_bytes())
@@ -234,6 +250,9 @@ fn check_command_code_drift(manual: &str, live: &str) -> Result<(), String> {
     // fixture id -> (provider id, name, context window).
     let mut fixture: BTreeMap<&str, (&str, &str, Option<u64>)> = BTreeMap::new();
     for (provider_id, provider) in &manual {
+        if !provider_id.starts_with("commandcode") {
+            continue;
+        }
         let Some(models) = provider.get("models").and_then(Value::as_object) else {
             return Err(format!("manual provider '{provider_id}' has no models"));
         };
@@ -312,6 +331,126 @@ fn check_command_code_drift(manual: &str, live: &str) -> Result<(), String> {
     Err(format!(
         "Command Code model drift, update {CATALOG_MANUAL}: {message}"
     ))
+}
+
+/// The strings in `value`, or none when it is not an array.
+fn strs(value: Option<&Value>) -> Vec<&str> {
+    value
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect()
+}
+
+/// `manual` with its `kenari` and `kenari-claude` providers rebuilt
+/// from Kenari's live model list and plans. A row is every
+/// plan-covered tool-calling chat model the list serves, Claude models
+/// under `kenari-claude`. Context, output, inputs and thinking come
+/// from the list. The list names models by id, so names, release
+/// dates and the interleaved reasoning field come from the models.dev
+/// `kenari` entry in `models_dev` when it carries the model. No cost
+/// is written: plan usage is not billed per token.
+///
+/// # Errors
+///
+/// A body does not parse.
+fn sync_kenari(manual: &str, live: &str, plans: &str, models_dev: &str) -> Result<String, String> {
+    let mut root: serde_json::Map<String, Value> =
+        serde_json::from_str(manual).map_err(|e| format!("parse manual catalog: {e}"))?;
+    let live: Value = serde_json::from_str(live).map_err(|e| format!("parse live models: {e}"))?;
+    let plans: Value = serde_json::from_str(plans).map_err(|e| format!("parse plans: {e}"))?;
+    let models_dev: Value =
+        serde_json::from_str(models_dev).map_err(|e| format!("parse catalog: {e}"))?;
+    let known = &models_dev["kenari"]["models"];
+
+    let covered: std::collections::BTreeSet<&str> = plans
+        .as_array()
+        .ok_or("plans body is not an array")?
+        .iter()
+        .flat_map(|plan| strs(plan.get("scope_models")))
+        .collect();
+
+    let mut rows: [BTreeMap<String, Value>; 2] = Default::default();
+    for item in live
+        .get("data")
+        .and_then(Value::as_array)
+        .ok_or("live model list has no `data` array")?
+    {
+        let Some(id) = item.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(context) = item.get("context_length").and_then(Value::as_u64) else {
+            continue;
+        };
+        let on_chat = strs(item.get("endpoints")).contains(&"chat");
+        let tools = item.get("tool_call").and_then(Value::as_bool) == Some(true);
+        if !covered.contains(id) || !on_chat || !tools {
+            continue;
+        }
+        let known = &known[id];
+        let mut row = serde_json::Map::new();
+        row.insert("id".into(), id.into());
+        if let Some(interleaved) = known.get("interleaved").filter(|v| v.is_object()) {
+            row.insert("interleaved".into(), interleaved.clone());
+        }
+        let mut limit = serde_json::json!({ "context": context });
+        if let Some(output) = item.get("max_output_tokens").and_then(Value::as_u64) {
+            limit["output"] = output.into();
+        }
+        row.insert("limit".into(), limit);
+        let mut inputs = strs(item.get("modalities").and_then(|m| m.get("input")));
+        inputs.retain(|input| kage_core::Input::parse(input).is_some());
+        row.insert(
+            "modalities".into(),
+            serde_json::json!({ "input": inputs, "output": ["text"] }),
+        );
+        let name = known.get("name").and_then(Value::as_str).unwrap_or(id);
+        row.insert("name".into(), name.into());
+        let thinks = item.get("reasoning").and_then(Value::as_bool) == Some(true);
+        row.insert("reasoning".into(), thinks.into());
+        let mut options = Vec::new();
+        if item.get("reasoning_toggle").and_then(Value::as_bool) == Some(true) {
+            options.push(serde_json::json!({ "type": "toggle" }));
+        }
+        let efforts = strs(item.get("reasoning_options"));
+        if !efforts.is_empty() {
+            options.push(serde_json::json!({ "type": "effort", "values": efforts }));
+        }
+        if thinks && !options.is_empty() {
+            row.insert("reasoning_options".into(), options.into());
+        }
+        if let Some(date) = known.get("release_date").filter(|v| v.is_string()) {
+            row.insert("release_date".into(), date.clone());
+        }
+        row.insert("tool_call".into(), true.into());
+        let slot = usize::from(id.starts_with("claude-"));
+        rows[slot].insert(id.to_owned(), row.into());
+    }
+
+    let [chat, claude] = rows;
+    for (id, name, api, models) in [
+        ("kenari", "Kenari", "https://kenari.id/v1", chat),
+        (
+            "kenari-claude",
+            "Kenari (Claude)",
+            "https://kenari.id",
+            claude,
+        ),
+    ] {
+        root.insert(
+            id.to_owned(),
+            serde_json::json!({
+                "api": api,
+                "doc": "https://kenari.id/en/docs",
+                "env": ["KENARI_API_KEY"],
+                "id": id,
+                "models": models,
+                "name": name,
+            }),
+        );
+    }
+    serde_json::to_string_pretty(&root).map_err(|e| e.to_string())
 }
 
 /// The effort settings one CLI catalog row publishes.
@@ -736,22 +875,21 @@ mod tests {
 
     /// The committed upstream snapshot stays a pure upstream mirror:
     /// it parses, covers every upstream-supported provider, and never
-    /// carries the manual commandcode providers.
+    /// carries the manual providers.
     #[test]
     fn committed_fixture_stays_a_pure_upstream_snapshot() {
         let root = workspace_root();
         let fixture = fs::read_to_string(root.join(CATALOG_FIXTURE)).expect("fixture committed");
         let upstream_only = source::parse(&fixture).expect("fixture parses");
         assert!(
-            upstream_only
+            upstream_only.iter().all(|p| SUPPORTED_PROVIDERS
                 .iter()
-                .all(|p| p.id != "commandcode" && p.id != "commandcode-claude"),
+                .all(|m| !m.manual || m.kage_id != p.id)),
             "{CATALOG_FIXTURE} must stay a pure upstream snapshot",
         );
         for map in SUPPORTED_PROVIDERS {
             assert!(
-                upstream_only.iter().any(|p| p.id == map.kage_id)
-                    || map.api_id.starts_with("commandcode"),
+                upstream_only.iter().any(|p| p.id == map.kage_id) || map.manual,
                 "fixture is missing provider '{}'",
                 map.api_id
             );
@@ -768,7 +906,12 @@ mod tests {
         let on_disk = fs::read_to_string(root.join(GENERATED_CATALOG)).expect("catalog committed");
         let merged = merge_catalogs(&fixture, &manual).expect("fixture merges");
         let providers = source::parse(&merged).expect("merged parses");
-        for id in ["commandcode", "commandcode-claude"] {
+        for id in [
+            "commandcode",
+            "commandcode-claude",
+            "kenari",
+            "kenari-claude",
+        ] {
             let provider = providers
                 .iter()
                 .find(|p| p.id == id)
@@ -778,7 +921,10 @@ mod tests {
         // Parse drops models it cannot read, so a typo in the fixture
         // would silently shrink the catalog; pin every entry through.
         let manual_value: Value = serde_json::from_str(&manual).expect("manual parses");
-        for provider in providers.iter().filter(|p| p.id.starts_with("commandcode")) {
+        for provider in providers
+            .iter()
+            .filter(|p| p.id.starts_with("commandcode") || p.id.starts_with("kenari"))
+        {
             let expected = manual_value[&provider.id]["models"]
                 .as_object()
                 .expect("manual provider carries models")
@@ -871,6 +1017,66 @@ mod tests {
         assert!(check_command_code_drift("[]", &live).is_err());
         assert!(check_command_code_drift(&manual, "{}").is_err());
         assert!(check_command_code_drift(&manual, "not json").is_err());
+    }
+
+    #[test]
+    fn kenari_sync_builds_plan_rows_from_the_live_list() {
+        let manual = r#"{"commandcode": {"models": {}}, "kenari": {"models": {"stale": {}}}}"#;
+        let live = r#"{"data": [
+            {"id": "m-a", "context_length": 1000, "max_output_tokens": 100,
+             "endpoints": ["chat"], "tool_call": true, "reasoning": true,
+             "reasoning_toggle": true, "reasoning_options": ["none", "high"],
+             "modalities": {"input": ["text", "image", "file"]}},
+            {"id": "claude-x", "context_length": 3000, "endpoints": ["chat"],
+             "tool_call": true, "modalities": {"input": ["text"]}},
+            {"id": "m-paid", "context_length": 9, "endpoints": ["chat"], "tool_call": true},
+            {"id": "m-notools", "context_length": 9, "endpoints": ["chat"]},
+            {"id": "m-embed", "endpoints": ["embeddings"]}
+        ]}"#;
+        let plans = r#"[
+            {"scope_models": ["m-a", "m-embed", "m-notools"]},
+            {"scope_models": ["m-a", "claude-x", "m-gone"]}
+        ]"#;
+        let models_dev = r#"{"kenari": {"models": {"m-a": {
+            "name": "Model A", "release_date": "2026-01-02",
+            "interleaved": {"field": "reasoning_content"}
+        }}}}"#;
+        let synced: Value =
+            serde_json::from_str(&sync_kenari(manual, live, plans, models_dev).unwrap()).unwrap();
+        assert!(synced.get("commandcode").is_some());
+        let chat = synced["kenari"]["models"].as_object().unwrap();
+        assert_eq!(chat.keys().collect::<Vec<_>>(), ["m-a"]);
+        assert_eq!(
+            chat["m-a"],
+            serde_json::json!({
+                "id": "m-a",
+                "interleaved": {"field": "reasoning_content"},
+                "limit": {"context": 1000, "output": 100},
+                "modalities": {"input": ["text", "image"], "output": ["text"]},
+                "name": "Model A",
+                "reasoning": true,
+                "reasoning_options": [
+                    {"type": "toggle"},
+                    {"type": "effort", "values": ["none", "high"]}
+                ],
+                "release_date": "2026-01-02",
+                "tool_call": true
+            })
+        );
+        let claude = &synced["kenari-claude"]["models"]["claude-x"];
+        assert_eq!(claude["name"], "claude-x");
+        assert_eq!(claude["reasoning"], false);
+        assert_eq!(synced["kenari-claude"]["api"], "https://kenari.id");
+        // A sync that changes nothing is a fixed point.
+        let once = sync_kenari(manual, live, plans, models_dev).unwrap();
+        assert_eq!(sync_kenari(&once, live, plans, models_dev).unwrap(), once);
+    }
+
+    #[test]
+    fn kenari_sync_rejects_malformed_bodies() {
+        assert!(sync_kenari("{}", "{}", "[]", "{}").is_err());
+        assert!(sync_kenari("{}", r#"{"data": []}"#, "{}", "{}").is_err());
+        assert!(sync_kenari("[]", r#"{"data": []}"#, "[]", "{}").is_err());
     }
 
     /// A trimmed-down CLI catalog reference with every cell shape.

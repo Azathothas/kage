@@ -66,6 +66,7 @@ fn models_dev_id(id: &str) -> &str {
     match id {
         "openai-responses" => "openai",
         "kimi-for-coding" => "kimi-code-plan-cn",
+        "kenari-claude" => "kenari",
         other => other,
     }
 }

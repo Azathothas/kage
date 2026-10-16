@@ -240,6 +240,7 @@ API keys are read from environment variables:
 | `KIMI_API_KEY`          | Kimi for Coding                               |
 | `XIAOMI_API_KEY`        | Xiaomi / Xiaomi Token Plan                    |
 | `CMD_API_KEY`           | Command Code                                  |
+| `KENARI_API_KEY`        | Kenari                                        |
 
 The model id picks the provider. Without `-m`, kage uses
 `provider.default_model` when its provider has credentials, then the

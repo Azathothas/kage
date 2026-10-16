@@ -203,6 +203,21 @@ pub const COMPAT_PROVIDERS: &[CompatProvider] = &[
         base_url: "https://api.commandcode.ai/provider",
         kind: CompatKind::Anthropic,
     },
+    // Kenari serves every model on both wire formats behind one
+    // `KENARI_API_KEY` credential. Claude models go through Messages
+    // so prompt caching and thinking follow the Anthropic rules.
+    CompatProvider {
+        id: "kenari",
+        display_name: "Kenari",
+        base_url: "https://kenari.id/v1",
+        kind: CompatKind::OpenAi,
+    },
+    CompatProvider {
+        id: "kenari-claude",
+        display_name: "Kenari (Claude)",
+        base_url: "https://kenari.id",
+        kind: CompatKind::Anthropic,
+    },
     // OpenCode's two gateways front the same model pool behind one
     // `OPENCODE_API_KEY` credential: Zen is the standard endpoint, Go
     // the cheaper relay with a smaller list.

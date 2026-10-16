@@ -23,6 +23,10 @@ pub struct ProviderMap {
     pub api_id: &'static str,
     /// kage provider id (the `provider` in `provider/model`).
     pub kage_id: &'static str,
+    /// Rows come only from `xtask/fixtures/manual.json`. [`prune`]
+    /// drops the provider, so a models.dev entry under the same id
+    /// never reaches the snapshot or the runtime cache.
+    pub manual: bool,
 }
 
 impl ProviderMap {
@@ -30,6 +34,15 @@ impl ProviderMap {
         Self {
             api_id: id,
             kage_id: id,
+            manual: false,
+        }
+    }
+
+    const fn manual(id: &'static str) -> Self {
+        Self {
+            api_id: id,
+            kage_id: id,
+            manual: true,
         }
     }
 }
@@ -46,6 +59,7 @@ pub const SUPPORTED_PROVIDERS: &[ProviderMap] = &[
     ProviderMap {
         api_id: "openai",
         kage_id: "openai-responses",
+        manual: false,
     },
     ProviderMap::same("zai"),
     ProviderMap::same("zai-coding-plan"),
@@ -64,6 +78,7 @@ pub const SUPPORTED_PROVIDERS: &[ProviderMap] = &[
     ProviderMap {
         api_id: "kimi-code-plan-cn",
         kage_id: "kimi-for-coding",
+        manual: false,
     },
     ProviderMap::same("xiaomi"),
     ProviderMap::same("xiaomi-token-plan-ams"),
@@ -74,8 +89,14 @@ pub const SUPPORTED_PROVIDERS: &[ProviderMap] = &[
     // `xtask/fixtures/manual.json` the generator merges in. Claude
     // models are served on the Anthropic Messages endpoint only, so
     // they list under their own kage id.
-    ProviderMap::same("commandcode"),
-    ProviderMap::same("commandcode-claude"),
+    ProviderMap::manual("commandcode"),
+    ProviderMap::manual("commandcode-claude"),
+    // models.dev lists Kenari's pay-as-you-go catalog. kage lists only
+    // the models its subscription plans cover, rebuilt into the manual
+    // fixture from Kenari's own endpoints, with Claude models under
+    // their own Messages-format kage id.
+    ProviderMap::manual("kenari"),
+    ProviderMap::manual("kenari-claude"),
     ProviderMap::same("opencode"),
     ProviderMap::same("opencode-go"),
     ProviderMap::same("google"),
@@ -202,7 +223,8 @@ pub fn parse(json: &str) -> Result<Vec<SourceProvider>, String> {
 }
 
 /// `json` cut down to the supported providers and their tool-calling
-/// models, still in the models.dev shape, for the model cache.
+/// models, still in the models.dev shape, for the model cache. Manual
+/// providers are dropped even when models.dev lists them.
 ///
 /// # Errors
 ///
@@ -211,7 +233,7 @@ pub fn prune(json: &str) -> Result<String, String> {
     let mut root: BTreeMap<String, Value> =
         serde_json::from_str(json).map_err(|e| format!("parse catalog: {e}"))?;
     let mut kept = serde_json::Map::new();
-    for map in SUPPORTED_PROVIDERS {
+    for map in SUPPORTED_PROVIDERS.iter().filter(|map| !map.manual) {
         let Some(mut provider) = root.remove(map.api_id) else {
             continue;
         };
@@ -435,5 +457,14 @@ mod tests {
         assert_eq!(parse(&pruned).unwrap(), parse(SAMPLE).unwrap());
         assert!(prune(r#"{"unrelated": {}}"#).is_err());
         assert!(prune("not json").is_err());
+    }
+
+    #[test]
+    fn prune_drops_manual_providers() {
+        let with_kenari =
+            SAMPLE.replacen('{', r#"{"kenari": {"name": "Kenari", "models": {}},"#, 1);
+        let value: Value = serde_json::from_str(&prune(&with_kenari).unwrap()).unwrap();
+        assert!(value.get("kenari").is_none());
+        assert!(value.get("anthropic").is_some());
     }
 }
