@@ -1829,11 +1829,7 @@ impl ShellApp {
                     .dialogs
                     .show_dialog(crate::ui::dialog::DialogKind::Goal, store);
             }
-            crate::ui::composer::ComposerEvent::ConfirmSwarm => {
-                self.shell
-                    .dialogs
-                    .show_dialog(crate::ui::dialog::DialogKind::ConfirmSwarm, store);
-            }
+            crate::ui::composer::ComposerEvent::ConfirmSwarm => self.ask_swarm(store),
             crate::ui::composer::ComposerEvent::LeaveInsert => {
                 ui.ctx().memory_mut(|memory| {
                     memory.surrender_focus(egui::Id::new("composer-input"));
@@ -1888,6 +1884,18 @@ impl ShellApp {
         }
     }
 
+    /// Turns swarm mode on, through the confirmation when the
+    /// preference asks for one.
+    fn ask_swarm(&mut self, store: &mut crate::store::Store) {
+        if store.prefs().confirm_swarm {
+            self.shell
+                .dialogs
+                .show_dialog(crate::ui::dialog::DialogKind::ConfirmSwarm, store);
+        } else {
+            let _ = store.set_option("swarm", "on");
+        }
+    }
+
     /// What became of a built-in composer command: the client ran
     /// it, it needs a session the shell does not have, or it is not
     /// one of the client's own and the text goes to the agent as
@@ -1920,6 +1928,12 @@ impl ShellApp {
                 }
                 BuiltinRun::Ran
             }
+            ("goal", "") => {
+                self.shell
+                    .dialogs
+                    .show_dialog(crate::ui::dialog::DialogKind::Goal, store);
+                BuiltinRun::Ran
+            }
             ("goal", "clear") => {
                 crate::ui::dock::save_goal(store, "");
                 BuiltinRun::Ran
@@ -1932,7 +1946,17 @@ impl ShellApp {
                 store.set_option("swarm", "off");
                 BuiltinRun::Ran
             }
-            ("swarm", "on") => BuiltinRun::Ran,
+            ("swarm", "on" | "") => {
+                self.ask_swarm(store);
+                BuiltinRun::Ran
+            }
+            ("swarm", task) => {
+                if store.set_option("swarm", "on") && store.submit(task).is_some() {
+                    BuiltinRun::Ran
+                } else {
+                    BuiltinRun::NotMine
+                }
+            }
             _ => BuiltinRun::NotMine,
         }
     }

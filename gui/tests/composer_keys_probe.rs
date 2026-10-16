@@ -212,3 +212,15 @@ fn esc_twice_arms_then_interrupts_and_keeps_the_field() {
         "the second press interrupts and drops the hint"
     );
 }
+
+#[test]
+fn a_bare_goal_command_opens_the_goal_dialog() {
+    let mut harness = booted();
+    type_text(&mut harness, "/goal");
+    harness.key_press(egui::Key::Enter);
+    steps(&mut harness, 4);
+    assert!(
+        harness.query_by_label("Set a goal").is_some(),
+        "a bare /goal asks for the goal rather than clearing it"
+    );
+}
