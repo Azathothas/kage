@@ -503,6 +503,9 @@ pub(crate) fn surface_in(
     width: f32,
     body: impl FnOnce(&mut egui::Ui),
 ) {
+    // A window clips to the size it remembers, which would cut the
+    // shadow off in a hard-edged slab around the surface.
+    ui.set_clip_rect(ui.ctx().content_rect());
     egui::Frame::NONE
         .fill(fill)
         .stroke(egui::Stroke::new(1.0, palette.line))
