@@ -146,3 +146,43 @@ fn picking_a_row_in_the_floating_sidebar_closes_it() {
         "the sidebar steps aside once the followed session changes"
     );
 }
+
+#[test]
+fn the_palette_scrolls_its_keyboard_highlight_into_view() {
+    let mut harness = harness(egui::vec2(800.0, 600.0));
+    booted(&mut harness);
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
+    steps(&mut harness, 3);
+    // Up from the first row wraps to the last, the session under the
+    // fold of the commands.
+    harness.key_press(egui::Key::ArrowUp);
+    // The scroll animates, so the row settles a few frames on.
+    steps(&mut harness, 30);
+    let footer = harness.get_by_label("move").rect();
+    let row = harness
+        .query_all_by_label("Fix the null dereference in main")
+        .map(|node| node.rect())
+        .max_by(|a, b| a.top().total_cmp(&b.top()))
+        .expect("the session row draws");
+    assert!(
+        row.bottom() <= footer.top(),
+        "the highlighted row is above the footer: {row:?} vs {footer:?}"
+    );
+}
+
+#[test]
+fn the_palette_fits_a_small_window() {
+    let mut harness = harness(egui::vec2(560.0, 480.0));
+    booted(&mut harness);
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::K);
+    steps(&mut harness, 3);
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(560.0, 480.0));
+    for label in ["New session", "move"] {
+        let rect = harness
+            .query_all_by_label(label)
+            .map(|node| node.rect())
+            .max_by(|a, b| a.left().total_cmp(&b.left()))
+            .expect("the palette draws");
+        assert!(screen.contains_rect(rect), "{label} fits: {rect:?}");
+    }
+}

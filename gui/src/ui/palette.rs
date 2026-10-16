@@ -24,8 +24,11 @@ use crate::theme::{
 /// The dialog's width, the old palette's 620px.
 const DIALOG_W: f32 = 620.0;
 
-/// TEMP: height cap for the bisect.
+/// The dialog's height cap, the old palette's 520px.
 const DIALOG_MAX_H: f32 = 520.0;
+
+/// The space a small window keeps clear around the dialog.
+const EDGE: f32 = 16.0;
 
 /// The list's height cap, the old palette's 420px.
 const LIST_MAX_H: f32 = 420.0;
@@ -448,6 +451,7 @@ impl Palette {
         ui: &mut egui::Ui,
         rows: &[PaletteEntry],
         selected: usize,
+        reveal: bool,
         palette: &Theme,
     ) -> Option<usize> {
         if rows.is_empty() {
@@ -480,7 +484,11 @@ impl Palette {
                 };
                 section_label(ui, label, palette);
             }
-            if entry_row(ui, entry, index == selected, palette).clicked() {
+            let response = entry_row(ui, entry, index == selected, palette);
+            if reveal && index == selected {
+                response.scroll_to_me(None);
+            }
+            if response.clicked() {
                 clicked = Some(index);
             }
         }
@@ -493,7 +501,6 @@ impl Palette {
     pub fn show(&mut self, ui: &mut egui::Ui, rows: &[PaletteEntry]) -> Option<PaletteEntry> {
         self.clamp_selection(rows.len());
         let palette = Theme::active_of(ui.ctx());
-        let selected = self.selected;
         let mut run = None;
         let mut backdrop_clicked = false;
         let mut backdrop_pos = None;
@@ -519,6 +526,7 @@ impl Palette {
         if enter && !rows.is_empty() {
             run = Some(self.selected);
         }
+        let selected = self.selected;
         let mut query_before = self.query.clone();
         egui::Area::new(egui::Id::new("kage-palette"))
             .anchor(egui::Align2::LEFT_TOP, egui::Vec2::ZERO)
@@ -538,9 +546,15 @@ impl Palette {
                 backdrop_pos = ui.input(|input| input.pointer.interact_pos());
                 // The dialog caps at the design's height: the content
                 // below draws at its own height inside it.
+                // A window smaller than the design shrinks the dialog and
+                // its list, so the footer and both edges stay on screen.
+                let width = DIALOG_W.min(screen.width() - 2.0 * EDGE);
+                let top = screen.height() * 0.12;
+                let height = DIALOG_MAX_H.min(screen.height() - top - EDGE);
+                let list_h = (LIST_MAX_H - (DIALOG_MAX_H - height)).max(0.0);
                 let dialog = egui::Rect::from_min_size(
-                    egui::pos2((screen.width() - DIALOG_W) / 2.0, screen.height() * 0.12),
-                    egui::vec2(DIALOG_W, DIALOG_MAX_H),
+                    egui::pos2((screen.width() - width) / 2.0, top),
+                    egui::vec2(width, height),
                 );
                 let card = ui.scope_builder(egui::UiBuilder::new().max_rect(dialog), |ui| {
                     egui::Frame::NONE
@@ -548,12 +562,12 @@ impl Palette {
                         .stroke(egui::Stroke::new(1.0, palette.line))
                         .corner_radius(egui::CornerRadius::same(R_XL as u8))
                         .show_shadowed(ui, &palette.shadow_2, |ui| {
-                            ui.set_width(DIALOG_W - 2.0);
+                            ui.set_width(width - 2.0);
                             ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
                             self.query_row(ui, palette);
                             divider(ui, palette);
                             egui::ScrollArea::vertical()
-                                .max_height(LIST_MAX_H)
+                                .max_height(list_h)
                                 .auto_shrink([false, true])
                                 .show(ui, |ui| {
                                     egui::Frame::NONE.inner_margin(egui::Margin::same(6)).show(
@@ -562,7 +576,7 @@ impl Palette {
                                             ui.set_width(ui.available_width());
                                             ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
                                             if let Some(index) =
-                                                self.list(ui, rows, selected, palette)
+                                                self.list(ui, rows, selected, up || down, palette)
                                             {
                                                 run = Some(index);
                                             }
