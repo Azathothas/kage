@@ -176,6 +176,26 @@ pub fn command_len(text: &str, commands: &[Value]) -> Option<usize> {
     (!name.is_empty() && known).then_some(1 + name.len())
 }
 
+/// The byte span of the active `/command` or the `@mention` under
+/// `caret` in `text`, the span [`Draft::token_range`] reports. The
+/// caret clamps to the text, so a caret left stale by a bulk edit
+/// never slices past the end.
+#[must_use]
+fn token_span(text: &str, caret: usize, commands: &[Value]) -> Option<std::ops::Range<usize>> {
+    if let Some(len) = command_len(text, commands) {
+        return Some(0..len);
+    }
+    let caret = caret.min(text.len());
+    let at = match suggest_for(text, caret)? {
+        Suggest::Mention { at, .. } => at,
+        Suggest::Slash { .. } => return None,
+    };
+    let end = text[caret..]
+        .find(char::is_whitespace)
+        .map_or(text.len(), |off| caret + off);
+    Some(at..end)
+}
+
 /// The field's layout job: `text` in the body font with `ink`, the
 /// token's bytes in `accent`, wrapped at `wrap_width` and keeping
 /// trailing whitespace as the field's default layouter does. The line
@@ -191,7 +211,10 @@ fn token_job(
     let mut job =
         egui::text::LayoutJob::simple(text.to_owned(), font_id, ink, wrap_width);
     job.keep_trailing_whitespace = true;
-    let Some(range) = token else {
+    // The span can outlive the text it came from when the field edits
+    // mid-frame, so a span past the end lays out plain.
+    let Some(range) = token.filter(|range| range.end <= text.len() && range.start < range.end)
+    else {
         return job;
     };
     let base = job.sections[0].format.clone();
@@ -345,17 +368,7 @@ impl Draft {
     /// the caret, the text `token` names.
     #[must_use]
     pub fn token_range(&self, commands: &[Value]) -> Option<std::ops::Range<usize>> {
-        if let Some(len) = command_len(&self.text, commands) {
-            return Some(0..len);
-        }
-        let at = match self.suggest()? {
-            Suggest::Mention { at, .. } => at,
-            Suggest::Slash { .. } => return None,
-        };
-        let end = self.text[self.caret..]
-            .find(char::is_whitespace)
-            .map_or(self.text.len(), |off| self.caret + off);
-        Some(at..end)
+        token_span(&self.text, self.caret, commands)
     }
 
     /// The byte offset the mention token under the caret starts at,
@@ -432,6 +445,31 @@ mod tests {
             None,
             "a bare slash is not a command"
         );
+    }
+
+    #[test]
+    fn the_token_span_never_slices_past_the_text() {
+        let commands = vec![serde_json::json!({"name": "review"})];
+        // A caret a bulk edit left past the text's end clamps.
+        assert_eq!(token_span("/goal ", 99, &commands), Some(0..5));
+        assert_eq!(token_span("", 99, &commands), None);
+        // No slash, no span, whatever the caret.
+        assert_eq!(token_span("just words", 4, &commands), None);
+    }
+
+    #[test]
+    fn the_token_job_lays_a_stale_span_out_plain() {
+        let font = egui::FontId::monospace(12.0);
+        let ink = egui::Color32::WHITE;
+        let accent = egui::Color32::RED;
+        // The text shrank under the span: plain text, no reversed or
+        // overlong section, no panic.
+        let job = token_job("", 200.0, font.clone(), ink, accent, Some(0..6));
+        assert_eq!(job.sections.len(), 1);
+        assert_eq!(job.sections[0].format.color, ink);
+        // An empty span marks nothing.
+        let job = token_job("/plan", 200.0, font, ink, accent, Some(2..2));
+        assert_eq!(job.sections.len(), 1);
     }
 
     #[test]
@@ -964,13 +1002,22 @@ impl Composer {
         // The field's layout: the body text as the default layouter
         // draws it, with the active `/command` or `@mention` recolored
         // in place.
-        let token = self.draft.token_range(commands);
+        // The span reads inside the layouter, from the text it lays
+        // out: the field edits mid-frame, so a span taken here would
+        // outlive the text and split the job at bytes past its end.
+        let caret = self.draft.caret;
         let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, wrap_width: f32| {
             let body = text.as_str();
             let font_id = egui::TextStyle::Body.resolve(ui.style());
             let ink = ui.visuals().widgets.inactive.text_color();
-            let mut job =
-                token_job(body, wrap_width, font_id.clone(), ink, palette.accent, token.clone());
+            let mut job = token_job(
+                body,
+                wrap_width,
+                font_id.clone(),
+                ink,
+                palette.accent,
+                token_span(body, caret, commands),
+            );
             let line_height = ui.fonts_mut(|fonts| fonts.row_height(&font_id))
                 + ui.spacing().extra_text_line_spacing;
             for section in &mut job.sections {

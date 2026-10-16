@@ -113,3 +113,4 @@ fn the_menu_matches_the_field_one_frame_after_each_key() {
     println!("after send and /: {again}");
     assert!(again >= 4, "a bare slash lists every command again");
 }
+
