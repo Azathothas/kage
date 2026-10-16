@@ -887,6 +887,8 @@ fn mode_button(
     let response = response.on_hover_text("Permission mode (Shift+Tab cycles)");
     if response.clicked() {
         toolbar.toggle_picker(Picker::Mode);
+        let rows = pickers::mode_rows(&option.options, "");
+        toolbar.set_mode_highlight(rows.iter().position(|row| row.value == active).unwrap_or(0));
     }
     if !open {
         return Some(());
@@ -915,10 +917,32 @@ fn mode_button(
             }
             surface_in(ui, palette, palette.bg, 0, MODE_PICKER_W, |ui| {
                 ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
+                let query = toolbar.mode_query().clone();
                 mode_search_row(ui, toolbar, palette);
+                if *toolbar.mode_query() != query {
+                    toolbar.set_mode_highlight(0);
+                }
                 picker_rule(ui, palette);
                 let rows = pickers::mode_rows(&option.options, &toolbar.mode_query().clone());
                 let mut chosen = None;
+                // The keys the reference picker answers while its query
+                // holds the keyboard: the highlight steps, Enter chooses.
+                let (up, down, run) = ui.input(|i| {
+                    (
+                        i.key_pressed(egui::Key::ArrowUp),
+                        i.key_pressed(egui::Key::ArrowDown),
+                        i.key_pressed(egui::Key::Enter),
+                    )
+                });
+                if up {
+                    toolbar.step_mode(-1, rows.len());
+                }
+                if down {
+                    toolbar.step_mode(1, rows.len());
+                }
+                if run && let Some(row) = rows.get(toolbar.mode_highlight()) {
+                    chosen = Some(row.value.clone());
+                }
                 egui::Frame::NONE
                     .inner_margin(egui::Margin::same(5))
                     .show(ui, |ui| {

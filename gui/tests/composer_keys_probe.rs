@@ -153,6 +153,23 @@ fn shift_enter_adds_one_newline_and_enter_sends_without_one() {
 }
 
 #[test]
+fn enter_in_the_mode_picker_chooses_and_does_not_send() {
+    let mut harness = booted();
+    type_text(&mut harness, "keep me");
+    click(&mut harness, "Default");
+    harness.key_press(egui::Key::ArrowDown);
+    steps(&mut harness, 2);
+    harness.key_press(egui::Key::Enter);
+    steps(&mut harness, 4);
+    assert_eq!(composer_text(&harness), "keep me", "the draft stays");
+    assert!(
+        harness.query_by_label("Ask").is_some(),
+        "Down then Enter chose the row under Default"
+    );
+    assert!(field_focused(&harness), "the field has the keys back");
+}
+
+#[test]
 fn esc_twice_arms_then_interrupts_and_keeps_the_field() {
     let mut harness = booted();
     harness.key_press(egui::Key::Escape);
