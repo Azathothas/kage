@@ -45,12 +45,19 @@ fn harness(size: egui::Vec2) -> Harness<'static, Rig> {
 /// Steps until the composer's send button is on screen, then a few
 /// frames more so the replayed session settles.
 fn booted(harness: &mut Harness<'static, Rig>) {
-    for _ in 0..2_000 {
+    for _ in 0..4_000 {
         harness.step();
-        if harness.query_by_label("Send").is_some() {
+        if harness.query_by_label("Send").is_some()
+            && harness
+                .state()
+                .app
+                .as_ref()
+                .is_some_and(testutil::played_out)
+        {
             steps(harness, 5);
             return;
         }
+        std::thread::sleep(std::time::Duration::from_millis(2));
     }
     panic!("the composer never drew");
 }

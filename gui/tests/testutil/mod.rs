@@ -64,6 +64,18 @@ pub fn install_theme(ctx: &egui::Context, theme: &str) {
     ctx.global_style_mut(|style| style.visuals.text_cursor.blink = false);
 }
 
+/// Whether the replayed recording has played out: the active session
+/// holds the stop its last frame carries. The recording runs its own
+/// prompt on a wall clock, so a probe that types before this races a
+/// turn that starts, runs and ends under it.
+pub fn played_out(app: &kage_desktop::launch::ShellApp) -> bool {
+    let store = app.shell.store();
+    store
+        .active_id()
+        .and_then(|id| store.state().session(id))
+        .is_some_and(|session| session.last_stop.is_some())
+}
+
 /// The state a [`harness`] carries: the caller's state, the draw
 /// closure and the one-frame theme flag.
 pub struct HarnessState<State, Draw> {

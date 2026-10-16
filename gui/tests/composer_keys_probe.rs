@@ -52,12 +52,20 @@ fn harness() -> Harness<'static, Rig> {
 /// refuse; `step` drives the frames one at a time.
 fn booted() -> Harness<'static, Rig> {
     let mut harness = harness();
-    for _ in 0..2_000 {
+    for _ in 0..4_000 {
         harness.step();
-        if harness.query_by_label("Add").is_some() && field_focused(&harness) {
+        if harness.query_all_by_label("Add").next().is_some()
+            && field_focused(&harness)
+            && harness
+                .state()
+                .app
+                .as_ref()
+                .is_some_and(testutil::played_out)
+        {
             steps(&mut harness, 3);
             return harness;
         }
+        std::thread::sleep(std::time::Duration::from_millis(2));
     }
     panic!("the composer never drew with the keyboard");
 }
@@ -194,6 +202,11 @@ fn the_model_picker_search_takes_the_typing() {
 #[test]
 fn esc_twice_arms_then_interrupts_and_keeps_the_field() {
     let mut harness = booted();
+    // The recording has played out, so a fresh prompt starts a turn
+    // nothing answers: it runs until the Escapes interrupt it.
+    type_text(&mut harness, "keep going");
+    harness.key_press(egui::Key::Enter);
+    steps(&mut harness, 4);
     harness.key_press(egui::Key::Escape);
     steps(&mut harness, 2);
     assert!(

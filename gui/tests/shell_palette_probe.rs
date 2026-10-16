@@ -51,11 +51,18 @@ fn harness() -> Harness<'static, Rig> {
 /// harness back. The replay pump asks for a repaint on every event,
 /// so `run` would refuse; `step` drives the frames one at a time.
 fn booted(harness: &mut Harness<'static, Rig>) {
-    for _ in 0..2_000 {
+    for _ in 0..4_000 {
         harness.step();
-        if harness.query_by_label("Search").is_some() {
+        if harness.query_by_label("Search").is_some()
+            && harness
+                .state()
+                .app
+                .as_ref()
+                .is_some_and(testutil::played_out)
+        {
             return;
         }
+        std::thread::sleep(std::time::Duration::from_millis(2));
     }
     panic!("the sidebar's Search row never drew");
 }
@@ -186,7 +193,7 @@ fn clicking_a_session_row_switches_to_it() {
             let row = harness
                 .query_all_by(|node| {
                     node.role() == egui::accesskit::Role::Button
-                        && node.label() == Some("fix the null check".to_owned())
+                        && node.label() == Some("Fix the null dereference in main".to_owned())
                 })
                 .next();
             if let Some(node) = row {

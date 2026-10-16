@@ -61,11 +61,18 @@ fn steps(harness: &mut Harness<'static, Rig>, n: usize) {
 /// Steps until the composer holds the keyboard, then hands the
 /// harness back.
 fn booted(harness: &mut Harness<'static, Rig>) {
-    for _ in 0..2_000 {
+    for _ in 0..4_000 {
         harness.step();
-        if composer_focused(harness) {
+        if composer_focused(harness)
+            && harness
+                .state()
+                .app
+                .as_ref()
+                .is_some_and(testutil::played_out)
+        {
             return;
         }
+        std::thread::sleep(std::time::Duration::from_millis(2));
     }
     panic!("the composer never took the keyboard");
 }
