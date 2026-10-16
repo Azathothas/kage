@@ -601,6 +601,7 @@ fn plus_button(
     )
     .paint_snapped(ui, glyph);
     let response = response.on_hover_text("Add");
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Add"));
     if response.clicked() {
         toolbar.toggle_plus();
     }

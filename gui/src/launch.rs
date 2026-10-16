@@ -1583,8 +1583,7 @@ impl ShellApp {
                                 .join(" ")
                         })
                     {
-                        self.shell.composer.draft.text = text;
-                        self.shell.composer.draft.caret = self.shell.composer.draft.text.len();
+                        self.shell.composer.set_draft(text);
                         store.withdraw_queued(index);
                     }
                 }

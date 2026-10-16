@@ -18,7 +18,8 @@
 
 use crate::icons::PaintSnapped as _;
 use crate::ui::forms::ShowCrisp as _;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use web_time::Instant;
 
 use serde_json::Value;
 
@@ -308,6 +309,9 @@ pub struct Draft {
     pub caret: usize,
     /// When the first Esc of an interrupt gesture landed.
     pub esc_armed: Option<Instant>,
+    /// Whether code moved the caret since the field last drew, so the
+    /// field takes the caret and the keyboard on its next frame.
+    placed: bool,
 }
 
 impl Draft {
@@ -320,7 +324,16 @@ impl Draft {
             text,
             caret,
             esc_armed: None,
+            placed: false,
         }
+    }
+
+    /// Replaces the text with `text`, the caret at its end, and hands
+    /// the field the keyboard.
+    pub fn set(&mut self, text: String) {
+        self.caret = text.len();
+        self.text = text;
+        self.placed = true;
     }
 
     /// Inserts `text` at the caret and moves the caret past it.
@@ -346,6 +359,7 @@ impl Draft {
     /// Takes the text out, leaving an empty draft with the caret home.
     pub fn take(&mut self) -> String {
         self.caret = 0;
+        self.placed = true;
         std::mem::take(&mut self.text)
     }
 
@@ -386,6 +400,7 @@ impl Draft {
         let after = self.text[self.caret..].to_owned();
         self.text = format!("/{name} {after}");
         self.caret = 1 + name.len() + 1;
+        self.placed = true;
     }
 
     /// Replaces the at-mention before the caret with the picked path,
@@ -396,6 +411,31 @@ impl Draft {
         let head = before.get(..at).unwrap_or(&before).to_owned();
         self.text = format!("{head}@{path} {after}");
         self.caret = head.len() + 1 + path.len() + 1;
+        self.placed = true;
+    }
+
+    /// Inserts an at-mention at the caret: a bare `@` when `path` is
+    /// `None`, else `@path` and a space. A space goes in front only
+    /// when the caret sits against a word, so the mention never glues
+    /// to it.
+    pub fn insert_mention(&mut self, path: Option<&str>) {
+        let caret = self.caret.min(self.text.len());
+        let (before, after) = self.text.split_at(caret);
+        let spaced = before.is_empty()
+            || before.ends_with(char::is_whitespace)
+            || after.starts_with(char::is_whitespace);
+        let mention = match path {
+            Some(path) => format!("{}@{path} ", if spaced { "" } else { " " }),
+            None => format!("{}@", if spaced { "" } else { " " }),
+        };
+        self.text.insert_str(caret, &mention);
+        self.caret = caret + mention.len();
+        self.placed = true;
+    }
+
+    /// Fills the draft with the bare slash that opens the command menu.
+    pub fn seed_slash(&mut self) {
+        self.set("/".to_owned());
     }
 
     /// Classifies one Esc press against the interrupt window.
@@ -621,6 +661,20 @@ mod tests {
         let mut draft = Draft::new("/pl");
         draft.pick_slash("plan");
         assert_eq!(draft.text, "/plan ");
+    }
+
+    #[test]
+    fn an_inserted_mention_never_glues_to_a_word() {
+        let mut draft = Draft::default();
+        draft.insert_mention(None);
+        assert_eq!((draft.text.as_str(), draft.caret), ("@", 1));
+        let mut draft = Draft::new("fix");
+        draft.insert_mention(Some("src/main.rs"));
+        assert_eq!(draft.text, "fix @src/main.rs ");
+        assert_eq!(draft.caret, draft.text.len());
+        let mut draft = Draft::new("fix ");
+        draft.insert_mention(None);
+        assert_eq!(draft.text, "fix @", "a space already separates it");
     }
 
     #[test]
@@ -975,6 +1029,25 @@ impl Composer {
     ) -> ComposerEvent {
         let palette = crate::theme::Palette::active_of(ui.ctx());
         let mut event = ComposerEvent::None;
+        let field = egui::Id::new("composer-input");
+        // The field keeps its own caret, so a caret code placed (a pick,
+        // a seed, a send) is written into it, with the keyboard.
+        if std::mem::take(&mut self.draft.placed) {
+            let at = self
+                .draft
+                .text
+                .get(..self.draft.caret)
+                .map_or(0, |head| head.chars().count());
+            let mut state = egui::TextEdit::load_state(ui.ctx(), field).unwrap_or_default();
+            state
+                .cursor
+                .set_char_range(Some(egui::text::CCursorRange::one(
+                    egui::text::CCursor::new(at),
+                )));
+            state.store(ui.ctx(), field);
+            ui.ctx().memory_mut(|memory| memory.request_focus(field));
+        }
+        let had_picker = self.toolbar.picker().is_some();
         // What the toolbar asked the shell for, carried out of the
         // frame's borrow of the store.
         let mut goal = false;
@@ -990,9 +1063,7 @@ impl Composer {
         // The card: the field over the toolbar row, the way the
         // reference composer stacks them. The border names the state:
         // plan, then swarm, then focus, then rest.
-        let focused = ui
-            .ctx()
-            .memory(|memory| memory.has_focus(egui::Id::new("composer-input")));
+        let focused = ui.ctx().memory(|memory| memory.has_focus(field));
         let border = if store.plan_on() {
             palette.accent_bd
         } else if store.swarm_on() {
@@ -1045,8 +1116,17 @@ impl Composer {
                     })
                     .show(ui, |ui| {
                         let width = ui.available_width();
+                        // The field adds the newline only on the keys that
+                        // ask for one, so Enter never lands in a prompt
+                        // it sends; Escape stays with the field, which
+                        // reads it as the interrupt gesture.
+                        let newline = if enter_sends {
+                            egui::Modifiers::SHIFT
+                        } else {
+                            egui::Modifiers::NONE
+                        };
                         let edit = egui::TextEdit::multiline(&mut self.draft.text)
-                            .id(egui::Id::new("composer-input"))
+                            .id(field)
                             .hint_text(self.placeholder.as_str())
                             .desired_width(width)
                             .desired_rows(1)
@@ -1054,7 +1134,13 @@ impl Composer {
                             .frame(egui::Frame::NONE)
                             .margin(egui::Margin::ZERO)
                             .layouter(&mut layouter)
-                            .lock_focus(true);
+                            .return_key(egui::KeyboardShortcut::new(newline, egui::Key::Enter))
+                            .event_filter(egui::EventFilter {
+                                tab: true,
+                                horizontal_arrows: true,
+                                vertical_arrows: true,
+                                escape: true,
+                            });
                         let output = edit.show(ui);
                         if let Some(range) = output.cursor_range {
                             // The caret is a char index; the draft's caret
@@ -1110,11 +1196,10 @@ impl Composer {
                                     store.set_option("swarm", "off");
                                 }
                                 crate::ui::toolbar::ToolbarEvent::SeedMention => {
-                                    self.draft.insert(" @");
+                                    self.draft.insert_mention(None);
                                 }
                                 crate::ui::toolbar::ToolbarEvent::SeedSlash => {
-                                    self.draft.text = "/".to_owned();
-                                    self.draft.caret = 1;
+                                    self.draft.seed_slash();
                                 }
                                 crate::ui::toolbar::ToolbarEvent::Compact => {
                                     store.compact();
@@ -1130,7 +1215,11 @@ impl Composer {
 
         // The hint line under the card: the key table on the left, the
         // session's cost on the right, as the reference draws it.
-        hint_line(ui, store, running, enter_sends);
+        let esc_armed = self
+            .draft
+            .esc_armed
+            .is_some_and(|at| at.elapsed() < ESC_WINDOW);
+        hint_line(ui, store, running, enter_sends, esc_armed);
 
         // The suggestion menu, over the field: the slash rows or the
         // mention rows the draft points at, read after the field took
@@ -1155,28 +1244,48 @@ impl Composer {
             event = ComposerEvent::ConfirmSwarm;
         }
 
-        // Enter sends, or adds a newline, per the preference. The
+        // The keys below are the field's own, so they answer only while
+        // it holds the keyboard: an Enter in a dialog or a picker is not
+        // a send.
+        let focused = ui.ctx().memory(|memory| memory.has_focus(field));
+        // Enter sends per the preference, and Ctrl+Enter steers while
+        // Enter sends; the field itself adds the newlines. The
         // toolbar's own ask wins, so a click and a keypress in one
         // frame do not race.
-        if event == ComposerEvent::None && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+        if focused && event == ComposerEvent::None && ui.input(|i| i.key_pressed(egui::Key::Enter))
+        {
             let modifiers = ui.input(|i| i.modifiers);
-            if modifiers.ctrl || modifiers.command || (enter_sends && !modifiers.shift) {
-                event = ComposerEvent::Send {
-                    steer: modifiers.ctrl || modifiers.command,
-                };
-            } else {
-                self.draft.insert("\n");
+            let secondary = modifiers.ctrl || modifiers.command;
+            if enter_sends && !modifiers.shift {
+                event = ComposerEvent::Send { steer: secondary };
+            } else if !enter_sends && secondary {
+                event = ComposerEvent::Send { steer: false };
             }
         }
         // In vim mode Escape leaves the composer for normal mode,
-        // where a second Escape interrupts a running turn. A
-        // suggestion menu takes the key first, as it does a click.
-        if event == ComposerEvent::None
-            && store.prefs().vim
+        // where a second Escape interrupts a running turn. Otherwise
+        // two presses inside the window interrupt it. A suggestion
+        // menu or a popover takes the key first.
+        if focused
+            && event == ComposerEvent::None
             && ui.input(|i| i.key_pressed(egui::Key::Escape))
             && self.draft.suggest().is_none()
+            && !self.toolbar.any_open()
         {
-            event = ComposerEvent::LeaveInsert;
+            if store.prefs().vim {
+                event = ComposerEvent::LeaveInsert;
+            } else {
+                match self.draft.esc(Instant::now(), running) {
+                    EscStep::Arm => ui.ctx().request_repaint_after(ESC_WINDOW),
+                    EscStep::Cancel => event = ComposerEvent::Stop,
+                    EscStep::Clear => {}
+                }
+            }
+        }
+        // A picker closing hands the keys back to the field, after the
+        // keys above, so the Enter that chose a row does not also send.
+        if had_picker && self.toolbar.picker().is_none() {
+            ui.ctx().memory_mut(|memory| memory.request_focus(field));
         }
         event
     }
@@ -1205,8 +1314,7 @@ impl Composer {
     /// Replaces the draft with `text`, the caret at its end. The dock's
     /// edit action uses this, so the caret stays a valid byte offset.
     pub fn set_draft(&mut self, text: String) {
-        self.draft.text = text;
-        self.draft.caret = self.draft.text.len();
+        self.draft.set(text);
     }
 
     /// Inserts a `@path` mention of `path` at the caret, replacing any
@@ -1296,7 +1404,13 @@ fn hint_word(ui: &mut egui::Ui, text: &str, palette: &crate::theme::Palette) {
 /// The hint line under the card: the key table on the left, the
 /// session's cost on the right. The phrasing follows the run state and
 /// the Enter-sends preference, as the reference's `hint_line` does.
-fn hint_line(ui: &mut egui::Ui, store: &crate::store::Store, running: bool, enter_sends: bool) {
+fn hint_line(
+    ui: &mut egui::Ui,
+    store: &crate::store::Store,
+    running: bool,
+    enter_sends: bool,
+    esc_armed: bool,
+) {
     let palette = crate::theme::Palette::active_of(ui.ctx());
     let chip = |ui: &mut egui::Ui, keys: &str| hint_kbd(ui, keys, palette);
     let word = |ui: &mut egui::Ui, text: &str| hint_word(ui, text, palette);
@@ -1311,7 +1425,13 @@ fn hint_line(ui: &mut egui::Ui, store: &crate::store::Store, running: bool, ente
             ui.set_min_height(16.0);
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
-                if !enter_sends {
+                if esc_armed {
+                    ui.label(
+                        egui::RichText::new("Press Esc again to interrupt")
+                            .size(11.0)
+                            .color(palette.warn),
+                    );
+                } else if !enter_sends {
                     chip(ui, "Ctrl Enter");
                     word(ui, if running { "queue" } else { "send" });
                     chip(ui, "Enter");
