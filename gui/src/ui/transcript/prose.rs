@@ -7,6 +7,7 @@
 //! footnote, raw html) is left to `egui_commonmark`, which [`parse`]
 //! says by returning `None`.
 
+use crate::icons::PaintSnapped as _;
 use crate::ui::forms::ShowCrisp as _;
 use pulldown_cmark::{Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
@@ -45,10 +46,11 @@ pub(crate) enum Block {
     Code(String),
     /// A quote around its blocks.
     Quote(Vec<Block>),
-    /// A list, numbered from `start` when ordered, of items' blocks.
+    /// A list, numbered from `start` when ordered, of items' blocks,
+    /// each with its task box's state when it is a task.
     List {
         start: Option<u64>,
-        items: Vec<Vec<Block>>,
+        items: Vec<(Option<bool>, Vec<Block>)>,
     },
     /// A thematic break.
     Rule,
@@ -60,8 +62,8 @@ enum Open {
     Heading(u8, Vec<Span>),
     Code(String),
     Quote(Vec<Block>),
-    List(Option<u64>, Vec<Vec<Block>>),
-    Item(Vec<Span>, Vec<Block>),
+    List(Option<u64>, Vec<(Option<bool>, Vec<Block>)>),
+    Item(Option<bool>, Vec<Span>, Vec<Block>),
 }
 
 /// The block `text` holds, when it is one top-level block made only of
@@ -89,7 +91,7 @@ pub(crate) fn parse(text: &str) -> Option<Block> {
                     Tag::CodeBlock(_) => stack.push(Open::Code(String::new())),
                     Tag::BlockQuote(_) => stack.push(Open::Quote(Vec::new())),
                     Tag::List(start) => stack.push(Open::List(start, Vec::new())),
-                    Tag::Item => stack.push(Open::Item(Vec::new(), Vec::new())),
+                    Tag::Item => stack.push(Open::Item(None, Vec::new(), Vec::new())),
                     Tag::Strong => strong += 1,
                     Tag::Emphasis => {}
                     Tag::Strikethrough => strike += 1,
@@ -107,12 +109,12 @@ pub(crate) fn parse(text: &str) -> Option<Block> {
                         Open::Code(text) => Block::Code(text),
                         Open::Quote(blocks) => Block::Quote(blocks),
                         Open::List(start, items) => Block::List { start, items },
-                        Open::Item(spans, mut blocks) => {
+                        Open::Item(checked, spans, mut blocks) => {
                             if !spans.is_empty() {
                                 blocks.push(Block::Para(spans));
                             }
                             match stack.last_mut() {
-                                Some(Open::List(_, items)) => items.push(blocks),
+                                Some(Open::List(_, items)) => items.push((checked, blocks)),
                                 _ => return None,
                             }
                             continue;
@@ -120,10 +122,16 @@ pub(crate) fn parse(text: &str) -> Option<Block> {
                     };
                     match stack.last_mut() {
                         None => done.push(block),
-                        Some(Open::Quote(blocks) | Open::Item(_, blocks)) => blocks.push(block),
+                        Some(Open::Quote(blocks) | Open::Item(_, _, blocks)) => {
+                            blocks.push(block);
+                        }
                         Some(_) => return None,
                     }
                 }
+            },
+            Event::TaskListMarker(done) => match stack.last_mut() {
+                Some(Open::Item(checked, ..)) => *checked = Some(done),
+                _ => return None,
             },
             Event::Text(text) => {
                 if let Some(Open::Code(code)) = stack.last_mut() {
@@ -141,7 +149,9 @@ pub(crate) fn parse(text: &str) -> Option<Block> {
                 flush_item(&mut stack);
                 match stack.last_mut() {
                     None => done.push(Block::Rule),
-                    Some(Open::Quote(blocks) | Open::Item(_, blocks)) => blocks.push(Block::Rule),
+                    Some(Open::Quote(blocks) | Open::Item(_, _, blocks)) => {
+                        blocks.push(Block::Rule);
+                    }
                     Some(_) => return None,
                 }
             }
@@ -170,7 +180,7 @@ fn starts_block(tag: &Tag<'_>) -> bool {
 /// Turns the text an item has gathered so far into its first paragraph,
 /// so a nested block lands after it.
 fn flush_item(stack: &mut [Open]) {
-    if let Some(Open::Item(spans, blocks)) = stack.last_mut()
+    if let Some(Open::Item(_, spans, blocks)) = stack.last_mut()
         && !spans.is_empty()
     {
         blocks.push(Block::Para(std::mem::take(spans)));
@@ -180,7 +190,7 @@ fn flush_item(stack: &mut [Open]) {
 /// The runs the innermost inline holder gathers into.
 fn inline(stack: &mut [Open]) -> Option<&mut Vec<Span>> {
     match stack.last_mut()? {
-        Open::Para(spans) | Open::Heading(_, spans) | Open::Item(spans, _) => Some(spans),
+        Open::Para(spans) | Open::Heading(_, spans) | Open::Item(_, spans, _) => Some(spans),
         _ => None,
     }
 }
@@ -256,7 +266,7 @@ fn show_at(ui: &mut egui::Ui, block: &Block, palette: &Palette, depth: usize) {
             );
         }
         Block::List { start, items } => {
-            for (n, item) in items.iter().enumerate() {
+            for (n, (checked, item)) in items.iter().enumerate() {
                 let marker = match start {
                     Some(first) => format!("{}.", first + n as u64),
                     None => match depth {
@@ -267,17 +277,21 @@ fn show_at(ui: &mut egui::Ui, block: &Block, palette: &Palette, depth: usize) {
                     .to_owned(),
                 };
                 // The marker sets inline, so the text starts after the
-                // marker and a space, as the reference's list runs.
-                let indent = ui
-                    .painter()
-                    .layout_no_wrap(
-                        format!("{marker} "),
-                        egui::FontId::new(FS_BASE, family(FAMILY_PROSE)),
-                        ink,
-                    )
-                    .size()
-                    .x
-                    .ceil();
+                // marker and a space, as the reference's list runs. A
+                // task's box takes the marker's place.
+                let indent = if checked.is_some() {
+                    TASK_BOX + TASK_GAP
+                } else {
+                    ui.painter()
+                        .layout_no_wrap(
+                            format!("{marker} "),
+                            egui::FontId::new(FS_BASE, family(FAMILY_PROSE)),
+                            ink,
+                        )
+                        .size()
+                        .x
+                        .ceil()
+                };
                 let item_rect = ui
                     .push_id(n, |ui| {
                         egui::Frame::NONE
@@ -293,16 +307,27 @@ fn show_at(ui: &mut egui::Ui, block: &Block, palette: &Palette, depth: usize) {
                             .rect
                     })
                     .inner;
-                ui.painter().text(
-                    egui::pos2(
-                        item_rect.left(),
-                        item_rect.top() + crate::theme::line_h(FS_BASE) / 2.0,
-                    ),
-                    egui::Align2::LEFT_CENTER,
-                    marker,
-                    egui::FontId::new(FS_BASE, family(FAMILY_PROSE)),
-                    ink,
-                );
+                let mid = item_rect.top() + crate::theme::line_h(FS_BASE) / 2.0;
+                match checked {
+                    Some(done) => {
+                        task_box(
+                            ui,
+                            egui::pos2(item_rect.left(), mid),
+                            *done,
+                            ink,
+                            palette.bg,
+                        );
+                    }
+                    None => {
+                        ui.painter().text(
+                            egui::pos2(item_rect.left(), mid),
+                            egui::Align2::LEFT_CENTER,
+                            marker,
+                            egui::FontId::new(FS_BASE, family(FAMILY_PROSE)),
+                            ink,
+                        );
+                    }
+                }
             }
         }
         Block::Rule => {
@@ -316,6 +341,42 @@ fn show_at(ui: &mut egui::Ui, block: &Block, palette: &Palette, depth: usize) {
                 egui::Stroke::new(1.0, palette.line),
             );
         }
+    }
+}
+
+/// A task box's side.
+const TASK_BOX: f32 = 14.0;
+/// The space between a task box and its text.
+const TASK_GAP: f32 = 6.0;
+
+/// A task item's box with its left edge at `left_mid`: a hairline
+/// square in `ink`, filled with a `check` colored tick when `done`, as
+/// the reference's text view draws a task.
+fn task_box(
+    ui: &egui::Ui,
+    left_mid: egui::Pos2,
+    done: bool,
+    ink: egui::Color32,
+    check: egui::Color32,
+) {
+    let rect = egui::Rect::from_min_size(
+        egui::pos2(left_mid.x, crate::theme::snap(left_mid.y - TASK_BOX / 2.0)),
+        egui::vec2(TASK_BOX, TASK_BOX),
+    );
+    if done {
+        ui.painter()
+            .rect_filled(rect, egui::CornerRadius::ZERO, ink);
+        crate::icons::themed_image(crate::icons::Icon::Check, 10.0, check).paint_snapped(
+            ui,
+            egui::Rect::from_center_size(rect.center(), egui::vec2(10.0, 10.0)),
+        );
+    } else {
+        ui.painter().rect_stroke(
+            rect,
+            egui::CornerRadius::ZERO,
+            egui::Stroke::new(1.0, ink),
+            egui::StrokeKind::Inside,
+        );
     }
 }
 
@@ -459,12 +520,22 @@ mod tests {
         };
         assert_eq!(start, Some(3));
         assert_eq!(items.len(), 2);
-        assert_eq!(text(&items[0][0]), "one");
-        assert!(matches!(items[1][1], Block::List { start: None, .. }));
+        assert_eq!(text(&items[0].1[0]), "one");
+        assert!(matches!(items[1].1[1], Block::List { start: None, .. }));
         let Some(Block::Code(code)) = parse("```rust\nfn x() {}\n```") else {
             panic!("a code block is ours");
         };
         assert_eq!(code, "fn x() {}\n");
+    }
+
+    #[test]
+    fn task_items_carry_their_box() {
+        let Some(Block::List { items, .. }) = parse("- [ ] open\n- [x] done\n- plain") else {
+            panic!("a task list is ours");
+        };
+        let checked: Vec<Option<bool>> = items.iter().map(|(checked, _)| *checked).collect();
+        assert_eq!(checked, vec![Some(false), Some(true), None]);
+        assert_eq!(text(&items[1].1[0]), "done");
     }
 
     #[test]
