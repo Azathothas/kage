@@ -101,8 +101,9 @@ fn crescent(shade: (f32, f32)) -> Option<Vec<(f32, f32)>> {
     Some(points)
 }
 
-/// How many positions one orbit steps through.
-const ORBIT_STEPS: u32 = 120;
+/// How many positions one orbit steps through: a fresh one every frame
+/// at 120 Hz, since each step rasterizes once and is cached after.
+const ORBIT_STEPS: u32 = 264;
 
 /// The mark as SVG in its 24-unit box, the shade `turn` of the way
 /// round: the crescent on the orb gradient, then the ring.
@@ -174,8 +175,8 @@ fn svg(turn: f32, palette: &Palette) -> String {
     )
 }
 
-/// The mark at `size` pixels in `rect`. With `orbit` the shade turns on
-/// the clock `origin` started.
+/// The mark at `size` pixels in `rect`. With `origin` the shade turns
+/// on the clock it started, asking for every frame while it does.
 pub fn paint(
     ui: &egui::Ui,
     rect: egui::Rect,
@@ -186,6 +187,9 @@ pub fn paint(
     use crate::icons::PaintSnapped as _;
     use std::hash::{Hash as _, Hasher as _};
 
+    if origin.is_some() {
+        ui.ctx().request_repaint();
+    }
     let step = (turn_of(origin) * ORBIT_STEPS as f32).round() as u32 % ORBIT_STEPS;
     let svg = svg(step as f32 / ORBIT_STEPS as f32, palette);
     let mut hasher = std::collections::hash_map::DefaultHasher::new();

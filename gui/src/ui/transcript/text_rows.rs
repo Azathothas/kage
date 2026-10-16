@@ -382,8 +382,14 @@ pub fn render_assistant(
         pipeline.show(&id, text, live, ui);
         if live {
             let (rect, _) = ui.allocate_exact_size(egui::vec2(7.0, 14.0), egui::Sense::hover());
-            ui.painter()
-                .rect_filled(rect, egui::CornerRadius::ZERO, palette.ink_strong);
+            // The caret blinks once a second, lit for the first half.
+            let phase = ui.input(|i| i.time) % 1.0;
+            if phase < 0.5 {
+                ui.painter()
+                    .rect_filled(rect, egui::CornerRadius::ZERO, palette.ink_strong);
+            }
+            ui.ctx()
+                .request_repaint_after(Duration::from_secs_f64(0.5 - phase % 0.5));
         }
     })
     .response

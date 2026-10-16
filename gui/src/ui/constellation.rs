@@ -6,7 +6,7 @@
 //! moves between frames. Running stars twinkle on a clock the caller
 //! keeps, so a repaint from a state change continues the animation
 //! instead of restarting it. The caller drives the frames with
-//! [`egui::Context::request_repaint_after`], which is what keeps the
+//! [`egui::Context::request_repaint`], which is what keeps the
 //! idle cost at zero: no live member, no scheduled repaint.
 
 use std::time::Duration;

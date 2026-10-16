@@ -2093,8 +2093,7 @@ fn swarm_card(
                             };
                         }
                         if animate {
-                            ui.ctx()
-                                .request_repaint_after(std::time::Duration::from_millis(50));
+                            ui.ctx().request_repaint();
                         }
                     });
             } else {

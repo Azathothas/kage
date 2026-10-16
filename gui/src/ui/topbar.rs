@@ -153,8 +153,6 @@ fn working_pill(ui: &mut egui::Ui, elapsed: &str, palette: &Palette) {
         egui::vec2(14.0, 14.0),
     );
     crate::ui::eclipse::paint(ui, mark, 14.0, Some(crate::clock::epoch()), palette);
-    ui.ctx()
-        .request_repaint_after(std::time::Duration::from_millis(250));
     ui.painter().galley(
         egui::pos2(
             mark.right() + 6.0,
