@@ -418,8 +418,9 @@ fn menu_row(
             egui::vec2(12.0, 12.0),
         ),
     );
+    // The reference's 4px gap after the 12px icon.
     ui.painter().text(
-        egui::pos2(rect.left() + 25.0, mid),
+        egui::pos2(rect.left() + 12.0 + 12.0 + 4.0, mid),
         egui::Align2::LEFT_CENTER,
         label,
         egui::FontId::new(
