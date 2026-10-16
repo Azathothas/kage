@@ -124,7 +124,7 @@ impl TranscriptView {
     #[must_use]
     fn born(born: web_time::Instant) -> Self {
         Self {
-            list: List::default(),
+            list: List::new(),
             ui: UiState::default(),
             pipeline: Pipeline::default(),
             find: None,
@@ -318,6 +318,10 @@ impl TranscriptView {
             list.user_scrolled();
         }
         list.on_scroll(offset, content, viewport);
+        if !list.following() && jump_to_latest(ui, shown.inner_rect) {
+            list.follow_again();
+            ui.ctx().request_repaint();
+        }
 
         // The turn timeline rail, while the lab toggle keeps it: a
         // tick per marked row, the viewport's thumb, and drag to
@@ -332,7 +336,8 @@ impl TranscriptView {
     }
 
     /// Swaps the expansion state when the session on screen changes:
-    /// the state of the session leaving is kept for its return.
+    /// the state of the session leaving is kept for its return, and the
+    /// session arriving opens on its tail.
     fn swap_session(&mut self, active: Option<String>) {
         if active == self.session_key {
             return;
@@ -345,6 +350,7 @@ impl TranscriptView {
             .and_then(|key| self.stashed.remove(key))
             .unwrap_or_default();
         self.session_key = active;
+        self.list = List::new();
         self.find = None;
         self.vim_cursor = None;
         self.reveal.clear();
@@ -608,6 +614,35 @@ fn draw_rail(
         painter.rect_filled(rect, egui::CornerRadius::same(round), color);
     }
     seek
+}
+
+/// The "Jump to latest" button over the pane's bottom right corner,
+/// shown while the reader has scrolled away from the tail. Returns
+/// whether it was clicked.
+fn jump_to_latest(ui: &mut egui::Ui, pane: egui::Rect) -> bool {
+    use crate::ui::settings_config::{BtnTone, btn_sm_at, btn_sm_galley, btn_sm_size};
+    let palette = Palette::active_of(ui.ctx());
+    let label = "Jump to latest";
+    let anchor = pane.right_bottom() - egui::vec2(16.0, 12.0);
+    let size = btn_sm_size(&btn_sm_galley(ui, label), None);
+    // The button's own fill is translucent, so the rows under it are
+    // covered first.
+    ui.painter().rect_filled(
+        egui::Align2::RIGHT_BOTTOM.anchor_size(anchor, size),
+        egui::CornerRadius::same(crate::theme::R_MD as u8),
+        palette.bg,
+    );
+    btn_sm_at(
+        ui,
+        anchor,
+        egui::Align2::RIGHT_BOTTOM,
+        egui::Id::new("transcript-jump-latest"),
+        label,
+        None,
+        BtnTone::Plain,
+        palette,
+    )
+    .clicked()
 }
 
 fn shown<'a>(revealed: &HashMap<usize, usize>, ix: usize, text: &'a str) -> &'a str {

@@ -185,21 +185,8 @@ fn the_timeline_rail_seeks_the_rows() {
 
     // The rail hangs 6px off the pane's right edge, 16px wide, inside
     // the panel's 8px margin, and 10px off the pane's top and bottom.
-    // A press at its bottom seeks the last rows.
-    let bottom = egui::Pos2::new(RAIL_X, 158.0);
-    harness.drag_at(bottom);
-    harness.run();
-    harness.drop_at(bottom);
-    harness.run();
-    harness.run();
-    let (view, _, _) = harness.state();
-    let at_tail = view.scroll_offset();
-    assert!(
-        at_tail > fresh,
-        "the bottom of the rail seeks the last rows: {at_tail} > {fresh}"
-    );
-
-    // A press at its very top seeks the first rows again.
+    // The view opens on the tail, so a press at the rail's very top
+    // seeks the first rows.
     let top = egui::Pos2::new(RAIL_X, 22.0);
     harness.drag_at(top);
     harness.run();
@@ -209,8 +196,22 @@ fn the_timeline_rail_seeks_the_rows() {
     let (view, _, _) = harness.state();
     let at_top = view.scroll_offset();
     assert!(
-        at_top < at_tail,
-        "the top of the rail seeks the first rows: {at_top} < {at_tail}"
+        at_top < fresh,
+        "the top of the rail seeks the first rows: {at_top} < {fresh}"
+    );
+
+    // A press at its bottom seeks the last rows again.
+    let bottom = egui::Pos2::new(RAIL_X, 158.0);
+    harness.drag_at(bottom);
+    harness.run();
+    harness.drop_at(bottom);
+    harness.run();
+    harness.run();
+    let (view, _, _) = harness.state();
+    let at_tail = view.scroll_offset();
+    assert!(
+        at_tail > at_top,
+        "the bottom of the rail seeks the last rows: {at_tail} > {at_top}"
     );
 }
 
@@ -301,4 +302,49 @@ fn expanded_rows_survive_the_pointer_sweeping_over_them() {
             harness.step();
         }
     }
+}
+
+#[test]
+fn a_reader_scrolled_away_gets_a_jump_back_to_the_tail() {
+    use egui_kittest::kittest::Queryable as _;
+
+    let mut harness = harness_sized(900.0, 180.0);
+    harness.run();
+    harness.run();
+    let tail = harness.state().0.scroll_offset();
+    assert!(
+        tail > 0.0,
+        "the view opens on the tail of the overflowing rows"
+    );
+    assert_eq!(
+        testutil::count(&harness, "Jump to latest"),
+        0,
+        "the follow holds the tail, so no jump is offered"
+    );
+
+    harness.event(egui::Event::PointerMoved(egui::pos2(450.0, 90.0)));
+    harness.event(egui::Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: egui::vec2(0.0, 400.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: egui::Modifiers::NONE,
+    });
+    harness.run();
+    harness.run();
+    assert!(
+        harness.state().0.scroll_offset() < tail,
+        "the wheel scrolled up"
+    );
+    harness.get_by_label("Jump to latest").click();
+    harness.run();
+    harness.run();
+    assert!(
+        (harness.state().0.scroll_offset() - tail).abs() < 1.0,
+        "the jump lands on the tail again"
+    );
+    assert_eq!(
+        testutil::count(&harness, "Jump to latest"),
+        0,
+        "following again, the jump is gone"
+    );
 }
