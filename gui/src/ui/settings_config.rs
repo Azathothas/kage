@@ -1774,17 +1774,23 @@ fn rule_input(
     let mut submitted = false;
     let mut dropped = false;
     ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-        let response = ui.add(
+        let response = crate::ui::forms::add_field(
+            ui,
             egui::TextEdit::singleline(&mut state.rule_text)
                 .id(egui::Id::new("settings-rule-input"))
+                .hint_text(
+                    egui::RichText::new("glob or tool")
+                        .font(egui::FontId::new(FS_XS, family(FAMILY_MONO_REGULAR)))
+                        .color(palette.faint),
+                )
                 .font(egui::FontId::new(FS_XS, family(FAMILY_MONO_REGULAR)))
                 .desired_width(rect.width()),
+            palette,
         );
         response.request_focus();
         submitted = ui.input(|input| input.key_pressed(egui::Key::Enter));
         dropped = ui.input(|input| input.key_pressed(egui::Key::Escape));
     });
-    let _ = palette;
     if submitted
         && let Some(add) = state.adding.clone()
         && let Some(config) = store.config().cloned()
@@ -2168,14 +2174,18 @@ fn install_row(
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             let width = ui.available_width() - 150.0;
-            let field = ui.add(
+            let field = crate::ui::forms::add_field(
+                ui,
                 egui::TextEdit::singleline(text)
                     .id(egui::Id::new("settings-plugin-source"))
                     .hint_text(
-                        egui::RichText::new("https://example.com/clock.lua").color(palette.faint),
+                        egui::RichText::new("https://example.com/clock.lua")
+                            .font(egui::FontId::new(FS_XS, family(FAMILY_MONO_REGULAR)))
+                            .color(palette.faint),
                     )
                     .font(egui::FontId::new(FS_XS, family(FAMILY_MONO_REGULAR)))
                     .desired_width(width),
+                palette,
             );
             if shown {
                 field.request_focus();

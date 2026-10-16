@@ -440,3 +440,40 @@ fn every_page_renders_for_review() {
             .expect("the form image saves");
     }
 }
+
+#[test]
+fn a_focused_form_field_draws_the_reference_focus_border() {
+    use egui_kittest::kittest::NodeT as _;
+    let mut harness = harness_for(configured());
+    harness.state_mut().1.open(Section::Mcp);
+    settle(&mut harness);
+    harness.get_by_label("Add server").click();
+    harness.run();
+    testutil::first_field(&harness)
+        .expect("the name field draws")
+        .click();
+    harness.run();
+    harness.run();
+    let field = testutil::first_field(&harness)
+        .expect("the name field draws")
+        .accesskit_node()
+        .bounding_box()
+        .expect("the field has bounds");
+    let image = harness.render().expect("the form renders");
+    let ink = kage_desktop::theme::Palette::shadow().ink_strong;
+    let x = field.x0.round() as u32;
+    let mid = ((field.y0 + field.y1) / 2.0).round() as u32;
+    // The border's column, across the field's middle: the reference
+    // paints its focus line in the accent, never the strong ink egui
+    // gives a focused field by default.
+    let stark = (mid - 4..mid + 4)
+        .filter(|&y| {
+            let [r, g, b, _] = image.get_pixel(x, y).0;
+            r.abs_diff(ink.r()) < 24 && g.abs_diff(ink.g()) < 24 && b.abs_diff(ink.b()) < 24
+        })
+        .count();
+    assert_eq!(
+        stark, 0,
+        "the focused border is not drawn in the strong ink"
+    );
+}

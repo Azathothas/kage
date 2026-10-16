@@ -456,7 +456,7 @@ pub fn text_field_w(
         .font(font)
         .desired_width(width)
         .margin(egui::Margin::symmetric(8, 6));
-    ui.add(field)
+    add_field(ui, field, palette)
 }
 
 /// A multi-line text field, one entry per line, drawn full width.
@@ -476,7 +476,38 @@ pub fn lines_field(
         .desired_width(f32::INFINITY)
         .desired_rows(3)
         .margin(egui::Margin::symmetric(8, 6));
-    ui.add(field)
+    add_field(ui, field, palette)
+}
+
+/// Adds `field` with the reference input's focus look: the focus
+/// border where egui would stroke a focused field in the strong ink,
+/// and the accent ring around it.
+pub(crate) fn add_field(
+    ui: &mut egui::Ui,
+    field: egui::TextEdit<'_>,
+    palette: &Palette,
+) -> egui::Response {
+    let response = ui
+        .scope(|ui| {
+            ui.visuals_mut().selection.stroke = egui::Stroke::new(1.0, palette.composer_focus_line);
+            ui.add(field)
+        })
+        .inner;
+    if response.has_focus() {
+        focus_ring(ui, response.rect, palette);
+    }
+    response
+}
+
+/// The accent at half strength just outside a focused field's border,
+/// taking no room of its own.
+fn focus_ring(ui: &egui::Ui, rect: egui::Rect, palette: &Palette) {
+    ui.painter().rect_stroke(
+        rect,
+        egui::CornerRadius::same(R_MD as u8),
+        egui::Stroke::new(3.0, palette.accent.gamma_multiply(0.5)),
+        egui::StrokeKind::Outside,
+    );
 }
 
 /// The header of a form page: a back button and the title on one line.
@@ -704,18 +735,10 @@ pub(crate) fn input_field(
         response.request_focus();
     }
     if response.has_focus() {
-        // The accent at half strength just outside the focus border,
-        // taking no room of its own.
-        let radius = egui::CornerRadius::same(R_MD as u8);
+        focus_ring(ui, response.rect, palette);
         ui.painter().rect_stroke(
             response.rect,
-            radius,
-            egui::Stroke::new(3.0, palette.accent.gamma_multiply(0.5)),
-            egui::StrokeKind::Outside,
-        );
-        ui.painter().rect_stroke(
-            response.rect,
-            radius,
+            egui::CornerRadius::same(R_MD as u8),
             egui::Stroke::new(1.0, palette.composer_focus_line),
             egui::StrokeKind::Inside,
         );
