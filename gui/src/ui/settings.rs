@@ -457,12 +457,13 @@ impl SettingsView {
         self.settings.section()
     }
 
-    /// Whether a form shows over the page. Escape leaves the form
-    /// before it leaves the dialog, and the dialog's own keys wait for
-    /// it.
+    /// Whether a layer over the page answers Escape itself: a form,
+    /// an open menu or a field the page shows for one edit. Escape
+    /// leaves that layer before it leaves the dialog, and the dialog's
+    /// own keys wait for it.
     #[must_use]
-    pub fn form_open(&self) -> bool {
-        self.settings.form.is_some()
+    pub fn holds_escape(&self) -> bool {
+        self.settings.form.is_some() || self.settings.pages.holds_escape()
     }
 
     /// Draws the dialog over `ui`, reporting what it asked for.
@@ -794,7 +795,7 @@ fn page(
     page_frame(ui, section.label(), |ui| {
         title(ui, section.label(), palette);
         match section {
-            Section::General => general(ui, store, palette, events),
+            Section::General => general(ui, store, &mut pages.pick_open, palette, events),
             Section::Agents => agents(ui, store, palette, events),
             Section::Providers | Section::Mcp | Section::Permissions | Section::Plugins => {
                 config_page(ui, store, section, pages, palette, events);
@@ -813,7 +814,13 @@ type Flip<'a> = (&'a str, &'a str, &'a str, bool);
 
 /// The General page: the theme cards and picks, then the input, chat
 /// and session toggles, in the reference's order.
-fn general(ui: &mut egui::Ui, store: &Store, palette: &Palette, events: &mut Vec<SettingsEvent>) {
+fn general(
+    ui: &mut egui::Ui,
+    store: &Store,
+    pick_open: &mut Option<bool>,
+    palette: &Palette,
+    events: &mut Vec<SettingsEvent>,
+) {
     let prefs = store.prefs();
     let catalog = store.theme_catalog();
     let light = ui.ctx().theme() == egui::Theme::Light;
@@ -832,8 +839,8 @@ fn general(ui: &mut egui::Ui, store: &Store, palette: &Palette, events: &mut Vec
     });
     ui.add_space(10.0);
     boxed(ui, palette, |ui| {
-        system_pick_row(ui, true, &catalog, palette, events);
-        system_pick_row(ui, false, &catalog, palette, events);
+        system_pick_row(ui, true, &catalog, pick_open, palette, events);
+        system_pick_row(ui, false, &catalog, pick_open, palette, events);
     });
     let flips: [(&str, &[Flip]); 3] = [
         (
@@ -1189,6 +1196,7 @@ fn system_pick_row(
     ui: &mut egui::Ui,
     dark: bool,
     catalog: &crate::themes::Catalog,
+    pick_open: &mut Option<bool>,
     palette: &Palette,
     events: &mut Vec<SettingsEvent>,
 ) {
@@ -1207,23 +1215,25 @@ fn system_pick_row(
         ui,
         label,
         hint,
-        |ui| theme_select(ui, dark, catalog, palette, events),
+        |ui| theme_select(ui, dark, catalog, pick_open, palette, events),
         palette,
     );
 }
 
 /// The theme select: a trigger with the current theme's swatch and
 /// name, and while open a menu of every theme hung under it. The kage
-/// theme of the desktop's mode clears the pick.
+/// theme of the desktop's mode clears the pick. `pick_open` names the
+/// one menu that shows, so opening one closes the other.
 fn theme_select(
     ui: &mut egui::Ui,
     dark: bool,
     catalog: &crate::themes::Catalog,
+    pick_open: &mut Option<bool>,
     palette: &Palette,
     events: &mut Vec<SettingsEvent>,
 ) {
     let id = egui::Id::new(("theme-select", dark));
-    let mut open = ui.data(|data| data.get_temp::<bool>(id)).unwrap_or(false);
+    let mut open = *pick_open == Some(dark);
     let current = catalog.system(!dark);
     let (rect, response) = ui.allocate_exact_size(egui::vec2(PICK_W, 32.0), egui::Sense::click());
     let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -1314,7 +1324,11 @@ fn theme_select(
             open = false;
         }
     }
-    ui.data_mut(|data| data.insert_temp(id, open));
+    if open {
+        *pick_open = Some(dark);
+    } else if *pick_open == Some(dark) {
+        *pick_open = None;
+    }
 }
 
 /// One theme in the select's menu: its swatch, its name and the check

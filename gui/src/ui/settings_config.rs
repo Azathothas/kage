@@ -504,6 +504,19 @@ pub struct PageState {
     pub plugin_install: Option<u64>,
     /// The plugin whose grants show.
     pub plugin_open: Option<String>,
+    /// The General page's theme menu that shows: `Some(true)` for the
+    /// dark desktop's, `Some(false)` for the light one's.
+    pub pick_open: Option<bool>,
+}
+
+impl PageState {
+    /// Whether something on the page answers Escape itself: an open
+    /// menu, the rule field or the plugin install field. The dialog
+    /// waits for it before Escape closes the dialog.
+    #[must_use]
+    pub fn holds_escape(&self) -> bool {
+        self.pick_open.is_some() || self.adding.is_some() || self.plugin_input.is_some()
+    }
 }
 
 /// The tone a badge or chip paints in: its text, fill and border.
@@ -2113,16 +2126,17 @@ pub fn plugins_page(
             palette,
         );
     });
-    if group_with(
+    let shown = group_with(
         ui,
         "Plugins",
         Some(("Install a plugin", Some(crate::icons::Icon::Plus))),
         palette,
-    ) {
+    );
+    if shown {
         state.plugin_input = Some(String::new());
         state.plugin_install = None;
     }
-    install_row(ui, store, state, palette);
+    install_row(ui, store, state, shown, palette);
     let rows = plugin_rows(snapshot);
     if !rows.is_empty() {
         boxed(ui, palette, |ui| {
@@ -2139,21 +2153,42 @@ pub fn plugins_page(
 }
 
 /// The install field with its buttons, and the install's outcome.
-fn install_row(ui: &mut egui::Ui, store: &mut Store, state: &mut PageState, palette: &Palette) {
+/// The field takes the keys the frame it shows; Enter installs and
+/// Escape cancels, as the buttons do.
+fn install_row(
+    ui: &mut egui::Ui,
+    store: &mut Store,
+    state: &mut PageState,
+    shown: bool,
+    palette: &Palette,
+) {
     if let Some(text) = state.plugin_input.as_mut() {
         let mut install = false;
         let mut cancel = false;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             let width = ui.available_width() - 150.0;
-            ui.add(
+            let field = ui.add(
                 egui::TextEdit::singleline(text)
                     .id(egui::Id::new("settings-plugin-source"))
+                    .hint_text(
+                        egui::RichText::new("https://example.com/clock.lua").color(palette.faint),
+                    )
                     .font(egui::FontId::new(FS_XS, family(FAMILY_MONO_REGULAR)))
                     .desired_width(width),
             );
-            install = btn_sm(ui, "Install", None, BtnTone::Primary, palette).clicked();
-            cancel = btn_sm(ui, "Cancel", None, BtnTone::Plain, palette).clicked();
+            if shown {
+                field.request_focus();
+            }
+            let (enter, escape) = ui.input(|input| {
+                (
+                    input.key_pressed(egui::Key::Enter),
+                    input.key_pressed(egui::Key::Escape),
+                )
+            });
+            install = btn_sm(ui, "Install", None, BtnTone::Primary, palette).clicked()
+                || (field.lost_focus() && enter);
+            cancel = btn_sm(ui, "Cancel", None, BtnTone::Plain, palette).clicked() || escape;
         });
         ui.add_space(6.0);
         ui.add(

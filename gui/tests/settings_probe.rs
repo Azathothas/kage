@@ -479,3 +479,75 @@ fn the_agent_page_draws_the_engine_options() {
         "the page draws the engine's agent options"
     );
 }
+
+#[test]
+fn the_plugin_field_takes_the_keys_and_enter_installs() {
+    let mut harness = harness_for(configured());
+    harness.state_mut().1.open(Section::Plugins);
+    harness.run();
+    harness.run();
+    harness.get_by_label("Install a plugin").click();
+    harness.run();
+    assert!(
+        harness.state().1.holds_escape(),
+        "the field answers Escape before the dialog"
+    );
+    harness.event(egui::Event::Text("https://x.test/clock.lua".to_owned()));
+    harness.run();
+    assert!(
+        testutil::field_holds(&harness, "https://x.test/clock.lua"),
+        "the field had the keys the frame it showed"
+    );
+    harness.key_press(egui::Key::Enter);
+    harness.run();
+    assert!(
+        testutil::field_values(&harness).is_empty(),
+        "Enter installs and the field goes"
+    );
+    assert_eq!(
+        testutil::count(&harness, "Installing\u{2026}"),
+        1,
+        "the install is in flight"
+    );
+}
+
+#[test]
+fn escape_drops_the_plugin_field_and_the_rule_field() {
+    let mut harness = harness_for(configured());
+    harness.state_mut().1.open(Section::Plugins);
+    harness.run();
+    harness.run();
+    harness.get_by_label("Install a plugin").click();
+    harness.run();
+    harness.key_press(egui::Key::Escape);
+    harness.run();
+    assert!(
+        testutil::field_values(&harness).is_empty(),
+        "Escape cancels the install field"
+    );
+    assert!(
+        !harness.state().1.holds_escape(),
+        "the dialog has Escape back"
+    );
+    assert!(harness.state().1.is_open(), "the dialog stays open");
+
+    harness.get_by_label("Permissions").click();
+    harness.run();
+    harness.run();
+    harness.get_by_label("Add rule").click();
+    harness.run();
+    assert!(
+        harness.state().1.holds_escape(),
+        "the rule field answers Escape before the dialog"
+    );
+    harness.key_press(egui::Key::Escape);
+    harness.run();
+    assert!(
+        testutil::field_values(&harness).is_empty(),
+        "Escape drops the rule field"
+    );
+    assert!(
+        !harness.state().1.holds_escape(),
+        "the dialog has Escape back"
+    );
+}

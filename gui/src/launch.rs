@@ -2441,10 +2441,10 @@ impl ShellApp {
                 .open(crate::ui::settings::Section::Providers),
             Action::CloseDialog => {
                 if self.shell.settings.is_open() {
-                    // A form over the page answers the key in its own
-                    // draw, so the dialog waits for the form to be
-                    // gone before it closes.
-                    if !self.shell.settings.form_open() {
+                    // A form, menu or one-edit field over the page
+                    // answers the key in its own draw, so the dialog
+                    // waits for it to be gone before it closes.
+                    if !self.shell.settings.holds_escape() {
                         self.shell.settings.close();
                     }
                 } else {
