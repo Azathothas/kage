@@ -127,3 +127,37 @@ fn the_themed_shell_paints_the_palette_background() {
         "the palette surfaces hold {share} of the frame"
     );
 }
+
+#[test]
+fn the_floating_workbench_runs_the_window_height() {
+    let mut harness = harness_for(1000.0, Panels::default());
+    harness.run();
+    harness.state_mut().toggle_workbench();
+    harness.run();
+    harness.run();
+    let rect = harness
+        .ctx
+        .memory(|memory| memory.area_rect(egui::Id::new("workbench-float")))
+        .expect("the workbench floats at this width");
+    assert!(
+        (rect.height() - 600.0).abs() < 1.0,
+        "the float covers the window top to bottom, got {rect:?}"
+    );
+}
+
+#[test]
+fn the_floating_sidebar_and_its_scrim_run_the_window_height() {
+    let mut harness = harness_for(800.0, Panels::default());
+    harness.run();
+    harness.state_mut().toggle_sidebar();
+    harness.run();
+    harness.run();
+    let rect = harness
+        .ctx
+        .memory(|memory| memory.area_rect(egui::Id::new("side-scrim")))
+        .expect("the sidebar floats at this width");
+    assert!(
+        (rect.height() - 600.0).abs() < 1.0 && (rect.width() - 800.0).abs() < 1.0,
+        "the scrim covers the window, got {rect:?}"
+    );
+}
