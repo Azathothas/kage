@@ -11,7 +11,7 @@ use crate::icons::PaintSnapped as _;
 use crate::store::Store;
 use crate::theme::{
     FAMILY_BODY_REGULAR, FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_2XS, FS_SM, FS_XS, Palette,
-    R_FULL, R_LG, R_MD, SP_2, SP_4, family,
+    R_FULL, R_LG, R_MD, SP_2, family,
 };
 use crate::ui::forms::ShowCrisp as _;
 use crate::ui::pickers;
@@ -445,17 +445,6 @@ fn chip(ui: &mut egui::Ui, text: &str, palette: &Palette) -> egui::Response {
         .response
 }
 
-/// The uppercase section label between popover row groups.
-fn section_label(ui: &mut egui::Ui, text: &str, palette: &Palette) {
-    let text = egui::RichText::new(text.to_uppercase())
-        .size(FS_2XS)
-        .family(family(FAMILY_BODY_SEMIBOLD))
-        .color(palette.faint);
-    ui.add_space(SP_4);
-    ui.label(text);
-    ui.add_space(SP_2 / 2.0);
-}
-
 /// A picker section's label: the small caps row, as the reference
 /// picker groups its list.
 fn pop_label(ui: &mut egui::Ui, text: &str, palette: &Palette) {
@@ -635,101 +624,104 @@ fn plus_button(
         .show(ui.ctx(), |ui| {
             surface(ui, palette, MENU_W, |ui| {
                 ui.set_max_height(420.0);
-                section_label(ui, "Attach", palette);
-                dimmed_row(
+                pop_label(ui, "Attach", palette);
+                plus_row(
                     ui,
                     palette,
-                    Icon::Paperclip,
-                    "Files",
-                    "Upload files or images",
-                    Some("drop"),
-                    "the prompt surface carries text only for now",
+                    (Icon::Paperclip, "Files", "Upload files or images"),
+                    Tail::Kbd("drop"),
+                    Some("the prompt surface carries text only for now"),
                 );
-                let mention = plus_row_button(
+                let mention = plus_row(
                     ui,
                     palette,
-                    Icon::AtSign,
-                    "Mention",
-                    "Project files from the session workdir",
-                    Some("@"),
+                    (
+                        Icon::AtSign,
+                        "Mention",
+                        "Project files from the session workdir",
+                    ),
+                    Tail::Kbd("@"),
+                    None,
                 );
                 if mention.clicked() {
                     events.push(ToolbarEvent::SeedMention);
                     toolbar.close_plus();
                 }
-                let commands = plus_row_button(
+                let commands = plus_row(
                     ui,
                     palette,
-                    Icon::Slash,
-                    "Commands",
-                    "The commands the agent sent",
-                    Some("/"),
+                    (Icon::Slash, "Commands", "The commands the agent sent"),
+                    Tail::Kbd("/"),
+                    None,
                 );
                 if commands.clicked() {
                     events.push(ToolbarEvent::SeedSlash);
                     toolbar.close_plus();
                 }
-                section_label(ui, "Modes", palette);
-                let goal_row = plus_row_button(
+                pop_label(ui, "Modes", palette);
+                let goal_row = plus_row(
                     ui,
                     palette,
-                    Icon::Target,
-                    "Goal",
-                    "Set a goal to keep pursuing",
-                    Some(if goal.is_some() { "set" } else { "none" }),
+                    (Icon::Target, "Goal", "Set a goal to keep pursuing"),
+                    Tail::Kbd(if goal.is_some() { "set" } else { "none" }),
+                    None,
                 );
                 if goal_row.clicked() {
                     events.push(ToolbarEvent::OpenGoal);
                     toolbar.close_plus();
                 }
-                let plan = plus_row_button(
+                let plan = plus_row(
                     ui,
                     palette,
-                    Icon::PenLine,
-                    "Plan",
-                    if plan_on {
-                        "Turn plan mode off"
-                    } else {
-                        "Turn plan mode on"
-                    },
+                    (
+                        Icon::PenLine,
+                        "Plan",
+                        if plan_on {
+                            "Turn plan mode off"
+                        } else {
+                            "Turn plan mode on"
+                        },
+                    ),
+                    Tail::OnOff(plan_on),
                     None,
                 );
                 if plan.clicked() {
                     events.push(ToolbarEvent::TogglePlan);
                     toolbar.close_plus();
                 }
-                onoff(ui, plan_on, palette);
-                let swarm = plus_row_button(
-                    ui,
-                    palette,
-                    Icon::Waypoints,
-                    "Swarm",
-                    if swarm_on {
-                        "Turn swarm mode off"
-                    } else {
-                        "Turn swarm mode on"
-                    },
-                    None,
-                );
-                if swarm.clicked() {
-                    if swarm_on {
-                        events.push(ToolbarEvent::SwarmOff);
-                    } else {
-                        events.push(ToolbarEvent::ConfirmSwarm);
+                if swarm_known {
+                    let swarm = plus_row(
+                        ui,
+                        palette,
+                        (
+                            Icon::Waypoints,
+                            "Swarm",
+                            if swarm_on {
+                                "Turn swarm mode off"
+                            } else {
+                                "Turn swarm mode on"
+                            },
+                        ),
+                        Tail::OnOff(swarm_on),
+                        None,
+                    );
+                    if swarm.clicked() {
+                        if swarm_on {
+                            events.push(ToolbarEvent::SwarmOff);
+                        } else {
+                            events.push(ToolbarEvent::ConfirmSwarm);
+                        }
+                        toolbar.close_plus();
                     }
-                    toolbar.close_plus();
+                } else {
+                    plus_row(
+                        ui,
+                        palette,
+                        (Icon::Waypoints, "Swarm", "The agent sent no swarm option"),
+                        Tail::None,
+                        Some("the agent sent no swarm config option"),
+                    );
                 }
-                ui.horizontal(|ui| {
-                    if swarm_known {
-                        onoff(ui, swarm_on, palette);
-                    } else {
-                        ui.label(
-                            egui::RichText::new("the agent sent no swarm option")
-                                .size(FS_2XS)
-                                .color(palette.faint),
-                        );
-                    }
-                });
             });
         });
     let escape = ui.input(|input| input.key_pressed(egui::Key::Escape));
@@ -741,115 +733,94 @@ fn plus_button(
     Some(())
 }
 
-/// One plus-menu row: a filled icon chip in front of the label and
-/// description, with an optional key cap at the far end. Returns the
-/// row's response, so the caller wires its action.
-fn plus_row_button(
-    ui: &mut egui::Ui,
-    palette: &Palette,
-    icon: Icon,
-    label: &str,
-    description: &str,
-    tail: Option<&str>,
-) -> egui::Response {
-    let inner = egui::Frame::NONE
-        .fill(egui::Color32::TRANSPARENT)
-        .corner_radius(egui::CornerRadius::same(R_MD as u8))
-        .inner_margin(egui::Margin::symmetric(7, 6))
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 10.0;
-                let chip_rect = egui::Frame::NONE
-                    .fill(palette.fill)
-                    .corner_radius(egui::CornerRadius::same(7))
-                    .inner_margin(egui::Margin::same(6))
-                    .show(ui, |ui| {
-                        crate::icons::icon(ui, icon, 14.0, palette.muted);
-                    });
-                let _ = chip_rect;
-                ui.vertical(|ui| {
-                    ui.label(
-                        egui::RichText::new(label)
-                            .size(FS_XS + 1.0)
-                            .color(palette.ink),
-                    );
-                    ui.label(
-                        egui::RichText::new(description)
-                            .size(11.5)
-                            .color(palette.faint),
-                    );
-                });
-                if let Some(tail) = tail {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        kbd(ui, tail, palette);
-                    });
-                }
-            })
-            .response
-        })
-        .inner;
-    let rect = inner.rect;
-    let id = egui::Id::new("plus-row").with(rect.top().to_bits());
-    let response = ui
-        .interact(rect, id, egui::Sense::click())
-        .on_hover_cursor(egui::CursorIcon::PointingHand);
-    if response.hovered() {
-        ui.painter()
-            .rect_filled(rect, egui::CornerRadius::same(R_MD as u8), palette.selected);
-    }
-    response
+/// What a plus-menu row carries at its far end.
+enum Tail {
+    /// A key cap naming the row's shortcut or state.
+    Kbd(&'static str),
+    /// The on/off chip of a mode toggle.
+    OnOff(bool),
+    /// Nothing.
+    None,
 }
 
-/// A plus-menu row that does nothing yet, drawn faint with its reason:
-/// the prompt surface carries text only for now, so the attachment
-/// entry stays inert.
-fn dimmed_row(
+/// One plus-menu row: a filled icon chip in front of the label and
+/// description, with the tail at the far end. A row with a `dimmed`
+/// reason draws faint, answers no click and says why on hover.
+/// Returns the row's response, so the caller wires its action.
+fn plus_row(
     ui: &mut egui::Ui,
     palette: &Palette,
-    icon: Icon,
-    label: &str,
-    description: &str,
-    tail: Option<&str>,
-    reason: &str,
-) {
+    (icon, label, description): (Icon, &str, &str),
+    tail: Tail,
+    dimmed: Option<&str>,
+) -> egui::Response {
+    let id = egui::Id::new("plus-row").with(label);
+    let hovered = dimmed.is_none() && ui.ctx().read_response(id).is_some_and(|r| r.hovered());
+    let ink = if dimmed.is_some() {
+        palette.faint
+    } else {
+        palette.ink
+    };
     let inner = egui::Frame::NONE
+        .fill(if hovered {
+            palette.selected
+        } else {
+            egui::Color32::TRANSPARENT
+        })
         .corner_radius(egui::CornerRadius::same(R_MD as u8))
         .inner_margin(egui::Margin::symmetric(7, 6))
         .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 10.0;
-                egui::Frame::NONE
-                    .fill(palette.fill)
-                    .corner_radius(egui::CornerRadius::same(7))
-                    .inner_margin(egui::Margin::same(6))
-                    .show(ui, |ui| {
-                        crate::icons::icon(ui, icon, 14.0, palette.faint);
-                    });
+                let (chip, _) =
+                    ui.allocate_exact_size(egui::vec2(26.0, 26.0), egui::Sense::hover());
+                ui.painter()
+                    .rect_filled(chip, egui::CornerRadius::same(7), palette.fill);
+                crate::icons::themed_image(
+                    icon,
+                    14.0,
+                    if dimmed.is_some() {
+                        palette.faint
+                    } else {
+                        palette.muted
+                    },
+                )
+                .paint_snapped(
+                    ui,
+                    egui::Rect::from_center_size(chip.center(), egui::vec2(14.0, 14.0)),
+                );
                 ui.vertical(|ui| {
-                    ui.label(
-                        egui::RichText::new(label)
-                            .size(FS_XS + 1.0)
-                            .color(palette.faint),
-                    );
+                    ui.label(egui::RichText::new(label).size(FS_XS + 1.0).color(ink));
                     ui.label(
                         egui::RichText::new(description)
                             .size(11.5)
                             .color(palette.faint),
                     );
                 });
-                if let Some(tail) = tail {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        kbd(ui, tail, palette);
-                    });
-                }
-            })
-            .response
-        })
-        .inner;
-    let rect = inner.rect;
-    let id = egui::Id::new("plus-dimmed-row").with(rect.top().to_bits());
-    let response = ui.interact(rect, id, egui::Sense::hover());
-    let _ = response.on_hover_text(reason);
+                // The tail sits in an 18px band, as the reference's chips
+                // are 18 tall, so the row's height never stretches it.
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), 18.0),
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| match tail {
+                        Tail::Kbd(cap) => kbd(ui, cap, palette),
+                        Tail::OnOff(on) => onoff(ui, on, palette),
+                        Tail::None => {}
+                    },
+                );
+            });
+        });
+    let sense = if dimmed.is_some() {
+        egui::Sense::hover()
+    } else {
+        egui::Sense::click()
+    };
+    let response = ui.interact(inner.response.rect, id, sense);
+    match dimmed {
+        Some(reason) => response.on_hover_text(reason),
+        None => response.on_hover_cursor(egui::CursorIcon::PointingHand),
+    }
 }
 
 /// The permission mode pill, listing the advertised values with the

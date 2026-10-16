@@ -147,3 +147,37 @@ fn a_click_on_a_plus_row_runs_the_row_and_closes() {
         "the row click turns plan mode on"
     );
 }
+
+#[test]
+fn the_mode_rows_carry_their_state_and_an_unoffered_swarm_is_inert() {
+    let mut harness = harness();
+    for _ in 0..3 {
+        harness.run();
+    }
+    let middle = |label: &str| {
+        harness
+            .query_by_label(label)
+            .unwrap_or_else(|| panic!("the popover draws {label}"))
+            .rect()
+            .center()
+            .y
+    };
+    let (plan, off) = (middle("Plan"), middle("off"));
+    let description = middle("Turn plan mode on");
+    assert!(
+        off > plan && off < description,
+        "the off chip sits on the Plan row, between its label ({plan}) and description ({description}), at {off}"
+    );
+    assert_eq!(
+        testutil::count(&harness, "The agent sent no swarm option"),
+        1,
+        "the swarm row says why it is inert"
+    );
+    harness.get_by_label("Swarm").click();
+    harness.run();
+    harness.run();
+    assert!(
+        harness.state().1.plus_open(),
+        "a click on the inert swarm row does nothing"
+    );
+}
