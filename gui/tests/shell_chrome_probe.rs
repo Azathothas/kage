@@ -186,3 +186,30 @@ fn the_palette_fits_a_small_window() {
         assert!(screen.contains_rect(rect), "{label} fits: {rect:?}");
     }
 }
+
+#[test]
+fn renaming_from_the_session_menu_opens_the_field_with_focus() {
+    let mut harness = harness(egui::vec2(1200.0, 800.0));
+    booted(&mut harness);
+    harness.get_by_label("Session actions").click();
+    steps(&mut harness, 3);
+    // The field takes the focus the frame it first draws, so the
+    // accessibility tree never names a focus it does not hold.
+    harness.get_by_label("Rename").click();
+    steps(&mut harness, 3);
+    assert!(
+        testutil::field_holds(&harness, "Fix the null dereference in main"),
+        "the field opens on the title"
+    );
+    assert_eq!(
+        harness.ctx.memory(|memory| memory.focused()),
+        Some(egui::Id::new("topbar-rename-input")),
+        "the field holds the focus"
+    );
+    harness.key_press(egui::Key::Escape);
+    steps(&mut harness, 3);
+    assert!(
+        !testutil::field_holds(&harness, "Fix the null dereference in main"),
+        "Esc closes the field"
+    );
+}

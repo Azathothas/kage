@@ -34,20 +34,16 @@ pub enum SessionAction {
 
 const RENAME_DRAFT: &str = "topbar-rename-draft";
 const RENAME_INPUT: &str = "topbar-rename-input";
+const RENAME_FOCUS: &str = "topbar-rename-focus";
 
 fn start_rename(ui: &mut egui::Ui, title: String) {
-    let input = egui::Id::new(RENAME_INPUT);
-    // The whole title starts selected, so typing replaces it.
-    let mut state = egui::text_edit::TextEditState::load(ui.ctx(), input).unwrap_or_default();
-    state
-        .cursor
-        .set_char_range(Some(egui::text::CCursorRange::two(
-            egui::text::CCursor::new(0),
-            egui::text::CCursor::new(title.chars().count()),
-        )));
-    state.store(ui.ctx(), input);
-    ui.data_mut(|data| data.insert_temp(egui::Id::new(RENAME_DRAFT), title));
-    ui.ctx().memory_mut(|memory| memory.request_focus(input));
+    // A fresh state puts the caret at the title's end, as the
+    // reference's input does, not where a past rename left it.
+    egui::text_edit::TextEditState::default().store(ui.ctx(), egui::Id::new(RENAME_INPUT));
+    ui.data_mut(|data| {
+        data.insert_temp(egui::Id::new(RENAME_DRAFT), title);
+        data.insert_temp(egui::Id::new(RENAME_FOCUS), true);
+    });
 }
 
 /// Draws the top bar over the chat column. `sidebar_hidden` shows the
@@ -244,6 +240,14 @@ fn rename_or_title(
                 crate::theme::family(crate::theme::FAMILY_BODY_REGULAR),
             )),
     );
+    // The focus lands the frame the field first draws: asked for
+    // before, it names a widget the accessibility tree does not hold.
+    if ui
+        .data_mut(|data| data.remove_temp::<bool>(egui::Id::new(RENAME_FOCUS)))
+        .unwrap_or(false)
+    {
+        edit.request_focus();
+    }
     ui.painter().rect_stroke(
         edit.rect,
         egui::CornerRadius::same(R_LG as u8),
