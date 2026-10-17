@@ -31,6 +31,10 @@ pub struct ReplayResult {
     pub header: Header,
     /// Reconstructed conversation history, post-compaction.
     pub history: Vec<Message>,
+    /// The messages compaction summarized out of `history` that hold an
+    /// `agent` or `swarm` call or an agent's result, in file order. The
+    /// agents they record still ran, so a resume lists them.
+    pub compacted_agents: Vec<Message>,
     /// Active model id at the end of the session, taking any
     /// [`SessionEntry::ModelChange`] entries into account.
     pub model: String,
@@ -69,6 +73,14 @@ pub struct ReplayResult {
     /// Whether the file carries a `kage:agent` marker: it records an
     /// agent an `agent` or `swarm` call started, not a user's session.
     pub agent: bool,
+}
+
+impl ReplayResult {
+    /// Every message that records an agent the session started: the
+    /// ones compaction summarized away, then the history, in order.
+    pub fn agent_messages(&self) -> impl Iterator<Item = &Message> {
+        self.compacted_agents.iter().chain(&self.history)
+    }
 }
 
 /// Cumulative token totals replayed from a session file, plus the
@@ -117,6 +129,7 @@ pub fn replay(path: &Path) -> Result<ReplayResult, SessionError> {
     let mut agent = false;
     let mut plan_mode: Option<bool> = None;
     let mut history: Vec<Message> = Vec::new();
+    let mut compacted_agents: Vec<Message> = Vec::new();
     // `call_starts` tracks the wall-clock time each ToolCall was
     // appended; on a matching ToolResult we compute the elapsed
     // duration so resumed sessions can show real `Took Xms` instead
@@ -173,7 +186,11 @@ pub fn replay(path: &Path) -> Result<ReplayResult, SessionError> {
                     summarized: c.summarized,
                     kept: c.kept,
                 });
-                apply_compaction(&mut history, c);
+                compacted_agents.extend(
+                    apply_compaction(&mut history, c)
+                        .into_iter()
+                        .filter(records_agents),
+                );
             }
             SessionEntry::ModelChange(mc) => model = kage_core::canonical_model(&mc.model),
             SessionEntry::ThinkingLevelChange(t) => thinking_level = Some(t.level),
@@ -188,6 +205,7 @@ pub fn replay(path: &Path) -> Result<ReplayResult, SessionError> {
     Ok(ReplayResult {
         header,
         history,
+        compacted_agents,
         model,
         tool_durations,
         usage_total,
@@ -238,9 +256,19 @@ fn read_mode(c: &crate::Custom, swarm: &mut Option<bool>, plan: &mut Option<bool
     }
 }
 
+/// Whether `message` starts an agent or carries an agent's result.
+fn records_agents(message: &Message) -> bool {
+    message.content.iter().any(|block| match block {
+        Content::ToolCall { name, .. } => name == "agent" || name == "swarm",
+        Content::ToolResultBlock { output, .. } => kage_core::is_agent_result(output),
+        _ => false,
+    })
+}
+
 /// Replace the messages `compaction` summarized at the front of
-/// `history` with its summary, as the loop did.
-fn apply_compaction(history: &mut Vec<Message>, compaction: Compaction) {
+/// `history` with its summary, as the loop did, and give back the
+/// messages it replaced.
+fn apply_compaction(history: &mut Vec<Message>, compaction: Compaction) -> Vec<Message> {
     // Files from before shell output was recorded can count more
     // summarized messages than they hold, which would leave a result
     // without its call at the front.
@@ -251,18 +279,20 @@ fn apply_compaction(history: &mut Vec<Message>, compaction: Compaction) {
     {
         split += 1;
     }
-    history.splice(
-        ..split,
-        std::iter::once(Message {
-            role: Role::User,
-            content: vec![Content::Text {
-                text: compaction.summary,
-            }],
-            id: MessageId::new(),
-            parent: None,
-            ts: compaction.ts,
-        }),
-    );
+    history
+        .splice(
+            ..split,
+            std::iter::once(Message {
+                role: Role::User,
+                content: vec![Content::Text {
+                    text: compaction.summary,
+                }],
+                id: MessageId::new(),
+                parent: None,
+                ts: compaction.ts,
+            }),
+        )
+        .collect()
 }
 
 /// Reject a header whose schema version this build cannot interpret.
@@ -566,6 +596,62 @@ mod tests {
             .map(|m| m.role)
             .collect();
         assert_eq!(roles, [Role::User, Role::Assistant]);
+    }
+
+    #[test]
+    fn replay_keeps_the_agents_a_compaction_summarized() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("a.jsonl");
+        let entry = |role, content| {
+            SessionEntry::Message(MessageEntry {
+                id: EntryId::new(),
+                ts: Utc::now(),
+                message: Arc::new(Message::new(role, vec![content], None)),
+                usage: None,
+            })
+        };
+        write(
+            &path,
+            fresh_header(),
+            &[
+                message_entry(Role::User, "look around"),
+                entry(
+                    Role::Assistant,
+                    Content::ToolCall {
+                        id: ToolCallId::new("a1"),
+                        name: "agent".into(),
+                        input: serde_json::json!({"description": "explore"}),
+                    },
+                ),
+                entry(
+                    Role::ToolResult,
+                    Content::ToolResultBlock {
+                        call_id: ToolCallId::new("a1"),
+                        output: "<agent session=\"x\">found it</agent>".into(),
+                        is_error: false,
+                    },
+                ),
+                message_entry(Role::Assistant, "done"),
+                message_entry(Role::User, "kept"),
+                SessionEntry::Compaction(Compaction {
+                    id: EntryId::new(),
+                    ts: Utc::now(),
+                    kept: 1,
+                    summarized: 4,
+                    summary: "summary".into(),
+                }),
+            ],
+        );
+
+        let result = replay(&path).unwrap();
+        assert_eq!(result.history.len(), 2, "the summary and the kept prompt");
+        let roles: Vec<Role> = result.compacted_agents.iter().map(|m| m.role).collect();
+        assert_eq!(
+            roles,
+            [Role::Assistant, Role::ToolResult],
+            "the agent's call and result outlive the compaction"
+        );
+        assert_eq!(result.agent_messages().count(), 4);
     }
 
     #[test]

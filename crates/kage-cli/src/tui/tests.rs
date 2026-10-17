@@ -62,6 +62,7 @@ fn render_session_markdown_covers_roles_and_blocks() {
     let replay = kage_session::ReplayResult {
         header,
         history,
+        compacted_agents: Vec::new(),
         model: "anthropic:claude".into(),
         tool_durations: std::collections::HashMap::new(),
         usage_total: kage_session::ReplayUsage::default(),

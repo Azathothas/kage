@@ -5414,6 +5414,57 @@ fn loading_a_session_rebuilds_its_agents_at_every_depth() {
 }
 
 #[test]
+fn loading_a_compacted_session_still_lists_its_agents() {
+    let dir = tempfile::tempdir().unwrap();
+    let task = serde_json::json!({"description": "look around", "prompt": "list"});
+    let h = serve_agents(
+        vec![
+            tool_turn("call_agent", "agent", task),
+            text_turn("child done"),
+            text_turn("parent done"),
+        ],
+        dir.path(),
+        dir.path(),
+        default_agents(),
+    );
+    initialize(&h.client);
+    let prompt_end = prompt_async(&h.client, &h.session, "go");
+    prompt_end.recv_timeout(WAIT).unwrap().unwrap();
+    drain(&h.inbox);
+    h.client
+        .request("session/close", serde_json::json!({"sessionId": h.session}))
+        .unwrap();
+
+    // A compaction that summarizes the whole run, agent call included.
+    let path = kage_session::find_by_prefix(dir.path(), &h.session)
+        .unwrap()
+        .unwrap();
+    let summarized = kage_session::replay(&path).unwrap().history.len();
+    let mut writer = SessionWriter::open(&path).unwrap();
+    writer
+        .append(&SessionEntry::Compaction(kage_session::Compaction {
+            id: EntryId::new(),
+            ts: chrono::Utc::now(),
+            kept: 0,
+            summarized,
+            summary: "the agent looked around".into(),
+        }))
+        .unwrap();
+    drop(writer);
+
+    let cwd = dir.path().display().to_string();
+    let params = serde_json::json!({"sessionId": h.session, "cwd": cwd, "mcpServers": []});
+    h.client.request("session/load", params).unwrap();
+    let updates = drain(&h.inbox);
+    let agent = updates
+        .iter()
+        .find(|p| p["update"]["sessionUpdate"] == "subagent_update")
+        .unwrap_or_else(|| panic!("the compacted agent comes back: {updates:#?}"));
+    assert_eq!(agent["update"]["toolCallId"], "call_agent");
+    assert_eq!(agent["update"]["state"], "completed");
+}
+
+#[test]
 fn a_client_attaching_mid_swarm_hears_each_members_place() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().display().to_string();

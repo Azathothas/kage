@@ -19,7 +19,9 @@ use kage_core::sync::lock;
 use kage_core::{Content, LoopEvent, Message, MessageId, Role, SessionId, ToolCallId, ToolOutput};
 use kage_jsonrpc::RpcError;
 use kage_loop::TokenBudget;
-use kage_session::{EntryId, SessionEntry, SessionError, SessionReader, SessionWriter};
+use kage_session::{
+    EntryId, ReplayResult, SessionEntry, SessionError, SessionReader, SessionWriter,
+};
 
 use super::live::Live;
 
@@ -77,7 +79,7 @@ impl super::CliAcpAgent {
                 for update in replay_updates(&replay.history) {
                     ctx.update(update);
                 }
-                self.announce_restored(id, &replay.history, ctx);
+                self.announce_restored(id, &replay, ctx);
                 if let Some(title) = replay.title {
                     ctx.update(SessionUpdate::SessionInfoUpdate(SessionInfoUpdate {
                         title: Some(title),
@@ -105,7 +107,7 @@ impl super::CliAcpAgent {
             {
                 ctx.update(update);
             }
-            self.announce_restored(id, &replay.history, ctx);
+            self.announce_restored(id, &replay, ctx);
             for update in orphaned_agents(&self.host.sessions, id, &replay.history) {
                 ctx.update(SessionUpdate::SubagentUpdate(update));
             }
@@ -178,7 +180,7 @@ impl super::CliAcpAgent {
             for update in replay_updates(&replay.history) {
                 ctx.update(update);
             }
-            self.announce_restored(replay.header.session, &replay.history, ctx);
+            self.announce_restored(replay.header.session, &replay, ctx);
             if let Some(title) = replay.title {
                 ctx.update(SessionUpdate::SessionInfoUpdate(SessionInfoUpdate {
                     title: Some(title),
@@ -198,11 +200,11 @@ impl super::CliAcpAgent {
     pub(super) fn announce_restored(
         &self,
         root: SessionId,
-        history: &[Message],
+        replay: &ReplayResult,
         ctx: &PromptContext,
     ) {
         let live = lock(&self.host.live);
-        for (parent, update) in restored_subagents(&self.host.sessions, root, history, &live) {
+        for (parent, update) in restored_subagents(&self.host.sessions, root, replay, &live) {
             let update = SessionUpdate::SubagentUpdate(update);
             if parent == root {
                 ctx.update(update);
@@ -286,19 +288,19 @@ fn prompt_text(message: &Message) -> Option<&str> {
 }
 
 /// The subagent updates that rebuild the finished agents of the
-/// recorded session `root`: the ones its `history` started, then each
-/// agent's own from that agent's file in `dir`, parents first. Each
-/// comes with the session whose call started it. The records come
-/// from the `<agent>` and `<swarm>` results the engine wrote, so they
-/// survive a restart.
+/// recorded session `root`: the ones its `replay` started, compacted
+/// away or not, then each agent's own from that agent's file in `dir`,
+/// parents first. Each comes with the session whose call started it.
+/// The records come from the `<agent>` and `<swarm>` results the
+/// engine wrote, so they survive a restart.
 pub(super) fn restored_subagents(
     dir: &Path,
     root: SessionId,
-    history: &[Message],
+    replay: &ReplayResult,
     live: &Live,
 ) -> Vec<(SessionId, SubagentUpdate)> {
     let mut tree = AgentTree::default();
-    tree.restore(root, history);
+    tree.restore(root, replay.agent_messages());
     let mut pending: Vec<SessionId> = tree
         .under(root)
         .into_iter()
@@ -312,7 +314,7 @@ pub(super) fn restored_subagents(
         let Ok(replay) = kage_session::replay(&crate::build_session_path(dir, session)) else {
             continue;
         };
-        tree.restore(session, &replay.history);
+        tree.restore(session, replay.agent_messages());
         pending.extend(
             tree.under(session)
                 .into_iter()

@@ -873,7 +873,7 @@ impl CliAcpAgent {
             for update in super::sessions::replay_updates(&replay.history) {
                 ctx.update(update);
             }
-            self.announce_restored(id, &replay.history, ctx);
+            self.announce_restored(id, &replay, ctx);
         }
         // The turn in flight, unless the file already holds its message.
         let mut seen = HashMap::new();
