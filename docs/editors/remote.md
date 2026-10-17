@@ -274,8 +274,7 @@ The client works with any `kage` from 0.1.0 on. When the engine is
 older than the client needs, or lacks a feature it uses, the client
 says so in a banner.
 
-To build the bundle yourself (the full commands and caveats are in
-`gui/EGUI.md`):
+To build the bundle yourself:
 
 ```sh
 rustup target add wasm32-unknown-unknown

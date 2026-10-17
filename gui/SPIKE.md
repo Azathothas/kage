@@ -1,6 +1,6 @@
 # Desktop client: spike report and app shell notes
 
-Status: superseded by `gui/EGUI.md` (2026-10-13); the spike verdict and
+Status: superseded by the egui client (2026-10-13); the spike verdict and
 the shell notes below are kept as history. The spike window became
 the app shell and transports; see "The app shell and transports" (added
 2026-09-29), and the web build skeleton; see "The web build" (added
@@ -532,10 +532,8 @@ description names its Zed commit, and the crate metadata carries
 ## Decision: go
 
 > **Superseded (2026-10-13).** The migration this decision launched is
-> complete: the client runs on egui/eframe, and the standing record is
-> `gui/EGUI.md` (the pin/upgrade story, the web build and the measured
-> E10 baselines). Everything below is the historical spike verdict,
-> kept as written.
+> complete: the client runs on egui/eframe. Everything below is the
+> historical spike verdict, kept as written.
 
 The stack carries the client. Reasons:
 
