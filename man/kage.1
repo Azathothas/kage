@@ -101,6 +101,9 @@ Directory with the web client bundle to serve at `/` (built from `gui/`). Defaul
 \fB\-\-revoke\fR
 Forget the trust recorded for this directory
 .TP
+\fB\-\-source\fR\fI <SOURCE>\fR
+Read the catalog from here instead of the published feed. A `file://` URL reads a local file, which is how an offline run or a test pins a catalog. The `KAGE_CATALOG_URL` environment variable sets the same thing
+.TP
 \fIPROVIDER\fR
 Provider id: a `[providers.<id>]` entry, an override, or a builtin such as `openai` or `anthropic`
 .TP
@@ -175,10 +178,10 @@ Serve the Agent Client Protocol over WebSocket so remote editors and ACP clients
 Trust the current directory\*(Aqs `.kage/config.toml`. Until a project is trusted, its `mcp`, `permissions` and `plugins.capabilities` settings are ignored. Trust covers the values as they are now, so editing any of them asks again
 .TP
 \fBkage models\fR
-Manage the model catalog. kage ships a snapshot of models.dev; `kage models refresh` fetches a newer one into the model cache, which later runs use in place of the snapshot\*(Aqs model entries
+Manage the model catalog. kage ships a snapshot of the curated catalog; `kage models refresh` fetches a newer one into the model cache, which later runs use in place of the snapshot\*(Aqs model entries
 .TP
 \fBkage models refresh\fR
-Download the models.dev catalog into `$XDG_CACHE_HOME/kage/models.json`. It can add models and update their metadata, never provider endpoints or credentials. Only runs when asked; kage never refreshes on its own
+Download the curated model catalog into `$XDG_CACHE_HOME/kage/models.json`. It can add models and update their metadata, never provider endpoints or credentials. Only runs when asked; kage never refreshes on its own
 .TP
 \fBkage models fetch\fR
 List the models a provider endpoint serves. Names a saved provider to test its saved settings; the flags fill what the config leaves out, or probe an endpoint that is not configured

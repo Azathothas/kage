@@ -1,11 +1,11 @@
 //! Provider/model catalog.
 //!
 //! The bundled snapshot lives in `generated.rs`, which is rewritten by
-//! `cargo xtask refresh-models`. `kage models refresh` writes a newer
-//! copy of the models.dev catalog to the model cache; [`use_cache`]
-//! lays its model entries over the snapshot. This module exposes a
-//! hand-curated API on top so callers don't depend on the generator's
-//! exact shape.
+//! `cargo xtask refresh-models` from the curated catalog at
+//! [`source::CATALOG_URL`]. `kage models refresh` writes a newer copy of
+//! that same catalog to the model cache; [`use_cache`] lays its model
+//! entries over the snapshot. This module exposes a hand-curated API on
+//! top so callers don't depend on the generator's exact shape.
 //!
 //! Provider impls are still hardcoded in their respective modules
 //! (`anthropic`, `openai`, `gemini`, `compat`); the catalog only
@@ -111,9 +111,14 @@ pub fn use_cache(path: &Path) -> Result<usize, String> {
     Ok(count)
 }
 
-/// Download the models.dev catalog from `url`, cut it down to kage's
+/// Download the curated catalog from `url`, cut it down to kage's
 /// providers and write it to `dest`, replacing it atomically. Returns
 /// the number of models written.
+///
+/// Unlike the runtime path, this keeps the providers models.dev does not
+/// carry: [`CATALOG_URL`] publishes them, and pruning them away would
+/// leave Kenari and Command Code frozen at whatever shipped in
+/// `generated.rs`.
 ///
 /// # Errors
 ///
@@ -130,12 +135,16 @@ pub fn refresh(url: &str, dest: &Path) -> Result<usize, String> {
         .call()
         .map_err(|e| format!("get {url}: {e}"))?;
     let body = read_limited(response.into_body().into_reader(), DOWNLOAD_LIMIT)?;
-    let pruned = source::prune(&body)?;
-    let count = source::parse(&pruned)?.iter().map(|p| p.models.len()).sum();
+    let count = source::parse(&body)?.iter().map(|p| p.models.len()).sum();
     if let Some(dir) = dest.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     }
-    kage_core::fsutil::atomic_write(dest, pruned.as_bytes())
+    // The body is written unpruned. It came from the curated feed, which
+    // is already scoped to kage's providers and to tool-calling models;
+    // re-pruning would only risk dropping a provider on a schema change.
+    // `use_cache` parses through `SUPPORTED_PROVIDERS` either way, so an
+    // unexpected extra key is ignored rather than cached.
+    kage_core::fsutil::atomic_write(dest, body.as_bytes())
         .map_err(|e| format!("write {}: {e}", dest.display()))?;
     Ok(count)
 }

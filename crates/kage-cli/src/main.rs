@@ -272,9 +272,10 @@ pub(crate) enum Command {
         #[arg(long)]
         revoke: bool,
     },
-    /// Manage the model catalog. kage ships a snapshot of models.dev;
-    /// `kage models refresh` fetches a newer one into the model cache,
-    /// which later runs use in place of the snapshot's model entries.
+    /// Manage the model catalog. kage ships a snapshot of the curated
+    /// catalog; `kage models refresh` fetches a newer one into the model
+    /// cache, which later runs use in place of the snapshot's model
+    /// entries.
     Models {
         /// Models sub-action.
         #[command(subcommand)]
@@ -292,11 +293,18 @@ pub(crate) enum Command {
 
 #[derive(Subcommand, Debug)]
 pub(crate) enum ModelsAction {
-    /// Download the models.dev catalog into
+    /// Download the curated model catalog into
     /// `$XDG_CACHE_HOME/kage/models.json`. It can add models and update
     /// their metadata, never provider endpoints or credentials. Only
     /// runs when asked; kage never refreshes on its own.
-    Refresh,
+    Refresh {
+        /// Read the catalog from here instead of the published feed. A
+        /// `file://` URL reads a local file, which is how an offline run
+        /// or a test pins a catalog. The `KAGE_CATALOG_URL`
+        /// environment variable sets the same thing.
+        #[arg(long)]
+        source: Option<String>,
+    },
     /// List the models a provider endpoint serves. Names a saved
     /// provider to test its saved settings; the flags fill what the
     /// config leaves out, or probe an endpoint that is not configured.
@@ -445,7 +453,7 @@ pub(crate) fn run_subcommand(command: Command) -> ExitCode {
         }),
         Command::Trust { revoke } => trust::run(revoke),
         Command::Models { action } => match action {
-            ModelsAction::Refresh => run_models_refresh(),
+            ModelsAction::Refresh { source } => run_models_refresh(source.as_deref()),
             ModelsAction::Fetch {
                 provider,
                 base_url,
@@ -473,8 +481,8 @@ pub(crate) fn run_subcommand(command: Command) -> ExitCode {
 }
 
 /// Implement `kage models refresh`: download the catalog into the model
-/// cache.
-fn run_models_refresh() -> ExitCode {
+/// cache. `source` overrides the published feed for this run only.
+fn run_models_refresh(source: Option<&str>) -> ExitCode {
     let dest = match models_cache_path() {
         Ok(path) => path,
         Err(e) => {
@@ -482,8 +490,8 @@ fn run_models_refresh() -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let url = kage_provider::catalog::source::MODELS_DEV_URL;
-    match kage_provider::catalog::refresh(url, &dest) {
+    let url = source.map_or_else(kage_provider::catalog::source::catalog_url, str::to_owned);
+    match kage_provider::catalog::refresh(&url, &dest) {
         Ok(count) => {
             println!("wrote {count} models to {}", dest.display());
             ExitCode::SUCCESS

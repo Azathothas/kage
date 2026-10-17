@@ -33,13 +33,14 @@ jobs:
       # gate).
       - run: cargo xtask gen-lua-types --check
       # Re-render crates/kage-provider/src/catalog/generated.rs from
-      # the committed upstream snapshot, so hand edits to the catalog
-      # and unregenerated generator changes fail here. The snapshot is
-      # rewritten by refresh-models whenever generated.rs is, keeping
-      # the gate offline and deterministic.
+      # the committed catalog, so hand edits to the snapshot and
+      # unregenerated generator changes fail here. The catalog is
+      # written by refresh-models whenever generated.rs is, keeping the
+      # gate offline and deterministic. The catalog itself is built by
+      # QaidVoid/kage-models; see that repo for its own drift gate.
       - run: >-
           cargo xtask refresh-models --check
-          --source file://xtask/fixtures/models.json
+          --source file://xtask/fixtures/catalog.json
       # Re-render man/kage.1 from the clap CLI definition and diff it
       # against the committed page, so flag changes force a refresh
       # before release.yml ships a stale page in every archive. The

@@ -7,33 +7,63 @@
 //! %-escapes decoded before the check. The assets hold no secret, so
 //! the token still guards `/acp` only.
 //!
-//! The bundle makes zero non-self requests: the page loads `boot.js`,
-//! the glue and the module from the same origin, and the icons are
-//! fetched same-origin on first use. The cross-origin isolation
-//! headers on the page and the module follow the measurement of the
-//! web build (see `gui/SPIKE.md`): the page runs identically with and
-//! without them, and they are sent so a future atomics build can use
-//! `SharedArrayBuffer` without a serving change.
+//! The bundle makes exactly one non-self request, to the model catalog:
+//! the page loads `boot.js`, the glue and the module from its own
+//! origin and fetches the icons same-origin on first use, while the
+//! model list and each provider's logo come from the catalog's origin,
+//! which [`content_security_policy`] allows by name. The cross-origin
+//! isolation headers on the page and the module follow the measurement
+//! of the web build (see `gui/SPIKE.md`): the page runs identically
+//! with and without them, and they are sent so a future atomics build
+//! can use `SharedArrayBuffer` without a serving change.
 
 use std::io::{Read as _, Write as _};
 use std::net::{Shutdown, TcpStream};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-/// The Content-Security-Policy of every asset response. The page, the
-/// glue and the module are all same-origin (`script-src 'self'`), and
-/// `'wasm-unsafe-eval'` is the minimum WebAssembly compilation needs;
-/// styles come from same-origin sheets, images from same-origin or
-/// data URLs, and the WebSocket dial is `connect-src 'self'`. The four
-/// hashes admit the exact `style` attributes of the GPUI web
-/// platform's safe-area probes, one per edge, and nothing else.
-pub(crate) const CONTENT_SECURITY_POLICY: &str = "default-src 'none'; script-src 'self' \
+/// The Content-Security-Policy of every asset response, minus the
+/// catalog origin. The page, the glue and the module are all
+/// same-origin (`script-src 'self'`), and `'wasm-unsafe-eval'` is the
+/// minimum WebAssembly compilation needs; styles come from same-origin
+/// sheets, images from same-origin or data URLs. The four hashes admit
+/// the exact `style` attributes of the GPUI web platform's safe-area
+/// probes, one per edge, and nothing else.
+///
+/// [`content_security_policy`] appends the one origin the bundle does
+/// reach off itself: the catalog, for the model list and a provider's
+/// logo.
+const CSP_BASE: &str = "default-src 'none'; script-src 'self' \
      'wasm-unsafe-eval'; style-src 'self' 'unsafe-hashes' \
      'sha256-f7k/zkE0F5tLJydN2gyZQ4AOODzhaXhLLMp11FaIh5k=' \
      'sha256-tUiyeK8Byfwc/oNxmI63Upo8EZy+Z4dQfKT3FPt4Qq4=' \
      'sha256-MnlFZhszarHl/R/A2EWXa+4M/Hs8g3j+PBNaIrrscZ8=' \
-     'sha256-KVR0sJO9NDObqCUVDwC9L9fIyWNaULEbUQPAXIyMyx4='; img-src 'self' data:; \
-     connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+     'sha256-KVR0sJO9NDObqCUVDwC9L9fIyWNaULEbUQPAXIyMyx4='";
+
+/// The policy every asset response carries.
+///
+/// The catalog's origin joins `img-src` and `connect-src`, which is the
+/// only relaxation in it and the only cross-origin request the bundle
+/// makes: the model list, and a provider's logo. Reading the origin
+/// from [`kage_core::catalog_origin`] rather than repeating the catalog
+/// URL here means an override that repoints the catalog also repoints
+/// what the page is allowed to reach, so `KAGE_CATALOG_URL` cannot leave
+/// the page fetching a list it is then blocked from loading.
+///
+/// A `file://` or malformed catalog contributes no origin, and the
+/// policy falls back to same-origin alone.
+pub(crate) fn content_security_policy() -> String {
+    let Some(origin) = kage_core::catalog_origin() else {
+        return format!(
+            "{CSP_BASE}; img-src 'self' data:; connect-src 'self'; base-uri 'none'; \
+             form-action 'none'; frame-ancestors 'none'"
+        );
+    };
+    format!(
+        "{CSP_BASE}; img-src 'self' data: {origin}; connect-src 'self' {origin}; \
+         base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+    )
+}
 
 /// How long a rejected asset connection may take to collect its reply
 /// before the socket is dropped.
@@ -162,11 +192,12 @@ fn write_reply(
         "HTTP/1.1 {status} {reason}\r\n\
          Content-Type: {content_type}\r\n\
          Content-Length: {}\r\n\
-         Content-Security-Policy: {CONTENT_SECURITY_POLICY}\r\n\
+         Content-Security-Policy: {}\r\n\
          X-Content-Type-Options: nosniff\r\n\
          Referrer-Policy: no-referrer\r\n\
          Cache-Control: {cache_control}\r\n",
         body.len(),
+        content_security_policy(),
     );
     if isolated(content_type) {
         head.push_str("Cross-Origin-Opener-Policy: same-origin\r\n");
@@ -305,6 +336,57 @@ fn is_safe_segment(segment: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The catalog origin the CSP allows, checked against a catalog
+    /// override so the relaxation cannot quietly widen. The env is read
+    /// here rather than in the serving path so the test can vary it.
+    #[test]
+    fn the_policy_names_the_catalog_origin_and_nothing_wider() {
+        let policy = content_security_policy();
+        assert!(
+            policy.contains("connect-src 'self'"),
+            "the WebSocket dial must stay allowed: {policy}"
+        );
+        assert!(
+            policy.contains("img-src 'self' data:"),
+            "same-origin and data images must stay allowed: {policy}"
+        );
+        assert!(
+            !policy.contains("connect-src *"),
+            "the relaxation must not become a wildcard: {policy}"
+        );
+        assert!(
+            !policy.contains("img-src *"),
+            "the relaxation must not become a wildcard: {policy}"
+        );
+        assert!(
+            policy.contains("script-src 'self' 'wasm-unsafe-eval'"),
+            "scripts stay same-origin whatever the catalog is: {policy}"
+        );
+        assert!(policy.contains("base-uri 'none'"), "{policy}");
+        assert!(policy.contains("frame-ancestors 'none'"), "{policy}");
+    }
+
+    /// The origin extraction the policy depends on is tested in
+    /// `kage-core`, beside the catalog URL it reads. Here it is enough
+    /// that the policy names whatever that returns.
+    #[test]
+    fn the_allowed_origin_follows_the_catalog_override() {
+        let policy = content_security_policy();
+        match kage_core::catalog_origin() {
+            Some(origin) => {
+                assert!(
+                    policy.contains(&format!("connect-src 'self' {origin};")),
+                    "{policy}"
+                );
+                assert!(
+                    policy.contains(&format!("img-src 'self' data: {origin};")),
+                    "{policy}"
+                );
+            }
+            None => assert!(policy.contains("connect-src 'self';"), "{policy}"),
+        }
+    }
 
     #[test]
     fn safe_segments_accept_spaces_quotes_plus_and_unicode() {

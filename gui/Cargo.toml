@@ -50,6 +50,9 @@ egui_virtual_list = "0.12"
 # `default-fancy` flavor keeps the fancy regex engine.
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 kage-client = { path = "../crates/kage-client" }
+# The catalog's origin, so a provider's logo is read from the same place
+# the catalog is rather than from a URL repeated here.
+kage-core = { path = "../crates/kage-core" }
 async-channel = "2.5"
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
@@ -125,6 +128,10 @@ web-sys = { version = "=0.3.106", features = [
     "Location",
     "MessageEvent",
     "Node",
+    "Request",
+    "RequestInit",
+    "RequestMode",
+    "Response",
     "Storage",
     "WebSocket",
     "Window",
