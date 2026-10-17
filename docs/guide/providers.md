@@ -52,11 +52,10 @@ addressable as `<id>:<model>`:
 | `commandcode-claude`    | Command Code (Claude)         | `CMD_API_KEY`        | `https://api.commandcode.ai/provider`         |
 | `kenari`                | Kenari                        | `KENARI_API_KEY`     | `https://kenari.id/v1`                        |
 | `kenari-claude`         | Kenari (Claude)               | `KENARI_API_KEY`     | `https://kenari.id`                           |
-| `opencode`              | OpenCode Zen                  | `OPENCODE_API_KEY`   | `https://opencode.ai/zen/v1`                  |
 | `opencode-go`           | OpenCode Go                   | `OPENCODE_API_KEY`   | `https://opencode.ai/zen/go/v1`               |
 
 The four `xiaomi*` ids share one key, and so do the two coding plans,
-the two `commandcode` ids, the two `kenari` ids and the two `opencode`
+the two `commandcode` ids and the two `kenari`
 ids. `zai` is billed apart from the coding
 plans and needs its own key.
 
@@ -164,22 +163,17 @@ billed to your balance. Every catalog refresh rebuilds the list from
 Kenari's plans and published model list, taking names and release
 dates from models.dev where it lists the model.
 
-### OpenCode Zen and Go
+### OpenCode Go
 
-OpenCode fronts a pooled model catalog through two gateways that read
-one key: [Zen](https://opencode.ai/docs/zen), the standard endpoint,
-and [Go](https://opencode.ai/docs/go), a cheaper relay with a smaller
-list:
+[OpenCode](https://opencode.ai/docs/go) fronts a pooled model catalog
+through its Go gateway, a cheaper relay with a smaller list:
 
 | id            | endpoint                        |
 | ------------- | ------------------------------- |
-| `opencode`    | `https://opencode.ai/zen/v1`    |
 | `opencode-go` | `https://opencode.ai/zen/go/v1` |
 
-Both read the same key: `OPENCODE_API_KEY`, or the key saved with
-`kage auth login opencode`. A key saved with
-`kage auth login opencode-go` is used for Go instead, when there is
-one. Models are addressed as `opencode/glm-5.3-flash` or
+It reads `OPENCODE_API_KEY`, or the key saved with
+`kage auth login opencode-go`. Models are addressed as
 `opencode-go/grok-4.7`.
 
 ## credentials

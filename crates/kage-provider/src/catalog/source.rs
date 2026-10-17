@@ -97,7 +97,6 @@ pub const SUPPORTED_PROVIDERS: &[ProviderMap] = &[
     // their own Messages-format kage id.
     ProviderMap::manual("kenari"),
     ProviderMap::manual("kenari-claude"),
-    ProviderMap::same("opencode"),
     ProviderMap::same("opencode-go"),
     ProviderMap::same("google"),
 ];

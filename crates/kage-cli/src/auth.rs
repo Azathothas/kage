@@ -251,15 +251,14 @@ impl AuthStore {
     /// Look up a provider's full [`Credential`]. `zhipuai-coding-plan`
     /// falls back to the credential saved for `zai-coding-plan`, since
     /// one coding plan key works on both endpoints; the same applies
-    /// to `commandcode-claude` and `commandcode`, to `kenari-claude`
-    /// and `kenari`, and to `opencode-go` and `opencode`.
+    /// to `commandcode-claude` and `commandcode`, and to `kenari-claude`
+    /// and `kenari`.
     #[must_use]
     pub fn credential(&self, provider: &str) -> Option<&Credential> {
         self.providers.get(provider).or_else(|| match provider {
             "zhipuai-coding-plan" => self.providers.get("zai-coding-plan"),
             "commandcode-claude" => self.providers.get("commandcode"),
             "kenari-claude" => self.providers.get("kenari"),
-            "opencode-go" => self.providers.get("opencode"),
             _ => None,
         })
     }
@@ -339,8 +338,8 @@ pub(crate) fn expiry_label(at: DateTime<Utc>, now: DateTime<Utc>) -> String {
 /// coding plans are billed separately, so `zai` takes its own key;
 /// the coding plans share `ZAI_CODING_API_KEY`, the four `xiaomi*`
 /// ids all share `XIAOMI_API_KEY`, both `commandcode` ids share
-/// `CMD_API_KEY`, both `kenari` ids share `KENARI_API_KEY`, and both
-/// `opencode*` ids share `OPENCODE_API_KEY`.
+/// `CMD_API_KEY`, both `kenari` ids share `KENARI_API_KEY`, and
+/// `opencode-go` takes `OPENCODE_API_KEY`.
 pub const KNOWN_PROVIDERS: &[&str] = &[
     "anthropic",
     "openai",
@@ -365,7 +364,6 @@ pub const KNOWN_PROVIDERS: &[&str] = &[
     "commandcode-claude",
     "kenari",
     "kenari-claude",
-    "opencode",
     "opencode-go",
 ];
 
@@ -397,8 +395,7 @@ pub fn env_var_for(provider: &str) -> &'static str {
         "commandcode" | "commandcode-claude" => "CMD_API_KEY",
         // Likewise one Kenari key covers both of its providers.
         "kenari" | "kenari-claude" => "KENARI_API_KEY",
-        // One OpenCode key works on both the Zen and Go gateways.
-        "opencode" | "opencode-go" => "OPENCODE_API_KEY",
+        "opencode-go" => "OPENCODE_API_KEY",
         _ => "",
     }
 }

@@ -218,15 +218,8 @@ pub const COMPAT_PROVIDERS: &[CompatProvider] = &[
         base_url: "https://kenari.id",
         kind: CompatKind::Anthropic,
     },
-    // OpenCode's two gateways front the same model pool behind one
-    // `OPENCODE_API_KEY` credential: Zen is the standard endpoint, Go
-    // the cheaper relay with a smaller list.
-    CompatProvider {
-        id: "opencode",
-        display_name: "OpenCode Zen",
-        base_url: "https://opencode.ai/zen/v1",
-        kind: CompatKind::OpenAi,
-    },
+    // OpenCode's Go gateway fronts its pooled model catalog behind
+    // one `OPENCODE_API_KEY` credential.
     CompatProvider {
         id: "opencode-go",
         display_name: "OpenCode Go",
