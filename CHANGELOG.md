@@ -1,15 +1,4 @@
 # Changelog
-
-## [0.3.0-unreleased]
-
-### Changes
-
-- *(gui)* Rewrite the desktop client on egui/eframe (glow renderer, Wayland and X11, AccessKit). The features, behavior, binary name and `kage serve --web-dir` contract are unchanged; the framework-free spine (transports, store logic, gate, prefs) carried over as-is.
-- *(gui)* Web build moves to the stable toolchain: no nightly, no icon-copy step; `wasm-bindgen` 0.2.129 pinned to the crate.
-- *(gui)* Ship smaller and start faster: release binary 21.4 MB stripped (was 48.7 MB), cold start 148 ms on Wayland (was 129 ms), clean debug build 24.6s (was 33.8s), 30 Hz streaming holds every due tick. Idle RSS at 5,000 transcript rows is 157 MB against the old 104.6 MB, accepted as the stack's floor (measured, no leak); the gzipped wasm is 5.08 MiB. Numbers and method: `specs/epics/E10-perf-and-size.md`.
-- *(gui)* Frame-time recording (`KAGE_FRAME_TIMES`) and an RSS sampler (`gui/scripts/rss_sampler.py`) join the repo as the standing measurement harness.
-- *(packaging)* The Linux `.onelf` no longer bundles a Vulkan loader or drivers; the client renders through OpenGL.
-
 ## [0.3.0](https://github.com/QaidVoid/kage/compare/v0.2.2...v0.3.0) - 2026-10-10
 
 ### Features
