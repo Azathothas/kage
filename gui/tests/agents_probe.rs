@@ -197,7 +197,7 @@ fn a_running_agent_opens_in_the_workbench_and_streams_there() {
 }
 
 #[test]
-fn an_open_agent_lets_the_workbench_narrow() {
+fn an_open_agent_holds_the_workbench_in_place_and_lets_it_narrow() {
     let mut harness = harness();
     opened(&mut harness);
     for (session, update_) in [
@@ -237,7 +237,7 @@ fn an_open_agent_lets_the_workbench_narrow() {
             CHILD,
             serde_json::json!({
                 "sessionUpdate": "agent_message_chunk",
-                "content": {"type": "text", "text": "Found them in `src/some/deeply/nested/module/path/file.rs`.\n\n```rust\nlet listing = std::fs::read_dir(\"src\").expect(\"the source directory is readable\");\n```\n\n| file | lines |\n| --- | --- |\n| src/main.rs | 120 |"}
+                "content": {"type": "text", "text": "Found them in `src/some/deeply/nested/module/path/file.rs`.\n\n```rust\nlet listing = std::fs::read_dir(\"src\").expect(\"the source directory is readable\");\n```\n\n| file | lines |\n| --- | --- |\n| src/main.rs | 120 |\n| src/lib.rs | 80 and a note long enough to run far past the panel's edge, the way an agent's findings table does when one cell carries a paragraph of evidence with paths and line numbers in it, over and over again until the row is wider than any window |"}
             }),
         ),
     ] {
@@ -258,7 +258,17 @@ fn an_open_agent_lets_the_workbench_narrow() {
             .expect("the workbench docks at this width")
             .outer_rect
     };
-    let edge = panel(&harness).left_center();
+    // A row wider than the panel once fed back into the panel's width
+    // each frame, until the panel ran off the window.
+    for _ in 0..30 {
+        harness.step();
+    }
+    let opened = panel(&harness);
+    assert!(
+        opened.right() <= 1280.0 && opened.width() < 470.0,
+        "the open agent keeps the panel where it was, got {opened:?}"
+    );
+    let edge = opened.left_center();
     let far = edge + egui::vec2(600.0, 0.0);
     harness.hover_at(edge);
     harness.step();

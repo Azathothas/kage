@@ -111,6 +111,16 @@ impl Panels {
 /// The divider between two columns, its own pixel past the panel.
 const DIVIDER_W: f32 = 1.0;
 
+/// Draws `body` on a child that lays out nothing in the panel itself,
+/// so contents wider than the panel never resize it. Only the user's
+/// drag does, and the panel's clip still bounds what the child paints.
+fn contained(ui: &mut egui::Ui, body: &impl Fn(&mut egui::Ui)) {
+    let room = ui.max_rect();
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(room));
+    body(&mut child);
+    ui.allocate_rect(room, egui::Sense::hover());
+}
+
 /// Lays out the three panels and calls `chat` for the middle column,
 /// `sidebar` for the left panel's contents and `workbench` for the
 /// right's. Each callback draws inside the panel's frame.
@@ -129,6 +139,13 @@ pub fn show(
     // drew them: the sidebar the `sidebar` surface, the workbench the
     // `well`, and the chat keeps the app background.
     let palette = Palette::active_of(ui.ctx());
+    // Neither side panel may take the chat's minimum, however wide its
+    // contents ask to be, or the chat collapses and the panel runs
+    // off the window.
+    let width = ui.available_width();
+    let docked = panels.workbench_visible && !mid;
+    let side_min = CHAT_MIN_W.min(SIDE_W);
+    let mut side_taken = 0.0;
     if panels.sidebar_visible && !narrow {
         // The reference's sidebar keeps its full width and the divider
         // takes its own pixel past it, crisp, where egui would draw a
@@ -137,7 +154,11 @@ pub fn show(
             .resizable(true)
             .show_separator_line(false)
             .default_size(panels.sidebar_width + DIVIDER_W)
-            .size_range(CHAT_MIN_W.min(SIDE_W) + DIVIDER_W..=f32::MAX)
+            .size_range(
+                side_min + DIVIDER_W
+                    ..=(width - CHAT_MIN_W - if docked { WORKBENCH_MIN_W } else { 0.0 })
+                        .max(side_min + DIVIDER_W),
+            )
             .frame(
                 egui::Frame::side_top_panel(ui.style())
                     .fill(palette.sidebar)
@@ -149,9 +170,7 @@ pub fn show(
                         bottom: SP_4 as i8,
                     }),
             )
-            .show(ui, |ui| {
-                sidebar(ui);
-            });
+            .show(ui, |ui| contained(ui, &sidebar));
         let rect = panel.response.rect;
         ui.painter().rect_filled(
             egui::Rect::from_min_max(
@@ -161,15 +180,16 @@ pub fn show(
             0.0,
             palette.line,
         );
-        panels.sidebar_width = (rect.width() - DIVIDER_W).max(CHAT_MIN_W);
+        panels.sidebar_width = (rect.width() - DIVIDER_W).max(side_min);
+        side_taken = rect.width();
     }
 
-    if panels.workbench_visible && !mid {
+    if docked {
         let panel = egui::Panel::right("workbench")
             .resizable(true)
             .show_separator_line(false)
             .default_size(panels.workbench_width)
-            .size_range(WORKBENCH_MIN_W..=f32::MAX)
+            .size_range(WORKBENCH_MIN_W..=(width - side_taken - CHAT_MIN_W).max(WORKBENCH_MIN_W))
             .frame(
                 egui::Frame::NONE
                     .fill(palette.sidebar)
@@ -178,9 +198,7 @@ pub fn show(
                         ..Default::default()
                     }),
             )
-            .show(ui, |ui| {
-                workbench(ui);
-            });
+            .show(ui, |ui| contained(ui, &workbench));
         let rect = panel.response.rect;
         ui.painter().rect_filled(
             egui::Rect::from_min_max(
