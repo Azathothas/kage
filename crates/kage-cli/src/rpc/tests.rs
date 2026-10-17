@@ -21,7 +21,9 @@ use kage_loop::{AgentContext, LoopConfig};
 use kage_mcp::McpError;
 use kage_provider::testing::MockProvider;
 use kage_provider::{ProviderError, ProviderEvent, ProviderRegistry};
-use kage_session::{EntryId, FORMAT_VERSION, Header, MessageEntry, SessionEntry, SessionWriter};
+use kage_session::{
+    EntryId, FORMAT_VERSION, Header, MessageEntry, SessionEntry, SessionError, SessionWriter,
+};
 use kage_tools::builtin_registry;
 
 use crate::engine::{AgentSetup, Commander};
@@ -5440,7 +5442,24 @@ fn loading_a_compacted_session_still_lists_its_agents() {
         .unwrap()
         .unwrap();
     let summarized = kage_session::replay(&path).unwrap().history.len();
-    let mut writer = SessionWriter::open(&path).unwrap();
+    // The close reply races the engine dropping the session's writer,
+    // so wait the window out the way the hosted load path does.
+    let mut writer = {
+        let deadline = std::time::Instant::now() + WAIT;
+        loop {
+            match SessionWriter::open(&path) {
+                Ok(writer) => break writer,
+                Err(SessionError::Locked { .. }) => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "the closed session's file stays locked"
+                    );
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(err) => panic!("{err}"),
+            }
+        }
+    };
     writer
         .append(&SessionEntry::Compaction(kage_session::Compaction {
             id: EntryId::new(),
