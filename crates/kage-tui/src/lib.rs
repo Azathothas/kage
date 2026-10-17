@@ -28,7 +28,7 @@ pub mod view;
 
 pub use app::{
     AgentLoader, App, AppExit, OptionSetter, PermissionDecision, PluginDialog, PluginRefresh,
-    RunRequest, SessionLister,
+    RunRequest, SessionLister, StoredAgent,
 };
 pub use buffer::{Block, Buffer};
 pub use cmdline::{CommandLine, CommandLineEvent};

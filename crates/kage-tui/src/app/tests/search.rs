@@ -259,6 +259,7 @@ fn idle_esc_clears_the_search_and_a_session_change_drops_it() {
                 title: None,
                 messages: Vec::new(),
                 compaction: None,
+                compacted_agents: Vec::new(),
             }
             .into(),
         ],

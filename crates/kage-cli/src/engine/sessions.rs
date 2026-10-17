@@ -307,6 +307,7 @@ impl super::Dispatcher {
             recorder,
             None,
             None,
+            Vec::new(),
             format!("new session: {}", short_id(new_id)),
         );
     }
@@ -387,6 +388,7 @@ impl super::Dispatcher {
             recorder,
             replay.title,
             replay.compaction,
+            replay.compacted_agents.into_iter().map(Arc::new).collect(),
             message,
         );
         if let Some(note) = fallback {
@@ -429,7 +431,10 @@ impl super::Dispatcher {
             cx,
             recorder,
             stored.as_ref().and_then(|s| s.title.clone()),
-            stored.and_then(|s| s.compaction),
+            stored.as_ref().and_then(|s| s.compaction),
+            stored
+                .map(|s| s.compacted_agents.into_iter().map(Arc::new).collect())
+                .unwrap_or_default(),
             format!("cloned session: {}", short_id(new_id)),
         );
     }
@@ -509,6 +514,7 @@ impl super::Dispatcher {
         recorder: super::Recorder,
         title: Option<String>,
         compaction: Option<CompactionCounts>,
+        compacted_agents: Vec<Arc<kage_core::Message>>,
         message: String,
     ) {
         let path = recorder.path().to_path_buf();
@@ -564,6 +570,7 @@ impl super::Dispatcher {
                 title,
                 messages,
                 compaction,
+                compacted_agents,
             },
         );
         self.bus.publish(new, HostEvent::StateChanged { state });

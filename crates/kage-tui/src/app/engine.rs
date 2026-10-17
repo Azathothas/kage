@@ -220,8 +220,9 @@ impl App {
             HostEvent::SessionChanged {
                 messages,
                 compaction,
+                compacted_agents,
                 ..
-            } => self.session_changed(&messages, compaction),
+            } => self.session_changed(&messages, &compacted_agents, compaction),
             HostEvent::ShellOutput { command, tail } => {
                 show_running_shell(&self.root_buffer, &command, &tail);
             }
@@ -412,13 +413,18 @@ impl App {
     }
 
     /// Lists the agents a resumed conversation started, at every depth:
-    /// `root`'s own agents come from `messages`, and each agent's own
-    /// agents from that agent's stored transcript, read through the
-    /// agent loader. Their transcripts are not kept; opening one reads
-    /// it again.
-    fn restore_agents(&mut self, root: SessionId, messages: &[Arc<kage_core::Message>]) {
+    /// `root`'s own agents come from `compacted` and `messages`, and
+    /// each agent's own agents from that agent's stored transcript,
+    /// read through the agent loader. Their transcripts are not kept;
+    /// opening one reads it again.
+    fn restore_agents(
+        &mut self,
+        root: SessionId,
+        compacted: &[Arc<kage_core::Message>],
+        messages: &[Arc<kage_core::Message>],
+    ) {
         self.agents
-            .restore(root, messages.iter().map(AsRef::as_ref));
+            .restore(root, compacted.iter().chain(messages).map(AsRef::as_ref));
         let Some(load) = self.agent_loader.as_ref() else {
             return;
         };
@@ -436,7 +442,13 @@ impl App {
             let Some(own) = load(session) else {
                 continue;
             };
-            self.agents.restore(session, own.iter().map(AsRef::as_ref));
+            self.agents.restore(
+                session,
+                own.compacted_agents
+                    .iter()
+                    .chain(&own.messages)
+                    .map(AsRef::as_ref),
+            );
             pending.extend(
                 self.agents
                     .under(session)
@@ -453,7 +465,9 @@ impl App {
         if !self.agent_buffers.contains_key(&session)
             && self.agents.get(session).is_some_and(|n| n.restored)
         {
-            let Some(messages) = self.agent_loader.as_ref().and_then(|load| load(session)) else {
+            let Some(crate::app::StoredAgent { messages, .. }) =
+                self.agent_loader.as_ref().and_then(|load| load(session))
+            else {
                 self.notify("the agent's transcript could not be read");
                 return;
             };
@@ -795,6 +809,7 @@ impl App {
     fn session_changed(
         &mut self,
         messages: &[std::sync::Arc<kage_core::Message>],
+        compacted_agents: &[std::sync::Arc<kage_core::Message>],
         compaction: Option<kage_core::protocol::CompactionCounts>,
     ) {
         // The common resume keeps the main view focused, so
@@ -812,7 +827,11 @@ impl App {
         self.agents.clear();
         self.agent_buffers.clear();
         self.swarm_oneshot = None;
-        self.restore_agents(self.active_session.unwrap_or_default(), messages);
+        self.restore_agents(
+            self.active_session.unwrap_or_default(),
+            compacted_agents,
+            messages,
+        );
         let durations = crate::events::tool_durations(messages);
         {
             let mut buf = lock(&self.root_buffer);

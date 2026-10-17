@@ -292,6 +292,7 @@ fn start_sessions_are_listed_on_session_changes_only() {
                 title: None,
                 messages: Vec::new(),
                 compaction: None,
+                compacted_agents: Vec::new(),
             },
         ))
         .unwrap();

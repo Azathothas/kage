@@ -460,6 +460,7 @@ fn the_session_picker_and_tree_mark_the_session_on_screen() {
                 title: None,
                 messages: Vec::new(),
                 compaction: None,
+                compacted_agents: Vec::new(),
             }
             .into(),
         ],

@@ -488,8 +488,17 @@ pub type SessionLister = Box<dyn Fn(bool) -> Vec<PickItem> + Send + 'static>;
 /// Reads the stored transcript of an agent session, for agents listed
 /// from a resumed session's history. `None` when the file is missing
 /// or unreadable.
-pub type AgentLoader =
-    Box<dyn Fn(kage_core::SessionId) -> Option<Vec<Arc<kage_core::Message>>> + Send + 'static>;
+pub type AgentLoader = Box<dyn Fn(kage_core::SessionId) -> Option<StoredAgent> + Send + 'static>;
+
+/// An agent session's stored transcript, as an [`AgentLoader`] reads it.
+#[derive(Debug, Clone, Default)]
+pub struct StoredAgent {
+    /// The transcript, post-compaction, as the agent's view shows it.
+    pub messages: Vec<Arc<kage_core::Message>>,
+    /// The messages compaction summarized out of `messages` that start
+    /// agents or carry their results, oldest first.
+    pub compacted_agents: Vec<Arc<kage_core::Message>>,
+}
 
 /// Sets an option with source `runtime` on behalf of a command or the
 /// settings dialog. The host routes it through the plugin runtime so
