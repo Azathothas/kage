@@ -47,9 +47,9 @@ pub struct Entry {
     /// change is not a parse.
     last_text: Option<String>,
     /// The top-level blocks of `last_text`, each as the source the
-    /// viewer renders and the block the transcript renders itself, or
-    /// `None` for the viewer's.
-    blocks: Vec<(String, Option<super::prose::Block>)>,
+    /// viewer renders, the block the transcript renders itself, or
+    /// `None` for the viewer's, and whether the block is a table.
+    blocks: Vec<(String, Option<super::prose::Block>, bool)>,
 }
 
 /// The parsed form of the transcript, keyed by the entry's id.
@@ -88,7 +88,11 @@ impl Pipeline {
                 .into_iter()
                 .map(|range| {
                     let source = &text[range];
-                    (upright(source), super::prose::parse(source))
+                    (
+                        upright(source),
+                        super::prose::parse(source),
+                        is_table(source),
+                    )
                 })
                 .collect();
             self.parses.record(id);
@@ -118,17 +122,29 @@ impl Pipeline {
             ui.spacing_mut().item_spacing.y = 0.0;
             let palette = crate::theme::Palette::active_of(ui.ctx());
             let mut prev = None;
-            for (n, (source, block)) in entry.blocks.iter().enumerate() {
+            for (n, (source, block, table)) in entry.blocks.iter().enumerate() {
                 if n > 0 {
                     ui.add_space(super::prose::gap_after(prev));
                 }
                 ui.push_id(n, |ui| match block {
                     Some(block) if registered => super::prose::show(ui, block, palette),
                     _ => {
-                        egui_commonmark::CommonMarkViewer::new()
-                            .syntax_theme_light(THEME_DAWN)
-                            .syntax_theme_dark(THEME_SHADOW)
-                            .show(ui, &mut entry.cache, source);
+                        let mut viewer = |ui: &mut egui::Ui| {
+                            egui_commonmark::CommonMarkViewer::new()
+                                .syntax_theme_light(THEME_DAWN)
+                                .syntax_theme_dark(THEME_SHADOW)
+                                .show(ui, &mut entry.cache, source);
+                        };
+                        // A table's cells do not wrap, so a wide one
+                        // scrolls sideways inside the column instead of
+                        // pushing the column wider.
+                        if *table {
+                            egui::ScrollArea::horizontal()
+                                .auto_shrink([false, true])
+                                .show(ui, viewer);
+                        } else {
+                            viewer(ui);
+                        }
                     }
                 });
                 prev = block.as_ref();
@@ -177,6 +193,16 @@ fn blocks(text: &str) -> Vec<Range<usize>> {
         }
     }
     if out.is_empty() { whole() } else { out }
+}
+
+/// Whether `source` is a table block.
+fn is_table(source: &str) -> bool {
+    use pulldown_cmark::{Event, Options, Parser, Tag};
+
+    matches!(
+        Parser::new_ext(source, Options::ENABLE_TABLES).next(),
+        Some(Event::Start(Tag::Table(_)))
+    )
 }
 
 /// `source` with its emphasis markers dropped, so the viewer sets
