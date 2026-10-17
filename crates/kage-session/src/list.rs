@@ -25,7 +25,7 @@ use std::time::SystemTime;
 
 use chrono::{DateTime, Utc};
 
-use crate::entry::{Header, SessionEntry, SessionId};
+use crate::entry::{EntryId, Header, SessionEntry, SessionId};
 use crate::error::SessionError;
 
 /// Kind of the [`SessionEntry::Custom`] entry that marks a session an
@@ -100,7 +100,9 @@ pub struct SessionSummary {
     pub path: PathBuf,
     /// Header creation timestamp.
     pub created_at: DateTime<Utc>,
-    /// Timestamp of the most recently appended entry.
+    /// Timestamp of the most recent entry on the active branch, the
+    /// ancestry of the file's head. Entries an undo or rewind
+    /// abandoned do not count.
     pub updated_at: DateTime<Utc>,
     /// Working directory recorded in the header.
     pub cwd: PathBuf,
@@ -382,9 +384,11 @@ fn leading_tag(line: &[u8]) -> Option<&[u8]> {
 }
 
 /// Walk the file's tail back recording the latest timestamp, the
-/// latest user prompt and the latest title, decoding only the lines
-/// those need. Bounds the decode work for sessions whose tail is a
-/// wall of tool output.
+/// latest user prompt and the latest title on the active branch, the
+/// ancestry of the file's head (see [`crate::tree::SessionTree`]):
+/// entries a `Branch` marker abandoned stay in the file and must not
+/// surface as the summary's prompt. Bounds the decode work for
+/// sessions whose tail is a wall of tool output.
 fn scan_tail(
     file: &mut BufReader<File>,
     buf: &mut Vec<u8>,
@@ -398,10 +402,7 @@ fn scan_tail(
     {
         return (None, None, None);
     }
-    let mut updated_at = None;
-    let mut last_user_prompt = None;
-    let mut title = None;
-    let mut tail: Vec<Vec<u8>> = Vec::new();
+    let mut tail: Vec<SessionEntry> = Vec::new();
     loop {
         buf.clear();
         let Ok(n) = file.read_until(b'\n', buf) else {
@@ -410,37 +411,72 @@ fn scan_tail(
         if n == 0 {
             break;
         }
-        let line = buf.trim_ascii_end().to_owned();
-        if !line.is_empty() {
-            tail.push(line);
+        let line = buf.trim_ascii_end();
+        if !line.is_empty()
+            && let Ok(entry) = serde_json::from_slice::<SessionEntry>(line)
+        {
+            tail.push(entry);
         }
     }
-    for line in tail.iter().rev() {
-        let tag = leading_tag(line);
-        let wanted = updated_at.is_none()
-            || tag.is_none()
-            || (tag == Some(b"message") && last_user_prompt.is_none())
-            || tag == Some(b"title");
-        if !wanted {
-            continue;
-        }
-        let Ok(entry) = serde_json::from_slice::<SessionEntry>(line) else {
-            continue;
-        };
-        updated_at.get_or_insert_with(|| entry.ts());
-        match entry {
-            SessionEntry::Message(m)
-                if m.message.role == kage_core::Role::User && last_user_prompt.is_none() =>
-            {
-                last_user_prompt = Some(
-                    first_text(&m.message).map(|text| text.chars().take(PROMPT_CHARS).collect()),
-                );
-            }
-            SessionEntry::Title(t) if title.is_none() => title = Some(t.title),
-            _ => {}
-        }
+    // The head is the last non-marker entry, or the entry a trailing
+    // marker continues from. Walking backwards, each ancestry node's
+    // parent is the next-older entry unless a `Branch` marker sits
+    // between them; entries in between belong to abandoned branches.
+    let Some(head) = tail.last() else {
+        return (None, None, None);
+    };
+    // A file ending on a marker has already moved on: its head is the
+    // entry the marker continues from, however far back that sits.
+    let mut expecting: Option<EntryId> = Some(match head {
+        SessionEntry::Branch(marker) => marker.at,
+        other => other.id(),
+    });
+    // Set just after consuming an ancestry node: the next-older line
+    // decides its parent.
+    let mut after_node = false;
+    let mut updated_at = None;
+    let mut last_user_prompt = None;
+    let mut title = None;
+    for entry in tail.iter().rev() {
         if updated_at.is_some() && last_user_prompt.is_some() && title.is_some() {
             break;
+        }
+        match entry {
+            SessionEntry::Header(_) => break,
+            SessionEntry::Branch(marker) => {
+                if after_node {
+                    expecting = Some(marker.at);
+                    after_node = false;
+                }
+            }
+            node => {
+                let id = node.id();
+                if after_node {
+                    // No marker between this entry and its child, so
+                    // it is the child's parent.
+                    expecting = Some(id);
+                    after_node = false;
+                }
+                if expecting != Some(id) {
+                    continue;
+                }
+                updated_at.get_or_insert_with(|| node.ts());
+                match node {
+                    SessionEntry::Message(m)
+                        if m.message.role == kage_core::Role::User
+                            && last_user_prompt.is_none() =>
+                    {
+                        last_user_prompt = Some(
+                            first_text(&m.message)
+                                .map(|text| text.chars().take(PROMPT_CHARS).collect()),
+                        );
+                    }
+                    SessionEntry::Title(t) if title.is_none() => title = Some(t.title.clone()),
+                    _ => {}
+                }
+                after_node = true;
+                expecting = None;
+            }
         }
     }
     (updated_at, last_user_prompt.flatten(), title)
@@ -986,6 +1022,40 @@ mod tests {
         let summary = summarize_one(&path).unwrap();
         assert_eq!(summary, full_decode(&path));
         assert_eq!(summary.last_user_prompt, None);
+    }
+
+    #[test]
+    fn an_abandoned_branch_does_not_become_the_summary() {
+        let dir = tempdir().unwrap();
+        let path = write_session(dir.path(), "branch.jsonl", "kept");
+        let mut writer = SessionWriter::open(&path).unwrap();
+        let reply = message(Role::Assistant, text("kept reply"));
+        let reply_at = reply.id();
+        writer.append(&reply).unwrap();
+        writer
+            .append(&message(Role::User, text("dropped")))
+            .unwrap();
+        writer
+            .append(&message(Role::Assistant, text("dropped reply")))
+            .unwrap();
+        // The in-place undo of the dropped exchange: the conversation
+        // continues from the kept reply.
+        writer
+            .append(&SessionEntry::Branch(crate::BranchEntry {
+                id: EntryId::new(),
+                ts: Utc::now(),
+                at: reply_at,
+            }))
+            .unwrap();
+        drop(writer);
+
+        let summary = summarize_one(&path).unwrap();
+        assert_eq!(
+            summary.last_user_prompt.as_deref(),
+            Some("kept"),
+            "the abandoned prompt stays out of the label"
+        );
+        assert_eq!(summary.title, None);
     }
 
     #[test]

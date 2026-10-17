@@ -17,6 +17,11 @@ fn temp_workdir(name: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("kage-loop-test-{name}"))
 }
 
+/// A single text block, the shape a steering hook returns.
+fn text_steering(text: impl Into<String>) -> Vec<Content> {
+    vec![Content::Text { text: text.into() }]
+}
+
 #[test]
 fn build_request_forwards_max_output_tokens_from_context() {
     let mut cx = AgentContext::new("m", "");
@@ -229,10 +234,10 @@ impl Hooks for OneShotFollowup {
 
 struct Steering(bool);
 impl Hooks for Steering {
-    fn get_steering(&mut self) -> Option<String> {
+    fn get_steering(&mut self) -> Option<Vec<Content>> {
         if self.0 {
             self.0 = false;
-            Some("be terse".into())
+            Some(text_steering("be terse"))
         } else {
             None
         }
@@ -244,7 +249,7 @@ struct CountingSteering {
     polls: u32,
 }
 impl Hooks for CountingSteering {
-    fn get_steering(&mut self) -> Option<String> {
+    fn get_steering(&mut self) -> Option<Vec<Content>> {
         self.polls = self.polls.saturating_add(1);
         None
     }
@@ -606,8 +611,8 @@ fn should_stop_after_turn_short_circuits_pending_tool_calls() {
 
 struct QueuedSteering(std::collections::VecDeque<String>);
 impl Hooks for QueuedSteering {
-    fn get_steering(&mut self) -> Option<String> {
-        self.0.pop_front()
+    fn get_steering(&mut self) -> Option<Vec<Content>> {
+        self.0.pop_front().map(text_steering)
     }
 }
 
@@ -616,7 +621,7 @@ struct CombinedSteering {
     followup: OneFollowup,
 }
 impl Hooks for CombinedSteering {
-    fn get_steering(&mut self) -> Option<String> {
+    fn get_steering(&mut self) -> Option<Vec<Content>> {
         self.queued.get_steering()
     }
     fn get_followup(&mut self) -> Option<String> {
@@ -1815,11 +1820,11 @@ fn steering_message_is_announced_then_lands_in_history() {
         queued: Vec<String>,
     }
     impl Hooks for Steerer {
-        fn get_steering(&mut self) -> Option<String> {
+        fn get_steering(&mut self) -> Option<Vec<Content>> {
             if self.queued.is_empty() {
                 None
             } else {
-                Some(self.queued.remove(0))
+                Some(text_steering(self.queued.remove(0)))
             }
         }
     }
@@ -2303,8 +2308,8 @@ fn drain_messages_polls_cancel_between_messages() {
 fn steering_all_mode_caps_the_drain_per_turn() {
     struct BigQueue(std::collections::VecDeque<String>);
     impl Hooks for BigQueue {
-        fn get_steering(&mut self) -> Option<String> {
-            self.0.pop_front()
+        fn get_steering(&mut self) -> Option<Vec<Content>> {
+            self.0.pop_front().map(text_steering)
         }
     }
     /// Splits steering and followup across two hook values, since a
@@ -2314,7 +2319,7 @@ fn steering_all_mode_caps_the_drain_per_turn() {
         followup: &'a mut OneShotFollowup,
     }
     impl Hooks for SplitHooks<'_> {
-        fn get_steering(&mut self) -> Option<String> {
+        fn get_steering(&mut self) -> Option<Vec<Content>> {
             self.steering.get_steering()
         }
         fn get_followup(&mut self) -> Option<String> {

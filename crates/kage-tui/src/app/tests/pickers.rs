@@ -283,6 +283,177 @@ fn session_picker_defaults_to_cwd_and_ctrl_a_toggles_all() {
     assert!(!app.session_scope_all, "Ctrl+A toggles back");
 }
 
+/// A rewindable prompt with entry id `at` and one text block, on the
+/// original thread.
+fn past_prompt(at: &str, text: &str) -> kage_core::protocol::PastPrompt {
+    branch_prompt(at, text, 0, false)
+}
+
+/// A rewindable prompt on a branch: `depth` prompts above it, and
+/// whether it is the active head.
+fn branch_prompt(
+    at: &str,
+    text: &str,
+    depth: u32,
+    active: bool,
+) -> kage_core::protocol::PastPrompt {
+    kage_core::protocol::PastPrompt {
+        at: at.to_owned(),
+        prompt: vec![kage_core::Content::Text {
+            text: text.to_owned(),
+        }],
+        depth,
+        active,
+    }
+}
+
+#[test]
+fn the_rewind_picker_lists_oldest_first_and_starts_on_the_newest() {
+    let (mut app, rx, events) = app_with_events();
+    feed(
+        &mut app,
+        &events,
+        vec![
+            kage_core::protocol::HostEvent::PromptList {
+                prompts: vec![
+                    past_prompt("11111111111111111111111111", "round 0"),
+                    branch_prompt(
+                        "22222222222222222222222222",
+                        "round 1\nmore detail",
+                        0,
+                        true,
+                    ),
+                ],
+            }
+            .into(),
+        ],
+    );
+    assert_eq!(app.picker_kind, Some(PickerKind::Rewind));
+    // Oldest row first, and a multi-line prompt renders as its first
+    // line only.
+    let rows = rendered(&mut app, 60, 30);
+    let first = rows.iter().position(|r| r.contains("round 0"));
+    let second = rows.iter().position(|r| r.contains("round 1"));
+    assert!(
+        first.is_some_and(|f| second.is_some_and(|s| f < s)),
+        "oldest first: {rows:?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|r| r.contains("round 1") && !r.contains("more detail")),
+        "{rows:?}"
+    );
+    // The selection starts on the active head, so enter rewinds there.
+    app.dispatch_picker_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(app.picker_kind, None);
+    match rx.recv_timeout(Duration::from_millis(100)).unwrap() {
+        RunRequest::Rewind { at } => {
+            assert_eq!(at, "22222222222222222222222222");
+        }
+        other => panic!("expected Rewind, got {other:?}"),
+    }
+}
+
+#[test]
+fn the_rewind_picker_indents_branches_and_badges_the_active_head() {
+    let (mut app, rx, events) = app_with_events();
+    feed(
+        &mut app,
+        &events,
+        vec![
+            kage_core::protocol::HostEvent::PromptList {
+                prompts: vec![
+                    branch_prompt("11111111111111111111111111", "round 0", 0, true),
+                    branch_prompt("22222222222222222222222222", "round 1", 1, false),
+                    branch_prompt("33333333333333333333333333", "redo", 1, false),
+                ],
+            }
+            .into(),
+        ],
+    );
+    assert_eq!(app.picker_kind, Some(PickerKind::Rewind));
+    let rows = rendered(&mut app, 80, 30);
+    // Depth-first order: a branch's descendants before its next
+    // sibling.
+    let round0 = rows.iter().position(|r| r.contains("round 0"));
+    let round1 = rows.iter().position(|r| r.contains("round 1"));
+    let redo = rows.iter().position(|r| r.contains("redo"));
+    assert!(
+        round0.is_some_and(|a| round1.is_some_and(|b| redo.is_some_and(|c| a < b && b < c))),
+        "depth-first order: {rows:?}"
+    );
+    // Branch rows sit one indent under their fork point.
+    assert!(
+        rows.iter().any(|r| r.contains("  round 1")),
+        "branch rows indent two spaces per level: {rows:?}"
+    );
+    assert!(
+        !rows.iter().any(|r| r.contains("  round 0")),
+        "top-level rows do not indent: {rows:?}"
+    );
+    // The active head carries the badge and starts selected.
+    assert!(
+        rows.iter()
+            .any(|r| r.contains('*') && r.contains("round 0")),
+        "the active head is badged: {rows:?}"
+    );
+    app.dispatch_picker_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    match rx.recv_timeout(Duration::from_millis(100)).unwrap() {
+        RunRequest::Rewind { at } => assert_eq!(at, "11111111111111111111111111"),
+        other => panic!("expected Rewind, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_long_rewind_list_opens_scrolled_to_the_newest() {
+    let (mut app, _rx, events) = app_with_events();
+    let prompts: Vec<_> = (0..30)
+        .map(|i| {
+            branch_prompt(
+                &format!("{i:026}"),
+                &format!("turn {i} of the long session"),
+                0,
+                i == 29,
+            )
+        })
+        .collect();
+    feed(
+        &mut app,
+        &events,
+        vec![kage_core::protocol::HostEvent::PromptList { prompts }.into()],
+    );
+    assert_eq!(app.picker_kind, Some(PickerKind::Rewind));
+    let rows = rendered(&mut app, 60, 30);
+    assert!(
+        rows.iter().any(|r| r.contains("turn 29")),
+        "the newest row is on screen: {rows:?}"
+    );
+    assert!(
+        rows.iter().any(|r| r.contains("more above")),
+        "older rows sit above the window: {rows:?}"
+    );
+    assert!(
+        !rows.iter().any(|r| r.contains("turn 0 of")),
+        "the oldest row is scrolled off: {rows:?}"
+    );
+}
+
+#[test]
+fn an_empty_prompt_list_never_opens_the_picker() {
+    let (mut app, _rx, events) = app_with_events();
+    feed(
+        &mut app,
+        &events,
+        vec![
+            kage_core::protocol::HostEvent::PromptList {
+                prompts: Vec::new(),
+            }
+            .into(),
+        ],
+    );
+    assert_eq!(app.picker_kind, None);
+}
+
 #[test]
 fn a_directory_without_sessions_opens_its_own_empty_scope() {
     let buffer = shared_buffer();

@@ -212,6 +212,7 @@ pub(crate) fn render_hit_preview(hit: &kage_session::SearchHit) -> String {
             format!("[compaction] kept={} summarized={}", c.kept, c.summarized)
         }
         kage_session::SessionEntry::Label(l) => format!("[label] {}", l.text),
+        kage_session::SessionEntry::Branch(_) => "[branch]".to_owned(),
         kage_session::SessionEntry::Title(t) => format!("[title] {}", t.title),
         kage_session::SessionEntry::ModelChange(m) => format!("[model_change] {}", m.model),
         kage_session::SessionEntry::ThinkingLevelChange(t) => {

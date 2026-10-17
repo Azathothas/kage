@@ -58,6 +58,8 @@ The table lists every built-in command.
 | `/export [file]`          | Write the session transcript to a Markdown file (defaults to `<session-id-prefix>.md` in the working directory) |
 | `/tree`                   | Browse the session fork forest (resume, fork, delete). Agent sessions sit under their parent with an `agent: ` label. |
 | `/clone`                  | Duplicate the session to a new id and continue in the clone |
+| `/undo` | Drop the last exchange: the session branches in place, continuing from just before its last prompt, and the removed prompt goes back into the editor to edit and resend. Earlier turns stay in the file as an abandoned branch, so `/rewind` can still reach them. Refused while a run is in flight |
+| `/rewind` | Open the rewind picker: one row per prompt the session's branch tree holds, oldest first, branches indented one level per rewind, opened on the active head. Picking one keeps that prompt and abandons its reply and everything after it; the session continues from the pick. Same rules as `/undo` |
 | `/keybindings` / `/keys`  | List active key mappings per mode with their owners |
 | `/attach [path]` / `/img` | Attach a png, jpeg, gif or webp image to the next prompt: a file `path`, or the OS clipboard image when no path is given. A toast warns when the model does not accept images. To include a text file, mention it as `@path` in the prompt instead |
 | `/mouse [on\|off\|toggle]` | Control terminal mouse capture                |

@@ -505,3 +505,52 @@ fn shell_submit_sends_run_shell_without_a_user_block() {
         "shell submit must not paint a user block"
     );
 }
+
+/// An undo puts the removed prompt back into the editor: text above any
+/// draft, images back as attachments.
+#[test]
+fn undo_restores_the_removed_prompt_into_the_editor() {
+    let (mut app, _rx, events) = app_with_events();
+    app.input.splice(0, 0, "a draft");
+    feed(
+        &mut app,
+        &events,
+        vec![
+            kage_core::protocol::HostEvent::Undone {
+                prompt: Some(vec![
+                    kage_core::Content::Text {
+                        text: "redo me".into(),
+                    },
+                    kage_core::Content::Image {
+                        source: kage_core::ImageSource::Base64 {
+                            data: "AAAA".into(),
+                        },
+                        mime: "image/png".into(),
+                    },
+                ]),
+            }
+            .into(),
+        ],
+    );
+    // Images attach at the editor's end, so with a draft present the
+    // chip lands after it (same as prompt recall).
+    assert_eq!(
+        app.input().text(),
+        "redo me\n\na draft[\u{200b}image #1 recall image/png 3 B] "
+    );
+    assert_eq!(app.input().attached().len(), 1);
+}
+
+/// An undo without restorable content only toasts.
+#[test]
+fn undo_without_a_prompt_leaves_the_editor_alone() {
+    let (mut app, _rx, events) = app_with_events();
+    app.input.splice(0, 0, "a draft");
+    feed(
+        &mut app,
+        &events,
+        vec![kage_core::protocol::HostEvent::Undone { prompt: None }.into()],
+    );
+    assert_eq!(app.input().text(), "a draft");
+    assert_eq!(app.input().attached().len(), 0);
+}

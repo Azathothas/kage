@@ -12,8 +12,8 @@ use kage_core::agent_report::AgentLimit;
 use kage_core::protocol::{HostEvent, McpServerInfo, NoticeLevel, RunOutcome, Usage};
 use kage_core::sync::lock;
 use kage_core::{
-    CancelFlag, LoopError, LoopEvent, Message, ModelCost, SessionId, TokenCost, TokenUsage,
-    ToolOutput,
+    CancelFlag, Content, LoopError, LoopEvent, Message, ModelCost, SessionId, TokenCost,
+    TokenUsage, ToolOutput,
 };
 use kage_loop::{AgentContext, Hooks, LoopConfig};
 use kage_mcp::expand::ExpandError;
@@ -30,9 +30,13 @@ use super::worktree::Worktree;
 use crate::permissions::PermissionGate;
 use crate::plugins::PluginEventHooks;
 
-/// Prompts submitted while a run is in flight, delivered at the next turn
-/// boundary.
-pub(super) type Steering = Arc<Mutex<VecDeque<String>>>;
+/// Prompts submitted while a run is in flight, delivered at the next
+/// turn boundary. Full prompt content, images included.
+pub(super) type Steering = Arc<Mutex<VecDeque<Vec<Content>>>>;
+
+/// Agent reports waiting for the next steering poll, joined into one
+/// text message.
+pub(super) type Inbox = Arc<Mutex<VecDeque<String>>>;
 
 /// Told to an agent at its turn limit, which then has one more turn.
 const TURN_LIMIT_WARNING: &str =
@@ -147,7 +151,7 @@ pub(super) struct Run {
     pub cancel: CancelFlag,
     pub gate: PermissionGate,
     pub steering: Steering,
-    pub inbox: Steering,
+    pub inbox: Inbox,
     pub plugins: Option<Arc<PluginRuntime>>,
     pub mcp: Option<McpLease>,
     pub bus: Arc<Bus>,
@@ -418,7 +422,7 @@ fn add_turn(usage: &mut Usage, turn: &TokenUsage, price: Option<ModelCost>) {
 struct RunHooks {
     gate: PermissionGate,
     steering: Steering,
-    inbox: Steering,
+    inbox: Inbox,
     turns: Option<TurnLimit>,
 }
 
@@ -452,13 +456,15 @@ impl Hooks for RunHooks {
         self.gate.before_tool_call(id, name, input)
     }
 
-    fn get_steering(&mut self) -> Option<String> {
+    fn get_steering(&mut self) -> Option<Vec<Content>> {
         if let Some(warning) = self.turns.as_mut().and_then(|t| t.warning.take()) {
-            return Some(warning.to_owned());
+            return Some(vec![Content::Text {
+                text: warning.to_owned(),
+            }]);
         }
         lock(&self.steering)
             .pop_front()
-            .or_else(|| self.drain_inbox())
+            .or_else(|| self.drain_inbox().map(|text| vec![Content::Text { text }]))
     }
 
     fn should_stop_after_turn(&mut self, summary: &kage_loop::TurnSummary) -> bool {

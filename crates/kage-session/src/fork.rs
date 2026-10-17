@@ -1,10 +1,14 @@
 //! Branch a new session from an existing one at a specific entry.
 //!
-//! [`fork`] copies the source's entries verbatim from the start of the file
-//! up to and including the entry with id `at`. The destination header
-//! carries a fresh [`SessionId`], a freshly-minted creation timestamp, and
-//! `parent_session` / `parent_entry` fields linking back to the source.
-//! All other header fields (cwd, model, system prompt) are inherited.
+//! [`fork`] copies the ancestry of the target entry into the
+//! destination, in conversation order, as [`crate::tree::SessionTree`]
+//! defines it. A source with branch markers contributes only the
+//! entries the conversation still reaches, and the copy itself is
+//! always linear. The destination header carries a fresh
+//! [`SessionId`], a freshly-minted creation timestamp, and
+//! `parent_session` / `parent_entry` fields linking back to the
+//! source. All other header fields (cwd, model, system prompt) are
+//! inherited.
 //!
 //! Forking does not mutate the source. After a fork, both files exist
 //! independently and may diverge.
@@ -16,6 +20,7 @@ use chrono::Utc;
 use crate::entry::{EntryId, FORMAT_VERSION, Header, SessionEntry, SessionId};
 use crate::error::SessionError;
 use crate::reader::SessionReader;
+use crate::tree::SessionTree;
 use crate::writer::SessionWriter;
 
 /// Fork `src` into a new session file at `dst`, copying entries up to and
@@ -64,14 +69,16 @@ pub fn fork(
 }
 
 /// Fork `src` into a new session file at `dst` under the exact header
-/// the caller supplies, copying entries up to and including the entry
-/// whose id equals `at`. The header's `session` should be the id the
-/// caller used for `dst` (so the file name and the in-file id agree).
-/// Use this instead of [`fork`] when the new session needs its own
-/// model or system prompt, as forked agent children do.
+/// the caller supplies, copying the entries of `at`'s ancestry, in
+/// conversation order. On a source with branch markers the copy takes
+/// the path the conversation still reaches and is always linear. The
+/// header's `session` should be the id the caller used for `dst` (so
+/// the file name and the in-file id agree). Use this instead of
+/// [`fork`] when the new session needs its own model or system
+/// prompt, as forked agent children do.
 ///
 /// Returns whether the source's tail was torn: the copy then ends at
-/// the last whole entry before it.
+/// the last whole entry of the source.
 ///
 /// # Errors
 ///
@@ -83,15 +90,18 @@ pub fn fork_as(
     new_header: Header,
     at: EntryId,
 ) -> Result<bool, SessionError> {
-    let snapshot = snapshot(src, |entry| entry.id() == at)?;
-    if snapshot.at != at {
+    let tree = SessionTree::read(src)?;
+    if !tree.contains(at) {
         return Err(SessionError::EntryNotFound {
             path: src.to_path_buf(),
             at,
         });
     }
-    let truncated = snapshot.truncated;
-    snapshot.write(dst, new_header)?;
+    let truncated = tree.truncated();
+    let mut writer = SessionWriter::create(dst.to_path_buf(), new_header)?;
+    for entry in tree.ancestry(at) {
+        writer.append(entry)?;
+    }
     Ok(truncated)
 }
 
@@ -254,7 +264,7 @@ mod tests {
 
     use super::*;
     use crate::entry::{
-        EntryId, FORMAT_VERSION, Header, Label, MessageEntry, SessionEntry, SessionId,
+        BranchEntry, EntryId, FORMAT_VERSION, Header, Label, MessageEntry, SessionEntry, SessionId,
     };
     use crate::reader::SessionReader;
     use crate::writer::SessionWriter;
@@ -579,6 +589,82 @@ mod tests {
             matches!(&copied[2], SessionEntry::Label(l) if l.text == "milestone" && l.anchor == anchor),
             "the label survives with its anchor: {:?}",
             copied[2]
+        );
+    }
+
+    #[test]
+    fn fork_from_a_branched_source_copies_the_active_ancestry() {
+        let dir = tempdir().unwrap();
+        let src = dir.path().join("src.jsonl");
+        let header = fresh_header("x:y");
+        let kept = message_entry(Role::User, "kept");
+        let reply = message_entry(Role::Assistant, "reply");
+        let dropped = message_entry(Role::User, "dropped");
+        let marker = SessionEntry::Branch(BranchEntry {
+            id: EntryId::new(),
+            ts: Utc::now(),
+            at: reply.id(),
+        });
+        let redo = message_entry(Role::User, "redo");
+        write(
+            &src,
+            header.clone(),
+            &[kept, reply, dropped, marker, redo.clone()],
+        );
+
+        // Fork at the redone prompt: the copy carries kept and reply,
+        // not the marker or the abandoned prompt.
+        let dst = dir.path().join("forked.jsonl");
+        fork(&src, &dst, SessionId::new(), redo.id()).unwrap();
+        let copied: Vec<SessionEntry> = SessionReader::iter(&dst)
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let texts: Vec<&str> = copied
+            .iter()
+            .filter_map(|entry| match entry {
+                SessionEntry::Message(m) => match &m.message.content[0] {
+                    Content::Text { text } => Some(text.as_str()),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, ["kept", "reply", "redo"]);
+        assert!(
+            copied
+                .iter()
+                .all(|entry| !matches!(entry, SessionEntry::Branch(_))),
+            "a forked child is linear"
+        );
+    }
+
+    #[test]
+    fn fork_at_an_abandoned_entry_copies_that_branch() {
+        let dir = tempdir().unwrap();
+        let src = dir.path().join("src.jsonl");
+        let header = fresh_header("x:y");
+        let kept = message_entry(Role::User, "kept");
+        let reply = message_entry(Role::Assistant, "reply");
+        let dropped = message_entry(Role::User, "dropped");
+        let dropped_entry = dropped.id();
+        let marker = SessionEntry::Branch(BranchEntry {
+            id: EntryId::new(),
+            ts: Utc::now(),
+            at: reply.id(),
+        });
+        write(&src, header, &[kept, reply, dropped, marker]);
+
+        let dst = dir.path().join("forked.jsonl");
+        fork(&src, &dst, SessionId::new(), dropped_entry).unwrap();
+        let copied: Vec<SessionEntry> = SessionReader::iter(&dst)
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            copied.len(),
+            4,
+            "header, kept, reply and the abandoned dropped prompt"
         );
     }
 }

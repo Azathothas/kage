@@ -83,6 +83,15 @@ impl OverlayPicker {
         self
     }
 
+    /// Start the selection on row `index`, leaving the rows as the
+    /// caller ordered them. The first render scrolls the window to the
+    /// selection, so a long list opens showing that row.
+    #[must_use]
+    pub fn with_selected(mut self, index: usize) -> Self {
+        self.selected = index.min(self.items.len().saturating_sub(1));
+        self
+    }
+
     /// Render the picker over `area`. Thin wrapper that drives the
     /// [`OverlayWidget`] impl through a [`Frame`]; kept so callers in
     /// the render closure can pass the active `Frame` directly without

@@ -72,7 +72,7 @@ the buffer navigation keys above work without any mode switching.
 | `enter` | Send the prompt, or steer it into the running turn |
 | `tab` | Queue the prompt until the running turn ends |
 | `shift+enter` / `alt+enter` | Insert a newline |
-| `esc` | Clear the draft, else interrupt the run, else clear the search highlight |
+| `esc` | Clear the draft, else interrupt the run, else clear the search highlight; `esc` `esc` opens the rewind picker (see [esc and ctrl+c](#esc-and-ctrl-c)) |
 | `ctrl+c` | Clear the draft, else interrupt the run, else arm quit |
 | `pageup` / `pagedown` | Scroll the conversation buffer 10 lines |
 | `ctrl+w` | Kill the previous word |
@@ -105,10 +105,18 @@ same escalation:
 2. With an empty draft while kage works, they interrupt the run. The
    conversation shows `Interrupted`.
 3. Idle with an empty draft, `esc` clears an active search
-   highlight (the footer then reads `esc to clear the search`) and
-   otherwise does nothing. `ctrl+c` arms quit. The footer reads
-   `ctrl+c again to quit`, and a second `ctrl+c` within 2 seconds
-   quits.
+   highlight (the footer then reads `esc to clear the search`). A
+   second `esc` within 0.6 seconds opens the
+   [rewind picker](/guide/commands#commands): one row per prompt the
+   session's branch tree holds, oldest first, branches indented one
+   level per rewind, opened on the active head; picking one rewinds
+   the conversation to that prompt, which stays while its reply and
+   everything after it are abandoned (`/rewind` does the same; `/undo`
+   is the variant that takes the last prompt back into the editor).
+   The first `esc` arms it, and
+   the footer reads `esc again to rewind`. `ctrl+c` arms quit instead.
+   The footer reads `ctrl+c again to quit`, and a second `ctrl+c`
+   within 2 seconds quits.
 
 In an agent view (see [agents](#agents)), the last two steps change:
 `esc` goes back one level and never stops the agent, and `ctrl+c`
@@ -141,10 +149,10 @@ of the queue and puts its text and images into the editor, so a typo
 in a sent prompt is fixable before it lands. Pressing it again takes
 the next one back, and once nothing is pending `up` walks the prompt
 history as usual. The footer says so while something is pending. A
-prompt with an attached image always waits for the run to end. So does
-a prompt that mentions an MCP resource (`@server:uri`) or starts with
-an MCP prompt command (`/server:prompt`), because kage expands those
-only when a run starts (see [mcp](/guide/mcp#resources-and-mentions)).
+prompt that mentions an MCP resource (`@server:uri`) or starts with
+an MCP prompt command (`/server:prompt`) still waits for the run to
+end, because kage expands those only when a run starts (see
+[mcp](/guide/mcp#resources-and-mentions)).
 
 While kage works, the working row above the input shows what it is
 doing and for how long, such as

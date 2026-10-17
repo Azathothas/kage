@@ -148,9 +148,9 @@ impl super::Dispatcher {
         if !held || self.shutting_down {
             return;
         }
-        let steered: Vec<String> = lock(&session.steering).drain(..).collect();
-        for text in steered.into_iter().rev() {
-            session.queued.push_front(vec![Content::Text { text }]);
+        let steered: Vec<Vec<Content>> = lock(&session.steering).drain(..).collect();
+        for content in steered.into_iter().rev() {
+            session.queued.push_front(content);
         }
         if let Some(content) = session.queued.pop_front() {
             self.start_run(id, Work::Prompt(Message::new(Role::User, content, None)));

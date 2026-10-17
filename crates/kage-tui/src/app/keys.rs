@@ -6,6 +6,11 @@ use super::*;
 /// waits for the next press.
 const ESCALATION_WINDOW: Duration = Duration::from_secs(2);
 
+/// How long a first `Esc` waits for a second one to open the rewind
+/// picker. Tighter than [`ESCALATION_WINDOW`] so two unrelated
+/// escapes never read as "rewind".
+const DOUBLE_ESC_WINDOW: Duration = Duration::from_millis(600);
+
 /// How long a key waits for a plugin terminal-input hook's verdict.
 #[cfg(not(test))]
 const HOOK_DEADLINE: Duration = kage_plugin::terminal_input::INPUT_DEADLINE;
@@ -23,11 +28,23 @@ pub(crate) enum Trigger {
     CtrlC,
 }
 
+/// Whether the global quit hatch consumed a key, and the exit it
+/// asks for when it did.
+enum Hatch {
+    /// The hatch does not apply; dispatch routes the key onward.
+    Pass,
+    /// The hatch took the key; dispatch stops at the given exit.
+    Consumed(Option<AppExit>),
+}
+
 /// What the last escalation step left for the next press.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Escalation {
     /// Idle with an empty draft: one more `Ctrl+C` quits.
     QuitArmed,
+    /// Idle with an empty draft: one more `Esc` within
+    /// [`DOUBLE_ESC_WINDOW`] opens the rewind picker.
+    RewindArmed,
 }
 
 /// What an open search line restores on `Esc`: the pattern and the
@@ -97,6 +114,39 @@ impl App {
             .any(|hook| hook.handle(&descriptor, HOOK_DEADLINE))
     }
 
+    /// Global escape hatches before any modal layer: ctrl+q quits,
+    /// ctrl+c escalates from every mode (insert, modeless, any open
+    /// overlay while a run is in flight). Idle, ctrl+c reaches an
+    /// open overlay, which closes. Both yield to a mapping from
+    /// `init.lua` or `config.toml` on the chord, so `quit` and
+    /// `:cancel` stay reachable through whatever the user mapped
+    /// instead.
+    fn global_quit_hatch(&mut self, key: &ratatui::crossterm::event::KeyEvent) -> Hatch {
+        use ratatui::crossterm::event::{KeyCode, KeyModifiers};
+        if !key.modifiers.contains(KeyModifiers::CONTROL) {
+            return Hatch::Pass;
+        }
+        match key.code {
+            KeyCode::Char('q') if !self.user_mapped(key) => Hatch::Consumed(Some(AppExit::Quit)),
+            KeyCode::Char('c')
+                if !self.user_mapped(key)
+                    && (self.is_run_in_flight() || !self.keyboard_modal_open()) =>
+            {
+                Hatch::Consumed(self.escalate(Trigger::CtrlC))
+            }
+            _ => Hatch::Pass,
+        }
+    }
+
+    /// `true` when `key` must leave an armed quit or rewind alone:
+    /// the `Esc` that is the second half of the rewind chord has to
+    /// reach `escalate` with the arm still set. Every other key
+    /// disarms.
+    fn keeps_escalation(&self, key: &ratatui::crossterm::event::KeyEvent) -> bool {
+        key.code == ratatui::crossterm::event::KeyCode::Esc
+            && matches!(self.escalation, Some((Escalation::RewindArmed, _)))
+    }
+
     /// Dispatch one key event through the modal layers, the keymap,
     /// and the editor grammar. Grows with every modal; the line count
     /// is layer plumbing, not complexity.
@@ -104,27 +154,13 @@ impl App {
         &mut self,
         key: ratatui::crossterm::event::KeyEvent,
     ) -> Option<AppExit> {
-        // Global escape hatches before any modal layer: ctrl+q quits,
-        // ctrl+c escalates from every mode (insert, modeless, any open
-        // overlay while a run is in flight). Idle, ctrl+c reaches an
-        // open overlay, which closes. Both yield to a mapping from
-        // `init.lua` or `config.toml` on the chord, so `quit` and
-        // `:cancel` stay reachable through whatever the user mapped
-        // instead.
-        use ratatui::crossterm::event::{KeyCode, KeyModifiers};
-        if key.modifiers.contains(KeyModifiers::CONTROL) {
-            match key.code {
-                KeyCode::Char('q') if !self.user_mapped(&key) => return Some(AppExit::Quit),
-                KeyCode::Char('c')
-                    if !self.user_mapped(&key)
-                        && (self.is_run_in_flight() || !self.keyboard_modal_open()) =>
-                {
-                    return self.escalate(Trigger::CtrlC);
-                }
-                _ => {}
-            }
+        use ratatui::crossterm::event::KeyCode;
+        if let Hatch::Consumed(exit) = self.global_quit_hatch(&key) {
+            return exit;
         }
-        self.escalation = None;
+        if !self.keeps_escalation(&key) {
+            self.escalation = None;
+        }
 
         // The agents overlay may open over an approval panel. It takes
         // its own keys and hands the rest to the panel.
@@ -257,11 +293,12 @@ impl App {
     /// One step of the Esc and Ctrl+C escalation: interrupt the run in
     /// flight, else, for Esc, clear the search highlight, else, for
     /// Ctrl+C, arm quit, which a second press within
-    /// [`ESCALATION_WINDOW`] carries out. Neither key touches the
-    /// draft, so interrupting a run never eats a queued prompt. Over
-    /// an open overlay Ctrl+C only interrupts. In an agent view Esc
-    /// goes back one level and never interrupts, while Ctrl+C stops
-    /// the agent when it runs, else goes back.
+    /// [`ESCALATION_WINDOW`] carries out. A second Esc within
+    /// [`DOUBLE_ESC_WINDOW`] opens the rewind picker instead. Neither
+    /// key touches the draft, so interrupting a run never eats a
+    /// queued prompt. Over an open overlay Ctrl+C only interrupts. In
+    /// an agent view Esc goes back one level and never interrupts,
+    /// while Ctrl+C stops the agent when it runs, else goes back.
     pub(crate) fn escalate(&mut self, trigger: Trigger) -> Option<AppExit> {
         let now = Instant::now();
         let previous = self
@@ -282,6 +319,11 @@ impl App {
         } else if self.is_run_in_flight() {
             self.trip_cancel();
         } else if trigger == Trigger::Esc {
+            if previous == Some(Escalation::RewindArmed) {
+                self.begin_rewind();
+            } else {
+                self.escalation = Some((Escalation::RewindArmed, now + DOUBLE_ESC_WINDOW));
+            }
             self.search_pattern = None;
         } else if previous == Some(Escalation::QuitArmed) {
             return Some(AppExit::Quit);

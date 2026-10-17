@@ -81,12 +81,18 @@ fn rewind_runtime(sink: SharedHostLog, workdir: Option<PathBuf>) -> PluginRuntim
 }
 
 fn run_plain_command(rt: &PluginRuntime, name: &str) -> String {
+    run_command_with_args(rt, name, "")
+}
+
+/// Run `name` with the raw argument string `raw` (parsed against the
+/// command's declared arg schema).
+fn run_command_with_args(rt: &PluginRuntime, name: &str, raw: &str) -> String {
     let cmd = rt
         .registered_commands()
         .into_iter()
         .find(|c| c.name() == name)
         .unwrap_or_else(|| panic!("{name} registered"));
-    let bargs = match cmd.prepare_bridge("", &json!(null)).unwrap() {
+    let bargs = match cmd.prepare_bridge(raw, &json!(null)).unwrap() {
         BridgePrep::Ready(bargs) => bargs,
         BridgePrep::ArgError(out) => panic!("unexpected arg error: {}", out.text),
     };
@@ -211,8 +217,10 @@ fn rewind_survives_a_raising_exec_with_one_warning() {
     rt.set_session_entries(entries);
 
     rt.dispatch_event("turn_end", &json!({})).unwrap();
-    let out = run_plain_command(&rt, "undo");
-    assert!(out.starts_with("undone to 01A1"), "undo said {out:?}");
+    // No usable snapshot could be taken (every git call failed), so no
+    // checkpoint was recorded and the restore declines.
+    let out = run_command_with_args(&rt, "checkpoint-restore", "01A2");
+    assert_eq!(out, "nothing to restore", "restore said {out:?}");
 
     let r = rec.lock().unwrap();
     assert!(r.errors.is_empty(), "no error logs: {:?}", r.errors);
@@ -246,15 +254,15 @@ fn redo_survives_a_turn_between_undo_and_redo() {
     rt.set_session_entries(entries);
     rt.dispatch_event("turn_end", &json!({})).unwrap();
 
-    let out = run_plain_command(&rt, "undo");
-    assert!(out.starts_with("undone to 01A1"), "undo said {out:?}");
+    let out = run_command_with_args(&rt, "checkpoint-restore", "01A1");
+    assert!(out.starts_with("restored to 01A1"), "restore said {out:?}");
     assert_eq!(
         std::fs::read_to_string(dir.path().join("tracked.txt")).unwrap(),
         "v1.5\n"
     );
 
-    // A prompt lands between /undo and /redo; the redo entry must
-    // survive the turn_end.
+    // A prompt lands between /checkpoint-restore and /redo; the redo
+    // entry must survive the turn_end.
     rt.dispatch_event("turn_end", &json!({})).unwrap();
     assert_eq!(run_plain_command(&rt, "redo"), "re-applied");
     assert_eq!(
@@ -290,8 +298,8 @@ fn undo_restores_tracked_changes_and_leaves_untracked_files() {
     rt.set_session_entries(entries);
     rt.dispatch_event("turn_end", &json!({})).unwrap();
 
-    let out = run_plain_command(&rt, "undo");
-    assert!(out.starts_with("undone to 01A1"), "undo said {out:?}");
+    let out = run_command_with_args(&rt, "checkpoint-restore", "01A1");
+    assert!(out.starts_with("restored to 01A1"), "restore said {out:?}");
     assert_eq!(
         std::fs::read_to_string(dir.path().join("tracked.txt")).unwrap(),
         "v1.5\n",
@@ -308,7 +316,7 @@ fn undo_restores_tracked_changes_and_leaves_untracked_files() {
     assert!(
         r.notifies
             .iter()
-            .any(|s| s.contains("tracked modifications + conversation")),
+            .any(|s| s.contains("restored tracked modifications")),
         "honest scope notice, got {:?}",
         r.notifies
     );

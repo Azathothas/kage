@@ -403,6 +403,50 @@ impl App {
         self.picker_kind = Some(PickerKind::Mcp);
     }
 
+    /// Ask the engine for the prompts a rewind can target; the picker
+    /// opens when [`kage_core::protocol::HostEvent::PromptList`]
+    /// arrives.
+    pub(crate) fn begin_rewind(&mut self) {
+        let _ = self.send_request(RunRequest::ListPrompts);
+    }
+
+    /// Paint the rewind picker on the engine's prompt list: the
+    /// branch tree oldest first, branches indented one level per
+    /// rewind they were re-prompted through, the active head badged
+    /// and selected. Picking one keeps that prompt's full turn, its
+    /// reply included, and abandons what follows; the session
+    /// continues from the turn's end.
+    pub(crate) fn show_rewind_picker(&mut self, prompts: Vec<kage_core::protocol::PastPrompt>) {
+        if prompts.is_empty() {
+            self.notify("nothing to rewind");
+            return;
+        }
+        let mut selected = prompts.len() - 1;
+        let items = prompts
+            .into_iter()
+            .enumerate()
+            .map(|(index, prompt)| {
+                if prompt.active {
+                    selected = index;
+                }
+                let indent = "  ".repeat(prompt.depth as usize);
+                let width = REWIND_LABEL_WIDTH.saturating_sub(indent.len());
+                let mut item = crate::picker::PickItem::simple(prompt.at)
+                    .with_label(format!("{indent}{}", rewind_label(&prompt.prompt, width)));
+                if prompt.active {
+                    item = item.with_badge('*');
+                }
+                item
+            })
+            .collect();
+        self.picker = Some(
+            OverlayPicker::new_ordered("rewind to prompt", items)
+                .with_selected(selected)
+                .with_note("enter keeps the picked turn and drops what follows"),
+        );
+        self.picker_kind = Some(PickerKind::Rewind);
+    }
+
     pub(crate) fn dispatch_picker_key(
         &mut self,
         key: ratatui::crossterm::event::KeyEvent,
@@ -461,6 +505,9 @@ impl App {
                         if let Ok(idx) = value.parse::<usize>() {
                             lock(&self.buffer).set_focus(Some(idx));
                         }
+                    }
+                    Some(PickerKind::Rewind) => {
+                        let _ = self.send_request(RunRequest::Rewind { at: value });
                     }
                     None => {}
                 }
@@ -831,6 +878,29 @@ fn mcp_offer(server: &kage_core::protocol::McpServerInfo) -> String {
         parts.push(count(server.templates.len(), "template"));
     }
     parts.join(" \u{b7} ")
+}
+
+/// How wide a rewind picker row's label may grow before it is cut.
+const REWIND_LABEL_WIDTH: usize = 72;
+
+/// One-line label for a rewound prompt, cut to `max`: the first line
+/// of its first text block, else a note for an image-only prompt.
+fn rewind_label(prompt: &[kage_core::Content], max: usize) -> String {
+    let line = prompt
+        .iter()
+        .find_map(|block| match block {
+            kage_core::Content::Text { text } => {
+                Some(text.lines().next().unwrap_or_default().to_owned())
+            }
+            kage_core::Content::Image { mime, .. } => Some(format!("[image {mime}]")),
+            _ => None,
+        })
+        .unwrap_or_else(|| "(no text)".to_owned());
+    if line.chars().count() <= max {
+        return line;
+    }
+    let cut: String = line.chars().take(max).collect();
+    format!("{cut}\u{2026}")
 }
 
 #[cfg(test)]

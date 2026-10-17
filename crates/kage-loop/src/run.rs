@@ -106,11 +106,14 @@ where
                 return finish_cancelled(&mut emit);
             }
 
-            match drain_messages(config.steering_mode, cancel, || hooks.get_steering()) {
-                Ok(Some(text)) => push_user_text(cx, &mut emit, text),
-                Ok(None) => {}
+            match drain_content(config.steering_mode, cancel, || hooks.get_steering()) {
+                Ok(items) => {
+                    for content in items {
+                        push_user_content(cx, &mut emit, content);
+                    }
+                }
                 Err(LoopError::Cancelled) => return finish_cancelled(&mut emit),
-                Err(_) => unreachable!("drain_messages only fails with Cancelled"),
+                Err(_) => unreachable!("drain only fails with Cancelled"),
             }
 
             if let Err(kind) = maybe_compact(cx, config, provider, cancel, hooks, &mut emit) {
@@ -335,6 +338,71 @@ where
     }
 }
 
+/// Drain queued steering content from a hook poll according to `mode`.
+/// In `OneAtATime`, polls once and returns at most the one entry. In
+/// `All`, polls repeatedly until the hook returns `None`, then returns
+/// every entry. A queue of plain text entries still lands as one user
+/// message joined with blank lines (plus [`DRAIN_TRUNCATED_NOTE`] when
+/// the [`MAX_DRAINED_MESSAGES`] cap drops overflow, so the truncation
+/// is visible in history); mixed entries are injected one user message
+/// each, with the note appended as its own message on cap.
+///
+/// Cancel is polled between polls; tripping it aborts the drain with
+/// [`LoopError::Cancelled`].
+fn drain_content<F: FnMut() -> Option<Vec<Content>>>(
+    mode: SteeringMode,
+    cancel: &CancelFlag,
+    mut poll: F,
+) -> Result<Vec<Vec<Content>>, LoopError> {
+    if cancel.is_cancelled() {
+        return Err(LoopError::Cancelled);
+    }
+    let Some(first) = poll() else {
+        return Ok(Vec::new());
+    };
+    if mode == SteeringMode::OneAtATime {
+        return Ok(vec![first]);
+    }
+    let mut items = vec![first];
+    let mut capped = false;
+    while let Some(next) = poll() {
+        if cancel.is_cancelled() {
+            return Err(LoopError::Cancelled);
+        }
+        if items.len() >= MAX_DRAINED_MESSAGES {
+            capped = true;
+            break;
+        }
+        items.push(next);
+    }
+    let all_text = items
+        .iter()
+        .all(|c| matches!(c.as_slice(), [Content::Text { .. }]));
+    if all_text {
+        let mut joined = String::new();
+        for content in &items {
+            if !joined.is_empty() {
+                joined.push_str("\n\n");
+            }
+            let Some(Content::Text { text }) = content.first() else {
+                continue;
+            };
+            joined.push_str(text);
+        }
+        if capped {
+            joined.push_str("\n\n");
+            joined.push_str(DRAIN_TRUNCATED_NOTE);
+        }
+        return Ok(vec![vec![Content::Text { text: joined }]]);
+    }
+    if capped {
+        items.push(vec![Content::Text {
+            text: DRAIN_TRUNCATED_NOTE.to_owned(),
+        }]);
+    }
+    Ok(items)
+}
+
 /// Drain queued messages from a hook poll according to `mode`. In
 /// `OneAtATime`, polls once and returns whatever the hook gave us. In
 /// `All`, polls repeatedly until the hook returns `None`, then joins the
@@ -396,15 +464,25 @@ fn append_all<F: FnMut(LoopEvent)>(cx: &mut AgentContext, emit: &mut F, messages
     }
 }
 
-/// Append a user text message that the loop injected (steering, follow-up,
-/// or a doom-loop nudge).
-fn push_user_text<F: FnMut(LoopEvent)>(cx: &mut AgentContext, emit: &mut F, text: String) {
+/// Append a user message the loop injected (steering, follow-up, or a
+/// doom-loop nudge).
+fn push_user_content<F: FnMut(LoopEvent)>(
+    cx: &mut AgentContext,
+    emit: &mut F,
+    content: Vec<Content>,
+) {
     let message = Message::new(
         kage_core::Role::User,
-        vec![Content::Text { text }],
+        content,
         cx.history.last().map(|m| m.id),
     );
     append(cx, emit, message);
+}
+
+/// Append a user text message that the loop injected (follow-up
+/// hooks and doom-loop nudges).
+fn push_user_text<F: FnMut(LoopEvent)>(cx: &mut AgentContext, emit: &mut F, text: String) {
+    push_user_content(cx, emit, vec![Content::Text { text }]);
 }
 
 /// Rewrite persisted `Content::Thinking` blocks into inline

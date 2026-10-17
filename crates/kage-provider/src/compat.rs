@@ -203,6 +203,21 @@ pub const COMPAT_PROVIDERS: &[CompatProvider] = &[
         base_url: "https://api.commandcode.ai/provider",
         kind: CompatKind::Anthropic,
     },
+    // OpenCode's two gateways front the same model pool behind one
+    // `OPENCODE_API_KEY` credential: Zen is the standard endpoint, Go
+    // the cheaper relay with a smaller list.
+    CompatProvider {
+        id: "opencode",
+        display_name: "OpenCode Zen",
+        base_url: "https://opencode.ai/zen/v1",
+        kind: CompatKind::OpenAi,
+    },
+    CompatProvider {
+        id: "opencode-go",
+        display_name: "OpenCode Go",
+        base_url: "https://opencode.ai/zen/go/v1",
+        kind: CompatKind::OpenAi,
+    },
 ];
 
 #[cfg(test)]

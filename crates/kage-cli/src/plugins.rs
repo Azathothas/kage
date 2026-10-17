@@ -14,7 +14,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use kage_core::config::{KeybindingsConfig, PluginsConfig};
-use kage_core::{LoopEvent, Message, ToolOutput, sync::lock};
+use kage_core::{Content, LoopEvent, Message, ToolOutput, sync::lock};
 use kage_loop::{CompactionPrep, Hooks, StreamRequest, TurnSummary};
 use kage_plugin::{
     LoadReport, LogLevel, PluginRuntime, PluginRuntimeBuilder, SharedHostLog, SharedOptions,
@@ -534,7 +534,7 @@ impl<H: Hooks> Hooks for PluginEventHooks<H> {
         }
     }
 
-    fn get_steering(&mut self) -> Option<String> {
+    fn get_steering(&mut self) -> Option<Vec<Content>> {
         // Inner host hooks win when they have a steering message: a
         // CLI-issued slash command or the user's typed prompt should
         // not be overridden by a plugin's `send_message` chatter. We
@@ -544,7 +544,9 @@ impl<H: Hooks> Hooks for PluginEventHooks<H> {
             return Some(msg);
         }
         self.drain_plugin_messages();
-        self.pending_steering.pop_front()
+        self.pending_steering
+            .pop_front()
+            .map(|text| vec![Content::Text { text }])
     }
 
     fn get_followup(&mut self) -> Option<String> {
@@ -604,27 +606,46 @@ mod tests {
         let rt = Arc::new(granted_runtime());
         send(&rt, "kage.send_message('please continue')");
         let mut hooks = PluginEventHooks::new(NoopHooks, Arc::clone(&rt));
-        assert_eq!(hooks.get_steering(), Some("please continue".to_owned()));
+        assert_eq!(
+            hooks.get_steering(),
+            Some(vec![Content::Text {
+                text: "please continue".into()
+            }])
+        );
         // Queue exhausted after one drain.
         assert_eq!(hooks.get_steering(), None);
     }
 
     #[test]
     fn inner_steering_takes_precedence_over_plugin_queue() {
-        struct InnerOnce(Option<String>);
+        struct InnerOnce(Option<Vec<Content>>);
         impl Hooks for InnerOnce {
-            fn get_steering(&mut self) -> Option<String> {
+            fn get_steering(&mut self) -> Option<Vec<Content>> {
                 self.0.take()
             }
         }
         let rt = Arc::new(granted_runtime());
         send(&rt, "kage.send_message('plugin says hi')");
-        let mut hooks =
-            PluginEventHooks::new(InnerOnce(Some("user typed this".into())), Arc::clone(&rt));
+        let mut hooks = PluginEventHooks::new(
+            InnerOnce(Some(vec![Content::Text {
+                text: "user typed this".into(),
+            }])),
+            Arc::clone(&rt),
+        );
         // First poll: inner wins.
-        assert_eq!(hooks.get_steering(), Some("user typed this".to_owned()));
+        assert_eq!(
+            hooks.get_steering(),
+            Some(vec![Content::Text {
+                text: "user typed this".into()
+            }])
+        );
         // Second poll: plugin queue drains.
-        assert_eq!(hooks.get_steering(), Some("plugin says hi".to_owned()));
+        assert_eq!(
+            hooks.get_steering(),
+            Some(vec![Content::Text {
+                text: "plugin says hi".into()
+            }])
+        );
     }
 
     fn sample_prep() -> CompactionPrep {
@@ -690,8 +711,18 @@ mod tests {
             "kage.send_message('first'); kage.send_message('second')",
         );
         let mut hooks = PluginEventHooks::new(NoopHooks, Arc::clone(&rt));
-        assert_eq!(hooks.get_steering(), Some("first".to_owned()));
-        assert_eq!(hooks.get_steering(), Some("second".to_owned()));
+        assert_eq!(
+            hooks.get_steering(),
+            Some(vec![Content::Text {
+                text: "first".into()
+            }])
+        );
+        assert_eq!(
+            hooks.get_steering(),
+            Some(vec![Content::Text {
+                text: "second".into()
+            }])
+        );
         assert_eq!(hooks.get_steering(), None);
     }
 

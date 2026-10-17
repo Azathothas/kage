@@ -160,9 +160,9 @@ impl super::Dispatcher {
         session.idle = Some(idle);
         record_late_title(&self.bus, id, session);
         settle_working(&self.bus, id, session);
-        let steered: Vec<String> = lock(&session.steering).drain(..).collect();
-        for text in steered.into_iter().rev() {
-            session.queued.push_front(vec![Content::Text { text }]);
+        let steered: Vec<Vec<Content>> = lock(&session.steering).drain(..).collect();
+        for content in steered.into_iter().rev() {
+            session.queued.push_front(content);
         }
         if self.shutting_down {
             return;

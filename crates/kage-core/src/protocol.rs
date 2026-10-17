@@ -292,6 +292,41 @@ pub enum HostEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         content: Option<Vec<Content>>,
     },
+    /// A [`CommandKind::Undo`] or [`CommandKind::Rewind`] was answered:
+    /// the session branched in place in the same file. For Undo,
+    /// `prompt` is the dropped prompt, for the client to put back into
+    /// its editor; for Rewind the picked turn stays in the
+    /// conversation and `prompt` is `None`. Never recorded. Live.
+    Undone {
+        /// The prompt to restore into the editor, or `None`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prompt: Option<Vec<Content>>,
+    },
+    /// A [`CommandKind::ListPrompts`] was answered: every user prompt
+    /// the session's branch tree holds, oldest first, each one a
+    /// target for [`CommandKind::Rewind`]. Never recorded. Live.
+    PromptList {
+        /// The prompts, depth-first over the branch tree.
+        prompts: Vec<PastPrompt>,
+    },
+}
+
+/// One past user prompt a client may rewind to, as reported by
+/// [`HostEvent::PromptList`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PastPrompt {
+    /// Entry id of the prompt's message, the `at` a
+    /// [`CommandKind::Rewind`] names.
+    pub at: String,
+    /// The prompt, as it should go back into the editor.
+    pub prompt: Vec<Content>,
+    /// How many branch edges sit above the prompt: `0` for every
+    /// prompt on the original thread, `1` for a branch re-prompted
+    /// off it, and so on.
+    pub depth: u32,
+    /// Whether the prompt is the head, the one the conversation would
+    /// continue from. Exactly one row carries it.
+    pub active: bool,
 }
 
 /// One member of a [`HostEvent::AgentSpawned`] swarm batch: what its
@@ -583,6 +618,25 @@ pub enum CommandKind {
         /// Continue on the copy instead of leaving it as a snapshot.
         #[serde(default)]
         switch: bool,
+    },
+    /// Drop the last user prompt and everything after it: branch the
+    /// session in place, continuing from the entry before that
+    /// prompt, and answer with [`HostEvent::Undone`]. Refused while a
+    /// run is in flight.
+    Undo,
+    /// List the user prompts a rewind can target, oldest first over
+    /// the branch tree, answering with [`HostEvent::PromptList`].
+    /// Read-only.
+    ListPrompts,
+    /// Branch the session in place to the end of the turn of the user
+    /// prompt named by an entry-id prefix from
+    /// [`HostEvent::PromptList`]: the prompt and its reply stay and
+    /// what follows the turn is abandoned, answering with
+    /// [`HostEvent::Undone`]. Any prompt on any branch is a target.
+    /// Refused while a run is in flight.
+    Rewind {
+        /// Entry id of the user prompt to drop.
+        at: String,
     },
     /// Fork the session stored at `path` at its latest entry.
     ForkFile {
@@ -1027,6 +1081,9 @@ mod tests {
             HostEvent::PromptWithdrawn {
                 delivery: Delivery::Queue,
                 content: Some(rich_message().content),
+            },
+            HostEvent::Undone {
+                prompt: Some(rich_message().content),
             },
         ]
     }

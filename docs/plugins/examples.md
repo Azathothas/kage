@@ -215,8 +215,11 @@ Windows the shell tool uses PowerShell.
 
 ## conversation and file rewind
 
+The built-in `/undo` and `/rewind` commands (or `esc` `esc`) move the
+conversation back, but they leave the working tree as it is.
 `plugins/examples/rewind.lua` is the worked example for the
-[capability tier](/plugins/capabilities). Grant it both capabilities:
+[capability tier](/plugins/capabilities) that adds the file half. Grant
+it both capabilities:
 
 ```toml
 [plugins.capabilities]
@@ -228,7 +231,7 @@ It snapshots tracked files with `git stash create` on every
 
 ```lua
 local checkpoints, redo = {}, {} -- redo survives later turns: a prompt
-                                 -- between /undo and /redo does not wipe it
+                                 -- between restore and redo does not wipe it
 
 kage.on("turn_end", function()
   if not files or not in_git_repo() then return end
@@ -243,30 +246,24 @@ before `in_git_repo()`, so a plugin without the grant returns before
 any command runs; the git check follows, because it is the one that
 needs the grant.
 
-`/undo` is the one-step ergonomic case: it drops the last exchange by
-forking back to the entry just before your most recent prompt and
-restoring files there. Repeat it to walk further back, one exchange
-per call:
+`/checkpoint-restore [at]` brings the files along after a rewind: run
+the built-in `/undo` or `/rewind` first, then restore the tracked
+changes to the checkpoint of the turn you landed on. With an
+entry-id prefix it restores directly; without one it offers a picker
+built from `kage.session.entries()`. The state you leave behind goes
+to the redo stack, and `/redo` re-applies it:
 
 ```lua
-local function undo_target()        -- entry before the last user msg
-  -- ... scan kage.session.entries() backwards for the last user role
-end
-local at = undo_target()
-restore(checkpoint_for(at).sha)     -- kage.exec git checkout
-kage.session.fork_to(at)            -- host reseats next turn
+local cp = checkpoint_for(at)       -- newest checkpoint at or before `at`
+local pre = snapshot()              -- keep the state you leave behind
+if pre then redo[#redo + 1] = pre end
+restore(cp.sha)                     -- kage.exec git checkout
 ```
 
-`/rewind` is the same move with a picker: it lists the user turns from
-`kage.session.entries()` and forks at whichever you choose. `/redo`
-(alias `/rewind-redo`) re-applies the file changes the last `/undo` or
-`/rewind` undid.
-
 It degrades honestly. Without `session_write` the plugin disables
-itself. Without `exec` it still rewinds the conversation but skips
-file restore. The conversation fork is one-way. `/redo` restores
-files, not the un-forked conversation, because a session is
-append-only and a fork is a new branch.
+itself. Without `exec` it tracks nothing and the commands say so. File
+snapshots use `git stash create`, so they cover tracked changes only,
+not untracked files.
 
 ## testing without the TUI
 

@@ -313,7 +313,8 @@ pub(crate) const NO_CREDENTIALS_MESSAGE: &str = "kage: no provider credentials f
     Run `kage auth login` to save one, or export one of ANTHROPIC_API_KEY, \
     OPENAI_API_KEY, GEMINI_API_KEY, ZAI_API_KEY, ZAI_CODING_API_KEY, DEEPSEEK_API_KEY, \
     GROQ_API_KEY, MISTRAL_API_KEY, CEREBRAS_API_KEY, XAI_API_KEY, OPENROUTER_API_KEY, \
-    FIREWORKS_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY, XIAOMI_API_KEY or CMD_API_KEY.";
+    FIREWORKS_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY, XIAOMI_API_KEY, CMD_API_KEY \
+    or OPENCODE_API_KEY.";
 
 /// Printed when no model was requested and none could be picked.
 pub(crate) const NO_MODEL_MESSAGE: &str =

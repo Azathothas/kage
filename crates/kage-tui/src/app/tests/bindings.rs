@@ -230,11 +230,18 @@ fn esc_on_an_empty_draft_while_working_interrupts() {
 }
 
 #[test]
-fn idle_esc_on_an_empty_draft_sends_nothing() {
+fn idle_esc_on_an_empty_draft_arms_then_double_esc_rewinds() {
     let (mut app, rx, _usage) = app_with_usage();
     app.set_editor_modeless(true);
     assert_eq!(app.handle_key(code(KeyCode::Esc)), None);
+    assert!(rx_idle(&rx), "the first esc only arms");
+    assert_eq!(app.footer_hint(), "esc again to rewind");
     assert_eq!(app.handle_key(code(KeyCode::Esc)), None);
+    assert_eq!(
+        rx.try_recv(),
+        Ok(RunRequest::ListPrompts),
+        "the second esc opens the rewind picker"
+    );
     assert!(rx_idle(&rx));
     assert_eq!(app.footer_hint(), "? for shortcuts \u{B7} / for commands");
 }

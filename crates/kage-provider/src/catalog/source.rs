@@ -76,6 +76,8 @@ pub const SUPPORTED_PROVIDERS: &[ProviderMap] = &[
     // they list under their own kage id.
     ProviderMap::same("commandcode"),
     ProviderMap::same("commandcode-claude"),
+    ProviderMap::same("opencode"),
+    ProviderMap::same("opencode-go"),
     ProviderMap::same("google"),
 ];
 
