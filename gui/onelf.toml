@@ -11,9 +11,29 @@ description = "Desktop client for the kage coding agent"
 license = "MIT"
 homepage = "https://github.com/QaidVoid/kage"
 
+# 256 KiB blocks pack about 6% smaller than onelf's 64 KiB default.
 [compression]
 level = 22
+block-size = 262144
 
+# egui draws through glow, so the slimmed Mesa GL stack rides along and
+# the bundle draws on a host with none, such as Alpine. onelf's launch
+# resolver weighs each bundled library against the host's copy and takes
+# the newer.
 [bundle]
 strip = true
 scan-dlopen = true
+gl = true
+dri = true
+# winit and kage dlopen these, and the scan does not see them all.
+include = [
+  "libXcursor.so.1",
+  "libXi.so.6",
+  "libXrender.so.1",
+  "libxkbcommon-x11.so.0",
+  "libfontconfig.so.1",
+  "libfreetype.so.6",
+]
+# Nothing kage loads needs these. libdecor's GTK plugin would pull in
+# GTK 3, freetype offers harfbuzz, and only Zink would use Vulkan.
+exclude = ["libdecor", "libgtk", "libgdk", "libharfbuzz", "libvulkan"]
