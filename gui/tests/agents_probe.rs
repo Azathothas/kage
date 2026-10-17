@@ -197,6 +197,87 @@ fn a_running_agent_opens_in_the_workbench_and_streams_there() {
 }
 
 #[test]
+fn an_open_agent_lets_the_workbench_narrow() {
+    let mut harness = harness();
+    opened(&mut harness);
+    for (session, update_) in [
+        (
+            PARENT,
+            serde_json::json!({"sessionUpdate": "_kage/turn", "phase": "start"}),
+        ),
+        (
+            PARENT,
+            serde_json::json!({
+                "sessionUpdate": "tool_call", "toolCallId": "call-agent", "title": "agent",
+                "kind": "other", "status": "pending",
+                "rawInput": {"description": "list files", "prompt": "list"}
+            }),
+        ),
+        (
+            PARENT,
+            serde_json::json!({
+                "sessionUpdate": "subagent_update", "subagentSessionId": CHILD,
+                "name": "general", "task": "list files", "toolCallId": "call-agent",
+                "capabilities": {"cancel": true}
+            }),
+        ),
+        (
+            CHILD,
+            serde_json::json!({"sessionUpdate": "_kage/turn", "phase": "start"}),
+        ),
+        (
+            CHILD,
+            serde_json::json!({
+                "sessionUpdate": "tool_call", "toolCallId": "c1", "title": "bash",
+                "kind": "execute", "status": "completed",
+                "rawInput": {"command": "find . -name '*.rs' -not -path './target/*' -exec wc -l {} +"}
+            }),
+        ),
+        (
+            CHILD,
+            serde_json::json!({
+                "sessionUpdate": "agent_message_chunk",
+                "content": {"type": "text", "text": "Found them in `src/some/deeply/nested/module/path/file.rs`.\n\n```rust\nlet listing = std::fs::read_dir(\"src\").expect(\"the source directory is readable\");\n```\n\n| file | lines |\n| --- | --- |\n| src/main.rs | 120 |"}
+            }),
+        ),
+    ] {
+        update(&mut harness, session, update_);
+    }
+    use egui_kittest::kittest::Queryable as _;
+    harness.get_by_label("general").click();
+    for _ in 0..10 {
+        harness.step();
+    }
+    assert_eq!(
+        testutil::count(&harness, "Stop"),
+        1,
+        "the click opened the agent's detail"
+    );
+    let panel = |harness: &Harness<'static, Rig>| {
+        egui::containers::panel::PanelState::load(&harness.ctx, egui::Id::new("workbench"))
+            .expect("the workbench docks at this width")
+            .outer_rect
+    };
+    let edge = panel(&harness).left_center();
+    let far = edge + egui::vec2(600.0, 0.0);
+    harness.hover_at(edge);
+    harness.step();
+    harness.drag_at(edge);
+    harness.step();
+    harness.hover_at(far);
+    harness.step();
+    harness.drop_at(far);
+    for _ in 0..4 {
+        harness.step();
+    }
+    let width = panel(&harness).width();
+    assert!(
+        width < 250.0,
+        "the agent's transcript lets the panel narrow, got {width}"
+    );
+}
+
+#[test]
 fn the_swarm_pill_lists_its_members_on_a_click() {
     use egui_kittest::kittest::Queryable as _;
 

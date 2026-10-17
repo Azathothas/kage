@@ -487,24 +487,25 @@ fn empty_block(ui: &mut egui::Ui, icon: crate::icons::Icon, text: &str, palette:
     ui.vertical_centered(|ui| {
         crate::icons::icon(ui, icon, 28.0, palette.faint);
         ui.add_space(10.0);
-        // The text on its 21px line, as the reference's block sets it.
-        let galley = ui.painter().layout_no_wrap(
+        // The text wraps on its 21px lines inside the reference's 24px
+        // side padding, so it never holds the panel wider than itself.
+        let mut job = egui::text::LayoutJob::single_section(
             text.to_owned(),
-            egui::FontId::new(
-                FS_SM,
-                crate::theme::family(crate::theme::FAMILY_BODY_REGULAR),
-            ),
-            palette.faint,
+            egui::TextFormat {
+                font_id: egui::FontId::new(
+                    FS_SM,
+                    crate::theme::family(crate::theme::FAMILY_BODY_REGULAR),
+                ),
+                color: palette.faint,
+                line_height: Some(crate::theme::line_h(FS_SM)),
+                ..Default::default()
+            },
         );
-        let line = crate::theme::line_h(FS_SM);
-        let (rect, response) = ui.allocate_exact_size(
-            egui::vec2(galley.size().x.ceil(), line),
-            egui::Sense::hover(),
-        );
+        job.wrap.max_width = (ui.available_width() - 48.0).max(0.0);
+        let galley = ui.painter().layout_job(job);
+        let (rect, response) = ui.allocate_exact_size(galley.size().ceil(), egui::Sense::hover());
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
-        let y = crate::theme::line_y(rect.top(), line, &galley);
-        ui.painter()
-            .galley(egui::pos2(rect.left(), y), galley, palette.faint);
+        ui.painter().galley(rect.min, galley, palette.faint);
     });
 }
 
@@ -768,64 +769,6 @@ fn head(
             }
         }
     };
-    let mut x = bar.left() + 8.0;
-    // The middle of what sits above the bottom border.
-    let mid = bar.top() + (bar.height() - 1.0) / 2.0;
-    let agent_on = workbench.agent_on();
-    for tab in Tab::ALL {
-        let on = workbench.tab() == tab && !agent_on;
-        let label = on.then_some(tab.label());
-        let (rect, response) = tab_button(
-            ui,
-            egui::pos2(x, mid),
-            tab.icon(),
-            label,
-            count(tab).as_deref(),
-            on,
-            tab.label(),
-            palette,
-        );
-        x = rect.right() + 2.0;
-        if response.clicked() {
-            workbench.set_tab(tab);
-        }
-    }
-    if let Some(id) = workbench.agent().map(str::to_owned) {
-        let name = session
-            .and_then(|session| session.agents.get(&id))
-            .and_then(|agent| agent.name.clone())
-            .unwrap_or_else(|| "agent".to_owned());
-        let (rect, response) = tab_button(
-            ui,
-            egui::pos2(x, mid),
-            crate::icons::Icon::Bot,
-            Some(&name),
-            None,
-            agent_on,
-            &name,
-            palette,
-        );
-        let close = egui::Rect::from_min_size(
-            egui::pos2(rect.right() - 8.0 - 15.0, mid - 7.5),
-            egui::vec2(15.0, 15.0),
-        );
-        let close_response = ui
-            .interact(close, ui.id().with("wb-agent-close"), egui::Sense::click())
-            .on_hover_cursor(egui::CursorIcon::PointingHand);
-        if close_response.hovered() {
-            ui.painter()
-                .rect_filled(close, egui::CornerRadius::same(8), palette.fill_hover);
-        }
-        crate::icons::themed_image(crate::icons::Icon::X, 11.0, palette.muted).paint_snapped(
-            ui,
-            egui::Rect::from_center_size(close.center(), egui::vec2(11.0, 11.0)),
-        );
-        if close_response.clicked() {
-            workbench.close_agent();
-        } else if response.clicked() {
-            workbench.agent_on = true;
-        }
-    }
     // The reference's extra small ghost button: 20px, a 12px glyph,
     // centered above the bottom border and 4px in from the end.
     let close = egui::Rect::from_min_size(
@@ -835,6 +778,93 @@ fn head(
         ),
         egui::vec2(20.0, 20.0),
     );
+    let mut x = bar.left() + 8.0;
+    // The middle of what sits above the bottom border.
+    let mid = bar.top() + (bar.height() - 1.0) / 2.0;
+    let agent_on = workbench.agent_on();
+    let agent_name = workbench.agent().map(|id| {
+        session
+            .and_then(|session| session.agents.get(id))
+            .and_then(|agent| agent.name.clone())
+            .unwrap_or_else(|| "agent".to_owned())
+    });
+    // A panel dragged too narrow sheds the active label, then the
+    // counts, and the tabs never run under the close button.
+    let counts = Tab::ALL.map(count);
+    let room = egui::Rect::from_min_max(bar.min, egui::pos2(close.left() - 4.0, bar.max.y));
+    let fits = |labels: bool, counted: bool| {
+        let tabs: f32 = Tab::ALL
+            .iter()
+            .zip(&counts)
+            .map(|(tab, count)| {
+                let on = labels && workbench.tab() == *tab && !agent_on;
+                let count = count.as_deref().filter(|_| counted);
+                tab_width(ui, on.then_some(tab.label()), count, false) + 2.0
+            })
+            .sum();
+        let agent = agent_name.as_deref().map_or(0.0, |name| {
+            tab_width(ui, Some(name).filter(|_| labels), None, true)
+        });
+        x + tabs + agent <= room.right()
+    };
+    let labeled = fits(true, true);
+    let counted = labeled || fits(false, true);
+    let mut tabs = ui.new_child(egui::UiBuilder::new().max_rect(room));
+    tabs.set_clip_rect(room.intersect(tabs.clip_rect()));
+    for (tab, count) in Tab::ALL.into_iter().zip(&counts) {
+        let on = workbench.tab() == tab && !agent_on;
+        let label = (on && labeled).then_some(tab.label());
+        let (rect, response) = tab_button(
+            &mut tabs,
+            egui::pos2(x, mid),
+            tab.icon(),
+            label,
+            count.as_deref().filter(|_| counted),
+            on,
+            tab.label(),
+            palette,
+        );
+        x = rect.right() + 2.0;
+        if response.clicked() {
+            workbench.set_tab(tab);
+        }
+    }
+    if let Some(name) = agent_name {
+        let (rect, response) = tab_button(
+            &mut tabs,
+            egui::pos2(x, mid),
+            crate::icons::Icon::Bot,
+            labeled.then_some(name.as_str()),
+            None,
+            agent_on,
+            &name,
+            palette,
+        );
+        let close = egui::Rect::from_min_size(
+            egui::pos2(rect.right() - 8.0 - 15.0, mid - 7.5),
+            egui::vec2(15.0, 15.0),
+        );
+        let close_response = tabs
+            .interact(
+                close,
+                tabs.id().with("wb-agent-close"),
+                egui::Sense::click(),
+            )
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        if close_response.hovered() {
+            tabs.painter()
+                .rect_filled(close, egui::CornerRadius::same(8), palette.fill_hover);
+        }
+        crate::icons::themed_image(crate::icons::Icon::X, 11.0, palette.muted).paint_snapped(
+            &tabs,
+            egui::Rect::from_center_size(close.center(), egui::vec2(11.0, 11.0)),
+        );
+        if close_response.clicked() {
+            workbench.close_agent();
+        } else if response.clicked() {
+            workbench.agent_on = true;
+        }
+    }
     // A child of the bar's own room, so drawing the button moves no
     // cursor under the head.
     let mut close_ui = ui.new_child(egui::UiBuilder::new().max_rect(close));
@@ -856,6 +886,41 @@ fn head(
     if close_response.clicked() {
         events.push(WorkbenchEvent::Close);
     }
+}
+
+/// The width of a head tab carrying `label` and `count`, with the
+/// agent's close mark when `closer`.
+fn tab_width(ui: &egui::Ui, label: Option<&str>, count: Option<&str>, closer: bool) -> f32 {
+    let measure = |text: &str, font: egui::FontId| {
+        ui.painter()
+            .layout_no_wrap(text.to_owned(), font, egui::Color32::PLACEHOLDER)
+            .size()
+            .x
+    };
+    tab_extent(
+        label.map(|label| {
+            measure(
+                label,
+                egui::FontId::new(FS_SM, family(crate::theme::FAMILY_BODY_REGULAR)),
+            )
+        }),
+        count.map(|count| {
+            measure(
+                count,
+                egui::FontId::new(FS_2XS, family(FAMILY_MONO_REGULAR)),
+            )
+        }),
+        closer,
+    )
+}
+
+/// A head tab's width from its label's and count's text widths.
+fn tab_extent(label: Option<f32>, count: Option<f32>, closer: bool) -> f32 {
+    10.0 + 14.0
+        + 10.0
+        + label.map_or(0.0, |w| 6.0 + w)
+        + count.map_or(0.0, |w| 6.0 + w)
+        + if closer { 6.0 + 15.0 } else { 0.0 }
 }
 
 /// One head tab: its icon, its label when given, and its count, 30px
@@ -891,17 +956,11 @@ fn tab_button(
             palette.faint,
         )
     });
-    let closer = icon == crate::icons::Icon::Bot;
-    let mut width = 10.0 + 14.0 + 10.0;
-    if let Some(label) = &label {
-        width += 6.0 + label.size().x;
-    }
-    if let Some(count) = &count {
-        width += 6.0 + count.size().x;
-    }
-    if closer {
-        width += 6.0 + 15.0;
-    }
+    let width = tab_extent(
+        label.as_ref().map(|label| label.size().x),
+        count.as_ref().map(|count| count.size().x),
+        icon == crate::icons::Icon::Bot,
+    );
     let rect = egui::Rect::from_min_size(
         egui::pos2(at.x, crate::theme::snap(at.y - 15.0)),
         egui::vec2(width, 30.0),

@@ -327,3 +327,58 @@ fn enter_in_the_palette_runs_its_row_and_leaves_the_draft() {
         "the draft stays"
     );
 }
+
+#[test]
+fn the_docked_workbench_drags_down_to_its_minimum_on_every_tab() {
+    let mut harness = harness(egui::vec2(1600.0, 900.0));
+    booted(&mut harness);
+    harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::B);
+    steps(&mut harness, 5);
+    for tab in ["Changes", "Files", "Agents", "Terminal", "Browser"] {
+        harness
+            .query_all_by_label(tab)
+            .next()
+            .unwrap_or_else(|| panic!("the {tab} tab draws"))
+            .click();
+        steps(&mut harness, 3);
+        let panel = |harness: &Harness<'static, Rig>| {
+            egui::containers::panel::PanelState::load(&harness.ctx, egui::Id::new("workbench"))
+                .expect("the workbench docks at this width")
+                .outer_rect
+        };
+        let edge = panel(&harness).left_center();
+        harness.hover_at(edge);
+        steps(&mut harness, 1);
+        harness.drag_at(edge);
+        steps(&mut harness, 1);
+        let far = edge + egui::vec2(600.0, 0.0);
+        harness.hover_at(far);
+        steps(&mut harness, 1);
+        harness.drop_at(far);
+        steps(&mut harness, 3);
+        let width = panel(&harness).width();
+        assert!(
+            width < 250.0,
+            "the {tab} pane lets the panel narrow, got {width}"
+        );
+        let close = harness.get_by_label("Close workbench").rect();
+        assert!(
+            close.right() <= panel(&harness).right(),
+            "the close button stays inside the panel: {close:?}"
+        );
+        let last = harness.get_by_label("Browser").rect();
+        assert!(
+            last.right() <= close.left(),
+            "every tab fits beside the close button: {last:?} {close:?}"
+        );
+        let edge = panel(&harness).left_center();
+        harness.hover_at(edge);
+        steps(&mut harness, 1);
+        harness.drag_at(edge);
+        steps(&mut harness, 1);
+        harness.hover_at(edge - egui::vec2(260.0, 0.0));
+        steps(&mut harness, 1);
+        harness.drop_at(edge - egui::vec2(260.0, 0.0));
+        steps(&mut harness, 3);
+    }
+}

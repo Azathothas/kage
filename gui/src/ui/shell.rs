@@ -17,6 +17,10 @@ const WORKBENCH_W: f32 = 460.0;
 /// The narrowest the chat pane gets when a side panel is dragged wider.
 const CHAT_MIN_W: f32 = 360.0;
 
+/// The narrowest the workbench drags to: room for its five tabs as
+/// bare icons beside the close button.
+const WORKBENCH_MIN_W: f32 = 240.0;
+
 /// The web client's breakpoint: at or under it the workbench overlays
 /// instead of taking a column.
 const MID_W: f32 = 1180.0;
@@ -165,7 +169,7 @@ pub fn show(
             .resizable(true)
             .show_separator_line(false)
             .default_size(panels.workbench_width)
-            .size_range(200.0..=f32::MAX)
+            .size_range(WORKBENCH_MIN_W..=f32::MAX)
             .frame(
                 egui::Frame::NONE
                     .fill(palette.sidebar)
@@ -188,7 +192,7 @@ pub fn show(
         );
         // Here the divider is the panel's own first pixel, as the
         // reference's handle belongs to the panel after it.
-        panels.workbench_width = rect.width().max(200.0);
+        panels.workbench_width = rect.width().max(WORKBENCH_MIN_W);
     }
 
     // The chat column keeps what is left.
