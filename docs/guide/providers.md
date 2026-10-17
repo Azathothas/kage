@@ -25,7 +25,8 @@ are configured under `[acp.*]`.
 ## openai-compatible providers
 
 Each of these is an OpenAI-compatible endpoint, except
-`commandcode-claude`, which speaks the Anthropic Messages format. kage
+`commandcode-claude` and `kenari-claude`, which speak the Anthropic
+Messages format. kage
 registers one when a credential is available, and its models become
 addressable as `<id>:<model>`:
 
@@ -49,11 +50,14 @@ addressable as `<id>:<model>`:
 | `xiaomi-token-plan-sgp` | Xiaomi Token Plan (Singapore) | `XIAOMI_API_KEY`     | `https://token-plan-sgp.xiaomimimo.com/v1`    |
 | `commandcode`           | Command Code                  | `CMD_API_KEY`        | `https://api.commandcode.ai/provider/v1`      |
 | `commandcode-claude`    | Command Code (Claude)         | `CMD_API_KEY`        | `https://api.commandcode.ai/provider`         |
+| `kenari`                | Kenari                        | `KENARI_API_KEY`     | `https://kenari.id/v1`                        |
+| `kenari-claude`         | Kenari (Claude)               | `KENARI_API_KEY`     | `https://kenari.id`                           |
 | `opencode`              | OpenCode Zen                  | `OPENCODE_API_KEY`   | `https://opencode.ai/zen/v1`                  |
 | `opencode-go`           | OpenCode Go                   | `OPENCODE_API_KEY`   | `https://opencode.ai/zen/go/v1`               |
 
-The four `xiaomi*` ids share one key, and so do the two coding plans
-and the two `opencode` ids. `zai` is billed apart from the coding
+The four `xiaomi*` ids share one key, and so do the two coding plans,
+the two `commandcode` ids, the two `kenari` ids and the two `opencode`
+ids. `zai` is billed apart from the coding
 plans and needs its own key.
 
 The model picker lists the models the [catalog](#model-catalog) knows
@@ -135,6 +139,30 @@ x-cmd-zdr = "1"
 ZDR requests route only to ZDR-capable upstreams, fail with a 422
 when none have capacity, and can cost more. See [Command Code's ZDR
 docs](https://commandcode.ai/docs/resources/zdr).
+
+### Kenari
+
+Kenari (kenari.id) serves every model on both wire formats behind one
+key. kage registers a provider for each:
+
+| id              | format                  | endpoint               |
+| --------------- | ----------------------- | ---------------------- |
+| `kenari`        | OpenAI Chat Completions | `https://kenari.id/v1` |
+| `kenari-claude` | Anthropic Messages      | `https://kenari.id`    |
+
+Both read the same key: `KENARI_API_KEY`, or the key saved with
+`kage auth login kenari`. The Claude models list under
+`kenari-claude`, so prompt caching and thinking follow the Anthropic
+rules. Everything else lists under `kenari`. Models are addressed as
+`kenari/gpt-6-luna` or `kenari-claude/claude-sonnet-5-5`.
+
+The bundled list carries only the models Kenari's
+[subscription plans](https://kenari.id/en/docs/subscriptions) cover,
+with no per-token pricing. Which of them your plan includes depends on
+the tier. Other Kenari models still work when named directly, and are
+billed to your balance. Every catalog refresh rebuilds the list from
+Kenari's plans and published model list, taking names and release
+dates from models.dev where it lists the model.
 
 ### OpenCode Zen and Go
 

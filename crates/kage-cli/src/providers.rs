@@ -305,6 +305,7 @@ const DEFAULT_MODEL_PRIORITY: &[&str] = &[
     "moonshotai",
     "kimi-for-coding",
     "commandcode",
+    "kenari",
 ];
 
 /// Printed when no provider other than `acp` is registered and the
@@ -313,8 +314,8 @@ pub(crate) const NO_CREDENTIALS_MESSAGE: &str = "kage: no provider credentials f
     Run `kage auth login` to save one, or export one of ANTHROPIC_API_KEY, \
     OPENAI_API_KEY, GEMINI_API_KEY, ZAI_API_KEY, ZAI_CODING_API_KEY, DEEPSEEK_API_KEY, \
     GROQ_API_KEY, MISTRAL_API_KEY, CEREBRAS_API_KEY, XAI_API_KEY, OPENROUTER_API_KEY, \
-    FIREWORKS_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY, XIAOMI_API_KEY, CMD_API_KEY \
-    or OPENCODE_API_KEY.";
+    FIREWORKS_API_KEY, MOONSHOT_API_KEY, KIMI_API_KEY, XIAOMI_API_KEY, CMD_API_KEY, \
+    KENARI_API_KEY or OPENCODE_API_KEY.";
 
 /// Printed when no model was requested and none could be picked.
 pub(crate) const NO_MODEL_MESSAGE: &str =
@@ -632,6 +633,34 @@ mod tests {
         let compact = request.replace(' ', "");
         assert!(
             compact.contains("\"model\":\"claude-sonnet-4-6\""),
+            "{request}"
+        );
+    }
+
+    #[test]
+    fn kenari_claude_posts_messages_with_the_shared_key() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = serve_one(listener, CLAUDE_SSE);
+        let config: kage_core::config::Config = toml::from_str(&format!(
+            r#"
+            [providers.kenari-claude]
+            base_url = "http://{addr}"
+            api_key_env = ""
+            "#
+        ))
+        .unwrap();
+        let mut store = auth::AuthStore::empty();
+        store.set_api_key("kenari", "kn-shared-key");
+        let mut registry = ProviderRegistry::new();
+        register_compat_providers(&config, &store, &mut registry);
+        assert!(registry.get("kenari").is_some());
+        stream_one_model(&registry, "kenari-claude/claude-sonnet-5-5");
+        let request = server.join().unwrap();
+        let lower = request.to_lowercase();
+        assert!(lower.starts_with("post /v1/messages "), "{request}");
+        assert!(
+            lower.contains("\r\nx-api-key: kn-shared-key\r\n"),
             "{request}"
         );
     }
