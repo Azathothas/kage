@@ -13,7 +13,7 @@
 //! instead.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::thread;
@@ -58,6 +58,12 @@ pub fn transcript() -> Vec<Frame> {
 #[derive(Clone, Default)]
 pub struct ReplayTransport {
     stop: Arc<AtomicBool>,
+    /// The highest outgoing request id the shell sent, so the
+    /// playback never hands an answer over before the request it
+    /// answers is in flight: a slow frame makes the pump deliver the
+    /// boot answer and the session answer in one drain, and an
+    /// answer with no request waiting for it is dropped unread.
+    asked: Arc<AtomicU64>,
 }
 
 impl ReplayTransport {
@@ -65,6 +71,39 @@ impl ReplayTransport {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The wire id of an answer frame, `None` for the rest.
+    fn answer_id(frame: &Frame) -> Option<u64> {
+        match frame {
+            Frame::Success { id, .. } | Frame::Failure { id, .. } => id.as_number(),
+            _ => None,
+        }
+    }
+
+    /// The request id `frame` must wait for before it plays, given the
+    /// last answer played so far, which it updates. An answer waits for
+    /// its own request; anything after an answer waits for the request
+    /// that follows it, so a turn's updates never land before the
+    /// prompt that started the turn.
+    fn gate(frame: &Frame, answered: &mut u64) -> u64 {
+        match Self::answer_id(frame) {
+            Some(id) => {
+                *answered = id;
+                id
+            }
+            None if *answered > 0 => *answered + 1,
+            None => 0,
+        }
+    }
+
+    /// Waits until the shell has sent requests up to `id`, so the
+    /// answer about to play lands on the request it answers.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn wait_for(&self, id: u64) {
+        while self.asked.load(Ordering::SeqCst) < id && !self.stop.load(Ordering::SeqCst) {
+            thread::sleep(Duration::from_millis(5));
+        }
     }
 }
 
@@ -101,9 +140,15 @@ impl Transport for ReplayTransport {
         }
     }
 
-    fn send(&self, _frame: Frame) {
+    fn send(&self, frame: Frame) {
         // Outgoing frames are drained and dropped: the recording has
-        // already decided what it answers.
+        // already decided what it answers. Their ids gate the
+        // playback, so an answer never outruns its request.
+        if let Frame::Request { id, .. } = &frame
+            && let Some(n) = id.as_number()
+        {
+            self.asked.fetch_max(n, Ordering::SeqCst);
+        }
     }
 
     fn close(&self) {
@@ -118,10 +163,12 @@ impl Transport for ReplayTransport {
 fn play_blocking(transport: ReplayTransport, events: EventSender) {
     let _ = events.send_blocking(Event::State(State::Connecting));
     let _ = events.send_blocking(Event::State(State::Connected));
+    let mut answered = 0;
     for frame in transcript() {
         if transport.stop.load(Ordering::SeqCst) {
             return;
         }
+        transport.wait_for(ReplayTransport::gate(&frame, &mut answered));
         thread::sleep(BEAT);
         if events.send_blocking(Event::Frame(frame)).is_err() {
             return;
@@ -136,9 +183,14 @@ fn play_blocking(transport: ReplayTransport, events: EventSender) {
 async fn play_timed(transport: ReplayTransport, events: EventSender) {
     let _ = events.send(Event::State(State::Connecting)).await;
     let _ = events.send(Event::State(State::Connected)).await;
+    let mut answered = 0;
     for frame in transcript() {
         if transport.stop.load(Ordering::SeqCst) {
             return;
+        }
+        let id = ReplayTransport::gate(&frame, &mut answered);
+        while transport.asked.load(Ordering::SeqCst) < id {
+            crate::transport::web::sleep(5).await;
         }
         crate::transport::web::sleep(BEAT_MILLIS).await;
         if events.send(Event::Frame(frame)).await.is_err() {
@@ -152,7 +204,80 @@ mod tests {
     use kage_client::wire::{ClientCapabilities, ContentBlock, StopReason};
     use kage_client::{Client, Frame, PromptOutcome, RequestId, TranscriptItem};
 
+    use super::ReplayTransport;
     use super::transcript;
+    use crate::transport::{Event, Transport};
+
+    /// The replay holds an answer back until the shell's request with
+    /// the same id is in flight: a slow frame would otherwise make
+    /// the pump deliver the boot answer and the session answer in
+    /// one drain, and an answer with no request waiting for it is
+    /// dropped unread, so the shell never follows the recording's
+    /// session.
+    #[test]
+    fn the_playback_waits_for_the_request_each_answer_answers() {
+        let (events, incoming) = async_channel::unbounded();
+        let mut transport = ReplayTransport::new();
+        transport.start(events);
+        // The connect states lead, then the boot answer waits for the
+        // initialize request.
+        let _ = incoming.recv_blocking().expect("the states lead");
+        let _ = incoming.recv_blocking().expect("the states lead");
+        for _ in 0..40 {
+            if incoming.try_recv().is_ok() {
+                panic!("the playback answered a request nobody sent");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        // The shell's requests let the matching answers through, in
+        // the recording's order.
+        transport.send(Frame::Request {
+            id: RequestId::Number(1),
+            method: "initialize".to_owned(),
+            params: serde_json::json!({}),
+        });
+        let boot = incoming.recv_blocking().expect("the boot answer plays");
+        assert!(
+            matches!(&boot, Event::Frame(_)),
+            "the first playback frame is the boot answer"
+        );
+        transport.send(Frame::Request {
+            id: RequestId::Number(2),
+            method: "session/new".to_owned(),
+            params: serde_json::json!({}),
+        });
+        let session = incoming.recv_blocking().expect("the session answer plays");
+        assert!(
+            matches!(&session, Event::Frame(_)),
+            "the second playback frame is the session answer"
+        );
+        transport.close();
+    }
+
+    /// A turn's updates wait for the prompt after the session answer,
+    /// so they never land ahead of the user message that started it.
+    #[test]
+    fn updates_wait_for_the_request_after_the_last_answer() {
+        let mut answered = 0;
+        let gates: Vec<u64> = transcript()
+            .iter()
+            .map(|frame| ReplayTransport::gate(frame, &mut answered))
+            .collect();
+        assert_eq!(
+            &gates[..3],
+            &[1, 2, 3],
+            "the boot, the session, then the turn"
+        );
+        assert!(
+            gates[2..gates.len() - 1].iter().all(|gate| *gate == 3),
+            "every update of the turn waits for the prompt"
+        );
+        assert_eq!(
+            gates.last(),
+            Some(&3),
+            "the prompt's answer waits for the prompt"
+        );
+    }
 
     /// Drives the transcript into a client the way the shell does:
     /// handshake first, a session, then the prompt the fixture was

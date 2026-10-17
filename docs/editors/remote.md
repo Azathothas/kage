@@ -274,27 +274,22 @@ The client works with any `kage` from 0.1.0 on. When the engine is
 older than the client needs, or lacks a feature it uses, the client
 says so in a banner.
 
-To build the bundle yourself (the full commands and caveats are in
-`gui/SPIKE.md`):
+To build the bundle yourself:
 
 ```sh
-rustup target add --toolchain nightly wasm32-unknown-unknown
+rustup target add wasm32-unknown-unknown
 cargo install wasm-bindgen-cli --version 0.2.129   # match gui/Cargo.lock
 cd gui
-cargo +nightly build --release --locked --target wasm32-unknown-unknown
+cargo build --release --locked --target wasm32-unknown-unknown --no-default-features
 wasm-bindgen --out-dir web --target web \
     target/wasm32-unknown-unknown/release/kage_desktop.wasm
-mkdir -p web/assets/icons
-cp "$(ls -d "${CARGO_HOME:-$HOME/.cargo}"/registry/src/*/gpui-kit-assets-*/assets/icons)"/*.svg \
-    web/assets/icons/
 cd ..
 cargo run --bin kage -- serve --web-dir gui/web
 ```
 
-The gui dependency versions are pinned in `gui/Cargo.toml` (one of
-them, `gpui-base`, as a git rev) and frozen in `gui/Cargo.lock`, so
-match the lockfile rather than any version number; the icon folder's
-version in the registry follows it.
+The gui dependency versions are frozen in `gui/Cargo.lock`, so match
+the lockfile rather than any version number; the wasm-bindgen CLI in
+particular has to equal the crate version the lock pins.
 
 Then open the page URL from the startup output:
 

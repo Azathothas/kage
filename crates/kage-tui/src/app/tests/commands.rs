@@ -86,6 +86,7 @@ fn a_session_switch_clears_a_pending_oneshot_swarm() {
                 title: None,
                 messages: Vec::new(),
                 compaction: None,
+                compacted_agents: Vec::new(),
             },
         )],
     );

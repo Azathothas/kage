@@ -319,10 +319,12 @@ impl Drop for StdioTransport {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use std::io::Write;
     use std::path::PathBuf;
     use std::time::{Duration, Instant};
 
+    #[cfg(unix)]
     use kage_client::{Client, Frame, PromptOutcome};
 
     use super::{Config, StdioTransport, refusal, resolve};
@@ -331,6 +333,7 @@ mod tests {
     /// A stub engine: answers whatever request arrives first with an
     /// initialize result, the next with a session id, the next with a
     /// prompt stop reason, always echoing the id it read.
+    #[cfg(unix)]
     const STUB: &str = r#"#!/bin/sh
 read line
 id=$(printf '%s' "$line" | sed -E 's/.*"id":([0-9]+).*/\1/')
@@ -344,17 +347,20 @@ printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id"
 "#;
 
     /// Writes the stub script and returns its path.
+    #[cfg(unix)]
     fn stub_script() -> PathBuf {
         script(STUB)
     }
 
     /// A stub engine that exits at once: the link dies before any
     /// frame can flow.
+    #[cfg(unix)]
     fn exiting_script() -> PathBuf {
         script("#!/bin/sh\nexit 0\n")
     }
 
     /// Writes `contents` as an executable script and returns its path.
+    #[cfg(unix)]
     fn script(contents: &str) -> PathBuf {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -376,6 +382,7 @@ printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id"
     }
 
     /// The next frame event, skipping state changes, with a deadline.
+    #[cfg(unix)]
     fn next_frame(rx: &async_channel::Receiver<Event>) -> Frame {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
@@ -407,6 +414,7 @@ printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id"
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_prompt_reaches_the_stub_child_and_its_reply_lands_in_the_client() {
         let script = stub_script();
@@ -494,6 +502,7 @@ printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\n' "$id"
         ));
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_send_into_a_dead_child_is_reported_not_swallowed() {
         let script = exiting_script();

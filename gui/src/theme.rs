@@ -1,18 +1,16 @@
-//! The kage web client design tokens, typed for the desktop shell.
+//! The kage design tokens, typed for the egui shell.
 //!
 //! The values mirror the design's token sheet: two palettes (the dark
-//! kage shadow set and its light kage-dawn counterpart), the type
+//! kage shadow set and its light kage dawn counterpart), the type
 //! scale, the spacing and radius scales, control and panel metrics,
-//! and the shadow recipes. `apply_shadow` and `apply_dawn` install a
-//! palette on the running app and map it onto the component library's
-//! theme roles, so both frontends render the same colors as the web
-//! client.
+//! and the shadow recipes. [`apply_choice`] installs a palette on the
+//! running context and maps it onto egui's `Style`, so the shell
+//! renders the same colors as the web client.
 
-use std::borrow::Cow;
+use std::collections::BTreeMap;
+use std::sync::{Arc, PoisonError, RwLock};
 
-use gpui_kit::base::motion::Easing;
-use gpui_kit::component::theme::{ActiveTheme as _, Theme, ThemeColor, ThemeMode};
-use gpui_kit::{App, BoxShadow, FontWeight, Hsla, WindowAppearance, px, rgba};
+use egui::Color32;
 use serde::{Deserialize, Serialize};
 
 /// The display family for brand moments and headings.
@@ -50,19 +48,6 @@ pub const TRACKING_WORDMARK: f32 = -0.045;
 
 /// Wide tracking for uppercase section labels, in em multiples.
 pub const TRACKING_UPPER: f32 = 0.04;
-
-/// Regular text weight.
-pub const WEIGHT_REGULAR: FontWeight = FontWeight(400.0);
-/// Medium, used by chip labels and quiet emphasis.
-pub const WEIGHT_MEDIUM: FontWeight = FontWeight(500.0);
-/// Semibold, used by section labels and row titles.
-pub const WEIGHT_SEMIBOLD: FontWeight = FontWeight(600.0);
-
-/// Bold, used by the brand and emphasized titles.
-pub const WEIGHT_BOLD: FontWeight = FontWeight(700.0);
-
-/// Extra bold, used by the welcome wordmark.
-pub const WEIGHT_EXTRABOLD: FontWeight = FontWeight(800.0);
 
 /// 2px.
 pub const SP_1: f32 = 2.0;
@@ -163,55 +148,430 @@ pub const T_MED: f32 = 0.16;
 /// Slow transition, in seconds.
 pub const T_SLOW: f32 = 0.26;
 
-/// The shared motion curve of the design, cubic-bezier(0.16, 1, 0.3, 1).
-pub fn ease() -> Easing {
-    Easing::cubic_bezier(0.16, 1.0, 0.3, 1.0).expect("the design curve is valid")
+/// The registered family that renders regular body text, the
+/// proportional default.
+pub const FAMILY_BODY_REGULAR: &str = "Schibsted Grotesk Regular";
+
+/// The registered family that renders medium weight text, chip labels
+/// and quiet emphasis.
+pub const FAMILY_BODY_MEDIUM: &str = "Schibsted Grotesk Medium";
+
+/// The registered family that renders semibold text, section labels
+/// and row titles.
+pub const FAMILY_BODY_SEMIBOLD: &str = "Schibsted Grotesk SemiBold";
+
+/// The registered family that renders bold emphasis.
+pub const FAMILY_BODY_BOLD: &str = "Schibsted Grotesk Bold";
+
+/// The registered family that renders the welcome wordmark.
+pub const FAMILY_BODY_EXTRABOLD: &str = "Schibsted Grotesk ExtraBold";
+
+/// The registered mono families, one per weight, regular first.
+pub const FAMILY_MONO_REGULAR: &str = "JetBrains Mono Regular";
+/// Medium mono.
+pub const FAMILY_MONO_MEDIUM: &str = "JetBrains Mono Medium";
+/// Semibold mono.
+pub const FAMILY_MONO_SEMIBOLD: &str = "JetBrains Mono SemiBold";
+/// Bold mono.
+pub const FAMILY_MONO_BOLD: &str = "JetBrains Mono Bold";
+/// Extra bold mono.
+pub const FAMILY_MONO_EXTRABOLD: &str = "JetBrains Mono ExtraBold";
+
+/// The body face for prose: the regular body face with its line gap
+/// set so a line is [`LINE`] times the font size, the reference's line
+/// height. The markdown viewer renders under it; every other text keeps
+/// the face's own metrics.
+pub const FAMILY_PROSE: &str = "kage prose";
+/// The semibold face for prose: bold runs and headings.
+pub const FAMILY_PROSE_SEMIBOLD: &str = "kage prose semibold";
+/// The mono face for prose, set to the same line height.
+pub const FAMILY_PROSE_MONO: &str = "kage prose mono";
+
+/// The reference's line height over the font size.
+pub const LINE: f32 = 1.618;
+
+/// The height of one line of text at `size`, snapped to a whole pixel
+/// as the reference snaps every line.
+#[must_use]
+pub fn line_h(size: f32) -> f32 {
+    snap(size * LINE)
 }
 
-/// The bundled family files. Both frontends load these before any
-/// text is laid out, so the design families render even when the
-/// machine has none of them installed.
-/// Static per-weight faces. The engine selects a face by reported weight
-/// and never applies variable-font axes, so a variable TTF would render
-/// every request at its default instance.
-const FONT_FILES: &[&[u8]] = &[
-    include_bytes!("../assets/fonts/SchibstedGrotesk-Regular.ttf"),
-    include_bytes!("../assets/fonts/SchibstedGrotesk-Medium.ttf"),
-    include_bytes!("../assets/fonts/SchibstedGrotesk-SemiBold.ttf"),
-    include_bytes!("../assets/fonts/SchibstedGrotesk-Bold.ttf"),
-    include_bytes!("../assets/fonts/SchibstedGrotesk-ExtraBold.ttf"),
-    include_bytes!("../assets/fonts/Inter-Regular.ttf"),
-    include_bytes!("../assets/fonts/Inter-Medium.ttf"),
-    include_bytes!("../assets/fonts/Inter-SemiBold.ttf"),
-    include_bytes!("../assets/fonts/Inter-Bold.ttf"),
-    include_bytes!("../assets/fonts/Inter-ExtraBold.ttf"),
-    include_bytes!("../assets/fonts/JetBrainsMono-Regular.ttf"),
-    include_bytes!("../assets/fonts/JetBrainsMono-Medium.ttf"),
-    include_bytes!("../assets/fonts/JetBrainsMono-SemiBold.ttf"),
-    include_bytes!("../assets/fonts/JetBrainsMono-Bold.ttf"),
-    include_bytes!("../assets/fonts/JetBrainsMono-ExtraBold.ttf"),
+/// Where to paint `galley` so its first line sits as the reference
+/// centers a line in a box `box_h` tall from `top`: the line box and
+/// the baseline in it each snapped to a whole pixel.
+#[must_use]
+pub fn line_y(top: f32, box_h: f32, galley: &egui::Galley) -> f32 {
+    let size = galley
+        .job
+        .sections
+        .first()
+        .map_or(FS_SM, |section| section.format.font_id.size);
+    let line = line_h(size);
+    let line_top = snap(top + (box_h - line) / 2.0);
+    galley
+        .rows
+        .first()
+        .and_then(|row| row.row.glyphs.first())
+        .map_or(line_top, |glyph| {
+            let lead = (line - glyph.font_height) / 2.0;
+            line_top + snap(lead + glyph.font_face_ascent) - glyph.pos.y
+        })
+}
+
+/// How far down to paint `galley`, laid out with a set line height,
+/// so its glyphs sit where the reference centers them in each line:
+/// egui sets them at a line's top and puts the extra below.
+#[must_use]
+pub fn half_lead(galley: &egui::Galley) -> f32 {
+    galley
+        .rows
+        .first()
+        .and_then(|row| row.row.glyphs.first())
+        .map_or(0.0, |glyph| {
+            let lead = (glyph.line_height - glyph.font_height) / 2.0;
+            snap(lead + glyph.font_face_ascent) - glyph.pos.y
+        })
+}
+
+/// `color` as SVG attributes: `color_attr` names the hex color and
+/// `opacity_attr` its alpha, as SVG keeps them apart.
+#[must_use]
+pub fn svg_color(color_attr: &str, opacity_attr: &str, color: Color32) -> String {
+    let [r, g, b, a] = color.to_srgba_unmultiplied();
+    format!(
+        "{color_attr}=\"#{r:02x}{g:02x}{b:02x}\" {opacity_attr}=\"{:.3}\"",
+        f32::from(a) / 255.0
+    )
+}
+
+/// `value` snapped to a whole pixel the way the reference snaps text
+/// lines: to the nearest, with a half rounding down.
+#[must_use]
+pub fn snap(value: f32) -> f32 {
+    (value - 0.5).ceil()
+}
+
+/// The registered Inter families, the system-font stand-in behind the
+/// design families.
+pub const FAMILY_INTER_REGULAR: &str = "Inter Regular";
+/// Medium Inter.
+pub const FAMILY_INTER_MEDIUM: &str = "Inter Medium";
+/// Semibold Inter.
+pub const FAMILY_INTER_SEMIBOLD: &str = "Inter SemiBold";
+/// Bold Inter.
+pub const FAMILY_INTER_BOLD: &str = "Inter Bold";
+/// Extra bold Inter.
+pub const FAMILY_INTER_EXTRABOLD: &str = "Inter ExtraBold";
+
+/// The regular body face, which the prose face is derived from too.
+const BODY_REGULAR_TTF: &[u8] = include_bytes!("../assets/fonts/SchibstedGrotesk-Regular.ttf");
+/// The semibold body face, which the prose semibold face is derived
+/// from too.
+const BODY_SEMIBOLD_TTF: &[u8] = include_bytes!("../assets/fonts/SchibstedGrotesk-SemiBold.ttf");
+/// The regular mono face, which the prose mono face is derived from too.
+const MONO_REGULAR_TTF: &[u8] = include_bytes!("../assets/fonts/JetBrainsMono-Regular.ttf");
+
+/// The bundled family files, static per-weight faces. The family each
+/// face registers under is named for the face, and the chains live in
+/// [`install_fonts`]. Static faces rather than one variable TTF because
+/// the shell picks a family per weight (egui cannot select a variable
+/// axis per text style either).
+const FONT_FACES: &[(&str, &[u8])] = &[
+    (FAMILY_BODY_REGULAR, BODY_REGULAR_TTF),
+    (
+        FAMILY_BODY_MEDIUM,
+        include_bytes!("../assets/fonts/SchibstedGrotesk-Medium.ttf"),
+    ),
+    (FAMILY_BODY_SEMIBOLD, BODY_SEMIBOLD_TTF),
+    (
+        FAMILY_BODY_BOLD,
+        include_bytes!("../assets/fonts/SchibstedGrotesk-Bold.ttf"),
+    ),
+    (
+        FAMILY_BODY_EXTRABOLD,
+        include_bytes!("../assets/fonts/SchibstedGrotesk-ExtraBold.ttf"),
+    ),
+    (
+        FAMILY_INTER_REGULAR,
+        include_bytes!("../assets/fonts/Inter-Regular.ttf"),
+    ),
+    (
+        FAMILY_INTER_MEDIUM,
+        include_bytes!("../assets/fonts/Inter-Medium.ttf"),
+    ),
+    (
+        FAMILY_INTER_SEMIBOLD,
+        include_bytes!("../assets/fonts/Inter-SemiBold.ttf"),
+    ),
+    (
+        FAMILY_INTER_BOLD,
+        include_bytes!("../assets/fonts/Inter-Bold.ttf"),
+    ),
+    (
+        FAMILY_INTER_EXTRABOLD,
+        include_bytes!("../assets/fonts/Inter-ExtraBold.ttf"),
+    ),
+    (FAMILY_MONO_REGULAR, MONO_REGULAR_TTF),
+    (
+        FAMILY_MONO_MEDIUM,
+        include_bytes!("../assets/fonts/JetBrainsMono-Medium.ttf"),
+    ),
+    (
+        FAMILY_MONO_SEMIBOLD,
+        include_bytes!("../assets/fonts/JetBrainsMono-SemiBold.ttf"),
+    ),
+    (
+        FAMILY_MONO_BOLD,
+        include_bytes!("../assets/fonts/JetBrainsMono-Bold.ttf"),
+    ),
+    (
+        FAMILY_MONO_EXTRABOLD,
+        include_bytes!("../assets/fonts/JetBrainsMono-ExtraBold.ttf"),
+    ),
 ];
 
-/// Registers the three bundled families with the text system. Call
-/// once at startup, before the first window opens.
-pub fn install_fonts(cx: &mut App) {
-    cx.text_system()
-        .add_fonts(
-            FONT_FILES
-                .iter()
-                .map(|bytes| Cow::Borrowed(*bytes))
-                .collect::<Vec<Cow<'static, [u8]>>>(),
-        )
-        .expect("the bundled fonts load");
+/// Registers the three bundled families with egui, each chain falling
+/// back through the other weights, then Inter, then egui's own fonts
+/// for symbol coverage. Call once at startup, before the first frame.
+pub fn install_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    for (name, bytes) in FONT_FACES {
+        fonts.font_data.insert(
+            (*name).to_owned(),
+            Arc::new(egui::FontData::from_static(bytes)),
+        );
+    }
+    for (name, bytes) in [
+        (FAMILY_PROSE, BODY_REGULAR_TTF),
+        (FAMILY_PROSE_SEMIBOLD, BODY_SEMIBOLD_TTF),
+        (FAMILY_PROSE_MONO, MONO_REGULAR_TTF),
+    ] {
+        if let Some(patched) = with_line_height(bytes, LINE) {
+            fonts.font_data.insert(
+                name.to_owned(),
+                Arc::new(egui::FontData::from_owned(patched)),
+            );
+        }
+    }
+    chain(
+        &mut fonts,
+        family(FAMILY_PROSE),
+        &[FAMILY_PROSE, FAMILY_BODY_REGULAR, FAMILY_INTER_REGULAR],
+    );
+    chain(
+        &mut fonts,
+        family(FAMILY_PROSE_SEMIBOLD),
+        &[
+            FAMILY_PROSE_SEMIBOLD,
+            FAMILY_BODY_SEMIBOLD,
+            FAMILY_INTER_SEMIBOLD,
+        ],
+    );
+    chain(
+        &mut fonts,
+        family(FAMILY_PROSE_MONO),
+        &[FAMILY_PROSE_MONO, FAMILY_MONO_REGULAR, FAMILY_INTER_REGULAR],
+    );
+    // The body face is the proportional default; the other weights and
+    // Inter follow as glyph fallbacks, egui's fonts last of all.
+    chain(
+        &mut fonts,
+        egui::FontFamily::Proportional,
+        &[FAMILY_BODY_REGULAR, FAMILY_INTER_REGULAR],
+    );
+    chain(
+        &mut fonts,
+        egui::FontFamily::Monospace,
+        &[FAMILY_MONO_REGULAR, FAMILY_INTER_REGULAR],
+    );
+    chain(
+        &mut fonts,
+        family(FAMILY_BODY_REGULAR),
+        &[FAMILY_BODY_REGULAR, FAMILY_INTER_REGULAR],
+    );
+    chain(
+        &mut fonts,
+        family(FAMILY_MONO_REGULAR),
+        &[FAMILY_MONO_REGULAR, FAMILY_INTER_REGULAR],
+    );
+    chain(
+        &mut fonts,
+        family(FAMILY_BODY_MEDIUM),
+        &[
+            FAMILY_BODY_MEDIUM,
+            FAMILY_BODY_REGULAR,
+            FAMILY_INTER_MEDIUM,
+            FAMILY_INTER_REGULAR,
+        ],
+    );
+    chain(
+        &mut fonts,
+        family(FAMILY_BODY_SEMIBOLD),
+        &[
+            FAMILY_BODY_SEMIBOLD,
+            FAMILY_BODY_BOLD,
+            FAMILY_BODY_REGULAR,
+            FAMILY_INTER_SEMIBOLD,
+            FAMILY_INTER_REGULAR,
+        ],
+    );
+    chain(
+        &mut fonts,
+        family(FAMILY_BODY_BOLD),
+        &[
+            FAMILY_BODY_BOLD,
+            FAMILY_BODY_SEMIBOLD,
+            FAMILY_BODY_REGULAR,
+            FAMILY_INTER_BOLD,
+            FAMILY_INTER_REGULAR,
+        ],
+    );
+    chain(
+        &mut fonts,
+        family(FAMILY_BODY_EXTRABOLD),
+        &[
+            FAMILY_BODY_EXTRABOLD,
+            FAMILY_BODY_BOLD,
+            FAMILY_BODY_REGULAR,
+            FAMILY_INTER_EXTRABOLD,
+            FAMILY_INTER_REGULAR,
+        ],
+    );
+    for name in [
+        FAMILY_MONO_MEDIUM,
+        FAMILY_MONO_SEMIBOLD,
+        FAMILY_MONO_BOLD,
+        FAMILY_MONO_EXTRABOLD,
+    ] {
+        chain(
+            &mut fonts,
+            family(name),
+            &[name, FAMILY_MONO_REGULAR, FAMILY_INTER_REGULAR],
+        );
+    }
+    // The CJK fallback lands behind every family, so a glyph a bundled
+    // face owns still renders from that face. The system has no CJK
+    // font only when the platform itself lacks one.
+    crate::fonts::install_cjk_fallback(&mut fonts);
+    ctx.set_fonts(fonts);
+}
+
+/// `font` with its ascender and descender grown so a line is `ratio`
+/// times the font size, the extra room split evenly above and below
+/// the glyphs the way the reference centers them. Growing the extents
+/// rather than the line gap puts the half-leading in the baseline, so
+/// it rounds to a pixel with the glyph instead of shifting it by a
+/// fraction. `None` when the bytes are not a font with the tables the
+/// metrics come from.
+///
+/// Both the hhea and the OS/2 typographic metrics are set, since the
+/// shaper reads whichever the font's flags select.
+fn with_line_height(font: &[u8], ratio: f32) -> Option<Vec<u8>> {
+    let u16_at = |at: usize| Some(u16::from_be_bytes([*font.get(at)?, *font.get(at + 1)?]));
+    let i16_at = |at: usize| u16_at(at).map(|v| v as i16);
+    let table = |tag: &[u8; 4]| {
+        (0..usize::from(u16_at(4)?)).find_map(|n| {
+            let record = 12 + n * 16;
+            (font.get(record..record + 4)? == tag).then(|| {
+                let at = font.get(record + 8..record + 12)?;
+                Some(u32::from_be_bytes([at[0], at[1], at[2], at[3]]) as usize)
+            })?
+        })
+    };
+    let head = table(b"head")?;
+    let hhea = table(b"hhea")?;
+    let os2 = table(b"OS/2");
+    let em = f32::from(u16_at(head + 18)?);
+    let mut out = font.to_vec();
+    let mut grow = |at: usize| -> Option<()> {
+        let (ascent, descent) = (i16_at(at)?, i16_at(at + 2)?);
+        let extra = (ratio * em - f32::from(ascent) + f32::from(descent)).max(0.0);
+        let above = (extra / 2.0).round();
+        let ascent = (f32::from(ascent) + above) as i16;
+        let descent = (f32::from(descent) - (extra - above)) as i16;
+        out[at..at + 2].copy_from_slice(&ascent.to_be_bytes());
+        out[at + 2..at + 4].copy_from_slice(&descent.to_be_bytes());
+        out[at + 4..at + 6].copy_from_slice(&0i16.to_be_bytes());
+        Some(())
+    };
+    grow(hhea + 4)?;
+    if let Some(os2) = os2 {
+        grow(os2 + 68)?;
+    }
+    Some(out)
+}
+
+/// The prose face's family when the fonts are installed, the
+/// proportional default otherwise, for contexts that never installed
+/// them.
+#[must_use]
+pub fn prose_family(ctx: &egui::Context) -> egui::FontFamily {
+    installed_or(ctx, FAMILY_PROSE, egui::FontFamily::Proportional)
+}
+
+/// The semibold prose face's family when the fonts are installed, the
+/// body semibold otherwise.
+#[must_use]
+pub fn prose_semibold_family(ctx: &egui::Context) -> egui::FontFamily {
+    installed_or(ctx, FAMILY_PROSE_SEMIBOLD, family(FAMILY_BODY_SEMIBOLD))
+}
+
+/// The prose mono face's family when the fonts are installed, the
+/// regular mono otherwise.
+#[must_use]
+pub fn prose_mono_family(ctx: &egui::Context) -> egui::FontFamily {
+    installed_or(ctx, FAMILY_PROSE_MONO, family(FAMILY_MONO_REGULAR))
+}
+
+fn installed_or(ctx: &egui::Context, name: &str, fallback: egui::FontFamily) -> egui::FontFamily {
+    let wanted = family(name);
+    if ctx.fonts(|fonts| fonts.definitions().families.contains_key(&wanted)) {
+        wanted
+    } else {
+        fallback
+    }
+}
+
+/// The named family a registered face renders under.
+#[must_use]
+pub fn family(name: &str) -> egui::FontFamily {
+    egui::FontFamily::Name(name.into())
+}
+
+/// Puts `faces` at the front of `family`'s chain, egui's own fonts
+/// staying behind them.
+fn chain(fonts: &mut egui::FontDefinitions, family: egui::FontFamily, faces: &[&str]) {
+    let entry = fonts.families.entry(family).or_default();
+    for name in faces.iter().rev() {
+        entry.insert(0, (*name).to_owned());
+    }
+}
+
+/// Which of the palette pair a theme draws with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mode {
+    /// The dark palette family.
+    Dark,
+    /// The light palette family.
+    Light,
+}
+
+impl Mode {
+    /// True for [`Mode::Dark`].
+    #[must_use]
+    pub fn is_dark(self) -> bool {
+        matches!(self, Self::Dark)
+    }
 }
 
 /// One agent avatar role: a soft fill behind, a palette hue in front.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AvatarColor {
     /// The chip fill, the theme's soft fill.
-    pub bg: Hsla,
+    pub bg: Color32,
     /// The glyph color, one of the palette hues.
-    pub fg: Hsla,
+    pub fg: Color32,
 }
 
 /// The eight agent avatar hues of the design.
@@ -239,184 +599,239 @@ pub struct Avatars {
 #[derive(Clone, Debug)]
 pub struct Palette {
     /// App background.
-    pub bg: Hsla,
+    pub bg: Color32,
     /// Sidebar and workbench background.
-    pub sidebar: Hsla,
+    pub sidebar: Color32,
     /// Cards, panels and inputs.
-    pub surface: Hsla,
+    pub surface: Color32,
     /// Raised elements above `surface`.
-    pub raised: Hsla,
+    pub raised: Color32,
     /// Pressed-in areas.
-    pub sunken: Hsla,
+    pub sunken: Color32,
     /// The deepest level, used behind on-color glyphs.
-    pub deep: Hsla,
+    pub deep: Color32,
     /// Wells that read as inset surfaces.
-    pub well: Hsla,
+    pub well: Color32,
     /// Barely-there fill for chips and pills.
-    pub fill: Hsla,
+    pub fill: Color32,
     /// `fill` one step up, for hover.
-    pub fill_hover: Hsla,
+    pub fill_hover: Color32,
     /// Primary text.
-    pub ink: Hsla,
+    pub ink: Color32,
     /// Emphasized text.
-    pub ink_strong: Hsla,
+    pub ink_strong: Color32,
     /// Secondary text.
-    pub muted: Hsla,
+    pub muted: Color32,
     /// Tertiary text.
-    pub faint: Hsla,
+    pub faint: Color32,
     /// Quaternary text and the faintest marks.
-    pub ghost: Hsla,
+    pub ghost: Color32,
     /// Hairline borders.
-    pub line: Hsla,
+    pub line: Color32,
     /// The faintest fills, below `line`.
-    pub subtle: Hsla,
+    pub subtle: Color32,
     /// Stronger borders, hovered states.
-    pub line_strong: Hsla,
+    pub line_strong: Color32,
     /// Row and control hover fill.
-    pub hover: Hsla,
+    pub hover: Color32,
     /// Selected row fill.
-    pub selected: Hsla,
+    pub selected: Color32,
     /// Selected row fill on hover.
-    pub selected_hover: Hsla,
+    pub selected_hover: Color32,
     /// The warm lantern accent.
-    pub accent: Hsla,
+    pub accent: Color32,
     /// Accent hover step.
-    pub accent_hover: Hsla,
+    pub accent_hover: Color32,
     /// Accent tint background.
-    pub accent_soft: Hsla,
+    pub accent_soft: Color32,
     /// Accent border.
-    pub accent_bd: Hsla,
+    pub accent_bd: Color32,
     /// Success green.
-    pub ok: Hsla,
+    pub ok: Color32,
     /// Success tint background.
-    pub ok_soft: Hsla,
+    pub ok_soft: Color32,
     /// Success border.
-    pub ok_bd: Hsla,
+    pub ok_bd: Color32,
     /// Text on a solid success fill.
-    pub ok_ink: Hsla,
+    pub ok_ink: Color32,
     /// Warning yellow.
-    pub warn: Hsla,
+    pub warn: Color32,
     /// Warning tint background.
-    pub warn_soft: Hsla,
+    pub warn_soft: Color32,
     /// Warning border.
-    pub warn_bd: Hsla,
+    pub warn_bd: Color32,
     /// Danger red.
-    pub danger: Hsla,
+    pub danger: Color32,
     /// Danger tint background.
-    pub danger_soft: Hsla,
+    pub danger_soft: Color32,
     /// Danger border.
-    pub danger_bd: Hsla,
+    pub danger_bd: Color32,
     /// Swarm violet.
-    pub done: Hsla,
+    pub done: Color32,
     /// Violet tint background.
-    pub done_soft: Hsla,
+    pub done_soft: Color32,
     /// Violet border.
-    pub done_bd: Hsla,
+    pub done_bd: Color32,
     /// Informational blue.
-    pub info: Hsla,
+    pub info: Color32,
     /// The composer's background.
-    pub composer_bg: Hsla,
+    pub composer_bg: Color32,
     /// The composer's idle border.
-    pub composer_line: Hsla,
+    pub composer_line: Color32,
     /// The composer's focused border.
-    pub composer_focus_line: Hsla,
+    pub composer_focus_line: Color32,
     /// The send button background.
-    pub send_bg: Hsla,
+    pub send_bg: Color32,
     /// The send button hover background.
-    pub send_bg_hover: Hsla,
+    pub send_bg_hover: Color32,
     /// The glyph on the send button.
-    pub send_icon: Hsla,
+    pub send_icon: Color32,
     /// The send button when disabled.
-    pub send_bg_off: Hsla,
+    pub send_bg_off: Color32,
     /// The glyph on the disabled send button.
-    pub send_icon_off: Hsla,
+    pub send_icon_off: Color32,
     /// The stop glyph, a softened danger red.
-    pub stop_glyph: Hsla,
+    pub stop_glyph: Color32,
     /// Diff added lines.
-    pub diff_add: Hsla,
+    pub diff_add: Color32,
     /// Diff added line background.
-    pub diff_add_bg: Hsla,
+    pub diff_add_bg: Color32,
     /// Diff deleted lines.
-    pub diff_del: Hsla,
+    pub diff_del: Color32,
     /// Diff deleted line background.
-    pub diff_del_bg: Hsla,
+    pub diff_del_bg: Color32,
     /// The user bubble fill.
-    pub bubble: Hsla,
+    pub bubble: Color32,
     /// Text selection fill.
-    pub selection: Hsla,
+    pub selection: Color32,
     /// Menus and popovers, slightly translucent.
-    pub menu: Hsla,
+    pub menu: Color32,
     /// Inline code fill.
-    pub code_inline: Hsla,
+    pub code_inline: Color32,
     /// Brand orb gradient start.
-    pub orb_1: Hsla,
+    pub orb_1: Color32,
     /// Brand orb gradient end.
-    pub orb_2: Hsla,
+    pub orb_2: Color32,
     /// The agent avatar hues.
     pub avatars: Avatars,
     /// Small ambient shadow.
-    pub shadow_1: Vec<BoxShadow>,
+    pub shadow_1: Vec<ShadowLayer>,
     /// Large flyout shadow.
-    pub shadow_2: Vec<BoxShadow>,
+    pub shadow_2: Vec<ShadowLayer>,
     /// Subtle input shadow.
-    pub shadow_input: Vec<BoxShadow>,
+    pub shadow_input: Vec<ShadowLayer>,
     /// The send button's layered shadow.
-    pub shadow_send: Vec<BoxShadow>,
+    pub shadow_send: Vec<ShadowLayer>,
     /// Menu shadow.
-    pub shadow_menu: Vec<BoxShadow>,
+    pub shadow_menu: Vec<ShadowLayer>,
 }
 
-/// Converts one hex color to the toolkit's color type.
+/// One layer of a box shadow as the reference draws it: a Gaussian
+/// under the box moved by `offset` and grown by `spread`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShadowLayer {
+    /// How far the shadow sits from the box.
+    pub offset: egui::Vec2,
+    /// The Gaussian's sigma.
+    pub blur: f32,
+    /// How much the shadow grows past the box, or shrinks when negative.
+    pub spread: f32,
+    /// The shadow's color at full strength.
+    pub color: Color32,
+}
+
+impl ShadowLayer {
+    /// The nearest egui shadow, for the popups egui frames itself.
+    #[must_use]
+    pub fn egui(self) -> egui::Shadow {
+        egui::Shadow {
+            offset: [self.offset.x as i8, self.offset.y as i8],
+            blur: self.blur as u8,
+            spread: self.spread.max(0.0) as u8,
+            color: self.color,
+        }
+    }
+}
+
+/// Converts one hex color to a [`Color32`].
 ///
 /// A 6-digit literal is opaque; an 8-digit one carries alpha in its last
 /// byte, as the design's own tokens do (`0xF2A65A42` is the accent at 26
-/// percent). GPUI's [`rgba`] always reads four bytes, so passing a 6-digit
-/// value straight through would take its blue as alpha and draw every
-/// surface at that opacity: `0x0F0E13` became 7 percent, which is what
-/// shifted the whole shell off the palette.
-fn color(hex: u32) -> Hsla {
-    let opaque = match hex.checked_shr(24) {
-        Some(0) | None => (hex << 8) | 0xFF,
-        Some(_) => hex,
-    };
-    rgba(opaque).into()
+/// percent). Reading a 6-digit value as four bytes would take its blue
+/// as alpha and draw every surface at that opacity: `0x0F0E13` became 7
+/// percent, which is what shifted the whole shell off the palette.
+#[must_use]
+fn color(hex: u32) -> Color32 {
+    match hex.checked_shr(24) {
+        Some(0) | None => Color32::from_rgb((hex >> 16) as u8, (hex >> 8) as u8, hex as u8),
+        Some(_) => Color32::from_rgba_unmultiplied(
+            (hex >> 24) as u8,
+            (hex >> 16) as u8,
+            (hex >> 8) as u8,
+            hex as u8,
+        ),
+    }
 }
 
 /// Black at `alpha`. [`color`] cannot carry it: an 8-digit black
 /// literal such as `0x000000E6` has no top byte and reads as the opaque
 /// blue `#0000E6`.
-fn black(alpha: u8) -> Hsla {
-    rgba(u32::from(alpha)).into()
+#[must_use]
+fn black(alpha: u8) -> Color32 {
+    Color32::from_rgba_unmultiplied(0, 0, 0, alpha)
 }
 
-/// Builds one box shadow layer from the design's shadow recipe. Shadow
-/// colors always carry alpha, so `hex` is read as all four bytes: black
-/// at 55 percent is `0x0000008C`, which [`color`] would take for blue.
-fn layer(hex: u32, x: f32, y: f32, blur: f32, spread: f32) -> BoxShadow {
-    BoxShadow::new(px(x), px(y), rgba(hex).into())
-        .blur_radius(px(blur))
-        .spread_radius(px(spread))
+/// Builds one shadow layer from the design's shadow recipe. Shadow
+/// colors always carry alpha, so `hex` is read as all four bytes. A
+/// pure black shadow such as the design's 55 percent `0x0000008C` has
+/// no top byte for [`color`] to see, so those take the [`black`] path.
+#[must_use]
+fn layer(hex: u32, x: f32, y: f32, blur: f32, spread: f32) -> ShadowLayer {
+    let color = if hex <= 0xFF {
+        black(hex as u8)
+    } else {
+        color(hex)
+    };
+    ShadowLayer {
+        offset: egui::vec2(x, y),
+        blur,
+        spread,
+        color,
+    }
 }
 
-/// The palette the running app draws with, set by [`apply`].
-struct ActivePalette(&'static Palette);
-
-impl gpui_kit::Global for ActivePalette {}
+/// The palette the running app draws with per egui slot, set by
+/// [`apply_choice`]: index 0 is dark, index 1 light.
+static ACTIVE: RwLock<[Option<&'static Palette>; 2]> = RwLock::new([None, None]);
 
 impl Palette {
-    /// The palette the running app draws with: the theme last applied,
-    /// or before any the kage theme of the active mode.
+    /// The palette the running app draws with: the theme last applied
+    /// to `mode`'s slot, or before any the kage theme of `mode`.
     #[must_use]
-    pub fn active(cx: &App) -> &'static Self {
-        if let Some(active) = cx.try_global::<ActivePalette>() {
-            return active.0;
+    pub fn active(mode: Mode) -> &'static Self {
+        let index = match mode {
+            Mode::Dark => 0,
+            Mode::Light => 1,
+        };
+        if let Some(palette) = ACTIVE.read().unwrap_or_else(PoisonError::into_inner)[index] {
+            return palette;
         }
-        let kage = if cx.theme().mode.is_dark() {
+        let kage = if mode.is_dark() {
             "kage-shadow"
         } else {
             "kage-dawn"
         };
         crate::themes::builtin(kage).map_or_else(|| unreachable!(), |(palette, _)| palette)
+    }
+
+    /// The palette of the context's resolved theme, which is what a
+    /// frame draws with under a System choice.
+    #[must_use]
+    pub fn active_of(ctx: &egui::Context) -> &'static Self {
+        Self::active(match ctx.theme() {
+            egui::Theme::Dark => Mode::Dark,
+            egui::Theme::Light => Mode::Light,
+        })
     }
 
     /// The dark palette: ink surfaces with a violet undertone, one
@@ -636,9 +1051,7 @@ impl Palette {
             ],
         }
     }
-}
 
-impl Palette {
     /// Kimi Code's dark desktop palette: neutral grey surfaces and its
     /// blue accent. Avatars and shadows are kage shadow's.
     pub fn kimi_dark() -> Self {
@@ -770,120 +1183,192 @@ impl Palette {
     }
 }
 
-/// Maps one palette onto the component library's theme roles. Roles
-/// the design has no token for carry the nearest palette value: the
-/// on-color glyph tokens (`send_icon`, `deep`) sit behind accent and
-/// status fills, the composer's focus line drives the ring, and links
-/// use the accent as the web client styles them.
-fn theme_colors(p: &Palette, mode: ThemeMode) -> ThemeColor {
-    let mut c = match mode {
-        ThemeMode::Light => *ThemeColor::light(),
-        _ => *ThemeColor::dark(),
+/// The egui style of one palette: the `Visuals` mapping (panels,
+/// widgets, selection, shadows), the design's spacing and the type
+/// scale over the per-weight families.
+#[must_use]
+pub fn style(palette: &Palette, mode: Mode) -> egui::Style {
+    let mut style = egui::Style::default();
+    let mut visuals = match mode {
+        Mode::Dark => egui::Visuals::dark(),
+        Mode::Light => egui::Visuals::light(),
     };
-    c.background = p.bg;
-    c.foreground = p.ink;
-    c.border = p.line;
-    c.window_border = p.raised;
-    c.title_bar = p.bg;
-    c.title_bar_border = p.line;
-    c.status_bar = p.bg;
-    c.status_bar_border = p.line;
-    c.muted = p.surface;
-    c.muted_foreground = p.muted;
-    c.secondary = p.raised;
-    c.secondary_foreground = p.ink_strong;
-    c.secondary_hover = p.hover;
-    c.secondary_active = p.selected;
-    c.primary = p.accent;
-    c.primary_foreground = p.send_icon;
-    c.primary_hover = p.accent_hover;
-    c.primary_active = p.accent_hover;
-    c.accent = p.selected;
-    c.accent_foreground = p.ink_strong;
-    c.selection = p.selection;
-    c.ring = p.composer_focus_line;
-    c.caret = p.accent;
-    c.link = p.accent;
-    c.link_hover = p.accent_hover;
-    c.input = p.surface;
-    c.list = p.bg;
-    c.list_even = p.surface;
-    c.list_hover = p.hover;
-    c.list_active = p.selected;
-    c.list_active_border = p.accent_bd;
-    c.popover = p.menu;
-    c.popover_foreground = p.ink;
-    c.overlay = p.menu;
-    c.tab_bar = p.bg;
-    c.tab = p.bg;
-    c.tab_foreground = p.muted;
-    c.tab_active = p.surface;
-    c.tab_active_foreground = p.ink_strong;
-    c.sidebar = p.sidebar;
-    c.sidebar_foreground = p.muted;
-    c.sidebar_border = p.line;
-    c.sidebar_accent = p.selected;
-    c.sidebar_accent_foreground = p.ink_strong;
-    c.sidebar_primary = p.accent;
-    c.scrollbar_thumb = p.line;
-    c.scrollbar_thumb_hover = p.line_strong;
-    c.danger = p.danger;
-    c.danger_foreground = p.deep;
-    c.warning = p.warn;
-    c.warning_foreground = p.deep;
-    c.success = p.ok;
-    c.success_foreground = p.deep;
-    c.info = p.info;
-    c.info_foreground = p.deep;
-    c.red = p.danger;
-    c.green = p.ok;
-    c.blue = p.info;
-    c.yellow = p.warn;
-    c.magenta = p.done;
-    c.cyan = p.avatars.cyan.fg;
-    c.red_light = p.ink_strong;
-    c.green_light = p.ink_strong;
-    c.blue_light = p.ink_strong;
-    c.yellow_light = p.ink_strong;
-    c.magenta_light = p.ink_strong;
-    c.cyan_light = p.ink_strong;
-    c
+    map_visuals(palette, &mut visuals);
+    // GPUI's contrast and gamma correction lands near coverage^0.6 for
+    // light text on dark; dark text on light already matches egui's.
+    if mode == Mode::Dark {
+        visuals.text_options.color_transfer_function =
+            egui::epaint::FontColorTransferFunction::Gamma(0.6);
+    }
+    style.visuals = visuals;
+    style.spacing.button_padding = egui::vec2(SP_4, SP_2);
+    style.spacing.item_spacing = egui::vec2(SP_3, SP_3);
+    style.spacing.menu_margin = egui::Margin::same(SP_3 as i8);
+    style.spacing.window_margin = egui::Margin::same(SP_5 as i8);
+    style.text_styles = text_styles();
+    style.animation_time = T_MED;
+    style
 }
 
-/// Installs one palette as the theme of the running app and names the
-/// bundled families and the metric tokens on it.
-fn apply(palette: &'static Palette, mode: ThemeMode, cx: &mut App) {
-    cx.set_global(ActivePalette(palette));
-    // Both families are named in the same edit as the colors, after the mode
-    // change, so the library's own font probes find a real family to keep and
-    // skip the `.SystemUIFont` lookup that the web cannot satisfy.
-    Theme::change(mode, None, cx);
-    Theme::update(cx, |theme| {
-        theme.colors = theme_colors(palette, mode);
-        theme.font_family = FONT_BODY.into();
-        theme.mono_font_family = FONT_MONO.into();
-        theme.font_size = px(FS_BASE);
-        theme.mono_font_size = px(FS_SM);
-        theme.radius = px(R_MD);
-        theme.radius_lg = px(R_LG);
-    });
+/// Maps one palette onto egui's `Visuals`. Roles the design has no
+/// token for keep the nearest palette value, per the spike's role
+/// table: `deep` sits behind on-color glyphs and code, links use the
+/// accent, and the composer's focus line is not a `Visuals` role.
+fn map_visuals(p: &Palette, v: &mut egui::Visuals) {
+    v.override_text_color = Some(p.ink);
+    v.hyperlink_color = p.accent;
+    v.faint_bg_color = p.subtle;
+    v.extreme_bg_color = p.deep;
+    v.code_bg_color = p.code_inline;
+    v.warn_fg_color = p.warn;
+    v.error_fg_color = p.danger;
+    v.panel_fill = p.bg;
+    v.window_fill = p.surface;
+    v.window_stroke = egui::Stroke::new(1.0, p.line);
+    v.window_corner_radius = corner(R_LG);
+    v.menu_corner_radius = corner(R_SM);
+    v.window_shadow = p.shadow_2[0].egui();
+    v.popup_shadow = p.shadow_menu[0].egui();
+    // The caret takes the accent, as the reference's does.
+    v.text_cursor.stroke.color = p.accent;
+    // Selected text keeps the ink, on the selection fill, as the
+    // reference selects.
+    v.selection = egui::style::Selection {
+        bg_fill: p.selection,
+        stroke: egui::Stroke::new(1.0, p.ink_strong),
+    };
+    v.widgets.noninteractive = egui::style::WidgetVisuals {
+        bg_fill: p.surface,
+        weak_bg_fill: p.surface,
+        bg_stroke: egui::Stroke::new(1.0, p.line),
+        fg_stroke: egui::Stroke::new(1.0, p.muted),
+        corner_radius: corner(R_SM),
+        expansion: 0.0,
+    };
+    v.widgets.inactive = egui::style::WidgetVisuals {
+        bg_fill: p.fill,
+        weak_bg_fill: p.fill,
+        bg_stroke: egui::Stroke::new(1.0, p.line),
+        fg_stroke: egui::Stroke::new(1.0, p.ink),
+        corner_radius: corner(R_MD),
+        expansion: 0.0,
+    };
+    v.widgets.hovered = egui::style::WidgetVisuals {
+        bg_fill: p.hover,
+        weak_bg_fill: p.hover,
+        bg_stroke: egui::Stroke::new(1.0, p.line_strong),
+        fg_stroke: egui::Stroke::new(1.0, p.ink_strong),
+        corner_radius: corner(R_MD),
+        expansion: 0.0,
+    };
+    v.widgets.active = egui::style::WidgetVisuals {
+        bg_fill: p.selected,
+        weak_bg_fill: p.selected,
+        bg_stroke: egui::Stroke::new(1.0, p.accent_bd),
+        fg_stroke: egui::Stroke::new(1.0, p.ink_strong),
+        corner_radius: corner(R_MD),
+        expansion: 0.0,
+    };
+    v.widgets.open = egui::style::WidgetVisuals {
+        bg_fill: p.surface,
+        weak_bg_fill: p.surface,
+        bg_stroke: egui::Stroke::new(1.0, p.line),
+        fg_stroke: egui::Stroke::new(1.0, p.ink),
+        corner_radius: corner(R_MD),
+        expansion: 0.0,
+    };
 }
 
-/// Installs the bundled theme `name` as the theme of the running app.
-fn apply_builtin(name: &str, cx: &mut App) {
-    if let Some((palette, mode)) = crate::themes::builtin(name) {
-        apply(palette, mode, cx);
+/// The type scale over the per-weight families: body regular at the
+/// base size, buttons medium at small, headings semibold at large,
+/// monospace at small.
+fn text_styles() -> BTreeMap<egui::TextStyle, egui::FontId> {
+    BTreeMap::from([
+        (
+            egui::TextStyle::Small,
+            egui::FontId::new(FS_XS, family(FAMILY_BODY_REGULAR)),
+        ),
+        (
+            egui::TextStyle::Body,
+            egui::FontId::new(FS_BASE, family(FAMILY_BODY_REGULAR)),
+        ),
+        (
+            egui::TextStyle::Button,
+            egui::FontId::new(FS_SM, family(FAMILY_BODY_MEDIUM)),
+        ),
+        (
+            egui::TextStyle::Heading,
+            egui::FontId::new(FS_LG, family(FAMILY_BODY_SEMIBOLD)),
+        ),
+        (
+            egui::TextStyle::Monospace,
+            egui::FontId::new(FS_SM, family(FAMILY_MONO_REGULAR)),
+        ),
+    ])
+}
+
+/// A design radius token as egui's corner radius, saturating at the
+/// type's maximum (`R_FULL` pills).
+fn corner(px: f32) -> egui::CornerRadius {
+    egui::CornerRadius::same(px.round().clamp(0.0, 255.0) as u8)
+}
+
+/// Installs the theme the user chose: System, which fills both of
+/// egui's slots with the kage pair so the desktop's live light/dark
+/// flips re-map on their own, or one theme by name, which pins its
+/// slot and pins the preference with it.
+pub fn apply_choice(choice: &ThemeChoice, ctx: &egui::Context) {
+    apply_choice_with(choice, ctx, &crate::themes::Catalog::default());
+}
+
+/// Applies `choice`, resolving names and System picks through `catalog`
+/// so the engine's user themes draw.
+pub fn apply_choice_with(
+    choice: &ThemeChoice,
+    ctx: &egui::Context,
+    catalog: &crate::themes::Catalog,
+) {
+    match choice {
+        ThemeChoice::System => {
+            ctx.set_theme(egui::ThemePreference::System);
+            for light in [false, true] {
+                let name = catalog.system(light);
+                if let Some((palette, mode)) = crate::themes::resolve(&name, catalog, light) {
+                    apply_slot(ctx, slot_of(mode), (palette, mode));
+                }
+            }
+        }
+        ThemeChoice::Named(name) => {
+            if let Some((palette, mode)) = crate::themes::resolve(name, catalog, false) {
+                ctx.set_theme(match mode {
+                    Mode::Dark => egui::ThemePreference::Dark,
+                    Mode::Light => egui::ThemePreference::Light,
+                });
+                apply_slot(ctx, slot_of(mode), (palette, mode));
+            }
+        }
     }
 }
 
-/// Installs the dark kage theme as the theme of the running app.
-pub fn apply_shadow(cx: &mut App) {
-    apply_builtin("kage-shadow", cx);
+/// The egui style slot a theme's mode fills.
+fn slot_of(mode: Mode) -> egui::Theme {
+    match mode {
+        Mode::Dark => egui::Theme::Dark,
+        Mode::Light => egui::Theme::Light,
+    }
 }
 
-/// Installs the light kage theme as the theme of the running app.
-pub fn apply_dawn(cx: &mut App) {
-    apply_builtin("kage-dawn", cx);
+/// Fills one style slot with `palette` and remembers it as the active
+/// palette of the slot's mode, so views can read it back without
+/// touching egui.
+fn apply_slot(ctx: &egui::Context, slot: egui::Theme, palette_mode: (&'static Palette, Mode)) {
+    let (palette, mode) = palette_mode;
+    let index = match mode {
+        Mode::Dark => 0,
+        Mode::Light => 1,
+    };
+    ctx.set_style_of(slot, style(palette, mode));
+    ACTIVE.write().unwrap_or_else(PoisonError::into_inner)[index] = Some(palette);
 }
 
 /// The theme the user chose: System, which follows the platform's
@@ -897,8 +1382,6 @@ pub enum ThemeChoice {
     /// One bundled or user theme.
     Named(String),
 }
-
-impl gpui_kit::Global for ThemeChoice {}
 
 impl From<String> for ThemeChoice {
     /// Reads a stored choice, the names older clients stored included.
@@ -932,268 +1415,98 @@ impl ThemeChoice {
     }
 }
 
-/// Installs the theme the stored choice names, reading the platform's
-/// `appearance` for System and the user themes and System picks from the
-/// [`crate::themes::Catalog`]. A theme no longer known falls back to the
-/// kage theme of the desktop's mode.
-pub fn apply_choice(cx: &mut App, appearance: WindowAppearance) {
-    let light = matches!(
-        appearance,
-        WindowAppearance::Light | WindowAppearance::VibrantLight
-    );
-    let choice = cx.try_global::<ThemeChoice>().cloned().unwrap_or_default();
-    let catalog = cx
-        .try_global::<crate::themes::Catalog>()
-        .cloned()
-        .unwrap_or_default();
-    let name = match choice {
-        ThemeChoice::System => catalog.system(light),
-        ThemeChoice::Named(name) => name,
-    };
-    let kage = if light { "kage-dawn" } else { "kage-shadow" };
-    let resolved =
-        crate::themes::resolve(&name, &catalog, light).or_else(|| crate::themes::builtin(kage));
-    if let Some((palette, mode)) = resolved {
-        apply(palette, mode, cx);
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use gpui_kit::Rgba;
+    use super::{
+        BODY_REGULAR_TTF, FAMILY_PROSE, FAMILY_PROSE_MONO, FAMILY_PROSE_SEMIBOLD, LINE, Mode,
+        Palette, ThemeChoice, color, corner, family, install_fonts, line_h, snap, with_line_height,
+    };
+    use egui::Color32;
 
     #[test]
-    fn a_six_digit_token_is_opaque() {
-        // The design's fills are RGB triples, and GPUI's `rgba` reads a
-        // fourth byte as alpha. Passing a 6-digit value straight through
-        // drew `bg` at 7 percent, which shifted the whole shell off the
-        // palette, so the conversion has to supply the missing byte.
-        for hex in [0x0F0E13, 0x0B0A0E, 0x17151D, 0xF2A65A, 0x8BD49C] {
-            assert_eq!(color(hex).a, 1.0, "{hex:#010x} must be opaque");
-        }
-        // And the channels are the ones asked for. The palette stores
-        // Hsla, so the round trip costs a fraction of a step per channel;
-        // a whole step would be a real shift.
-        let bg = Rgba::from(color(0x0F0E13));
-        let one_step = 1.0 / 255.0;
-        for (got, want) in [(bg.r, 15), (bg.g, 14), (bg.b, 19)] {
+    fn lines_snap_to_whole_pixels_with_halves_rounding_down() {
+        assert_eq!(snap(19.5), 19.0);
+        assert_eq!(snap(19.51), 20.0);
+        assert_eq!(snap(19.0), 19.0);
+        assert_eq!(line_h(13.0), 21.0);
+        assert_eq!(line_h(14.0), 23.0);
+        assert_eq!(line_h(11.0), 18.0);
+    }
+
+    #[test]
+    fn the_prose_faces_set_lines_at_the_reference_height() {
+        let ctx = egui::Context::default();
+        install_fonts(&ctx);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+        output.textures_delta.clear();
+        for (face, size) in [
+            (FAMILY_PROSE, 14.0),
+            (FAMILY_PROSE_SEMIBOLD, 17.0),
+            (FAMILY_PROSE_MONO, 12.5),
+        ] {
+            let galley = ctx.fonts_mut(|fonts| {
+                fonts.layout_no_wrap(
+                    "one\ntwo".to_owned(),
+                    egui::FontId::new(size, family(face)),
+                    Color32::WHITE,
+                )
+            });
+            let line = galley.size().y / 2.0;
             assert!(
-                (got - want as f32 / 255.0).abs() < one_step,
-                "bg keeps its own channels: {got} against {want}"
+                (line - size * LINE).abs() < 1.0,
+                "{face} sets {line} per line at {size}"
             );
         }
     }
 
     #[test]
-    fn an_eight_digit_token_keeps_its_alpha() {
-        // The design writes translucency deliberately: `line` is a
-        // hairline at 11 percent, the focus ring at 42, and body ink at
-        // 86. Those have to survive the conversion, or every soft fill
-        // lands solid.
-        assert_eq!(color(0xE8E2F51C).a, 0x1C as f32 / 255.0, "line");
-        assert_eq!(color(0xF2A65A42).a, 0x42 as f32 / 255.0, "selection");
-        assert_eq!(color(0xECE8F6DB).a, 0xDB as f32 / 255.0, "ink");
-        assert_eq!(color(0xF2A65A).a, 1.0, "the 6-digit accent beside it");
-    }
-
-    #[gpui_kit::test]
-    fn a_named_theme_installs_its_own_colors(cx: &mut gpui_kit::TestAppContext) {
-        cx.update(|app| {
-            gpui_kit::init(app);
-            app.set_global(ThemeChoice::Named("kimi-light".to_owned()));
-            apply_choice(app, WindowAppearance::Dark);
-            let ink = Palette::kimi_light().ink;
-            assert_eq!(app.theme().mode, ThemeMode::Light);
-            assert_eq!(app.theme().colors.foreground, ink);
-            assert_eq!(Palette::active(app).ink, ink);
-        });
+    fn the_line_height_patch_refuses_what_is_not_a_font() {
+        assert!(with_line_height(b"not a font", LINE).is_none());
+        assert!(with_line_height(BODY_REGULAR_TTF, LINE).is_some());
     }
 
     #[test]
-    fn translucent_black_inks_stay_black() {
-        let ink = Palette::kimi_light().ink;
-        assert_eq!(ink.l, 0.0, "black, not blue");
-        assert!((ink.a - 0xE6 as f32 / 255.0).abs() < 1e-6);
-    }
-
-    #[gpui_kit::test]
-    fn the_system_default_follows_the_appearance(cx: &mut gpui_kit::TestAppContext) {
-        // Dawn on a light desktop, shadow otherwise, which is what E7.1
-        // step 3 asks for.
-        for (appearance, dawn) in [
-            (WindowAppearance::Light, true),
-            (WindowAppearance::VibrantLight, true),
-            (WindowAppearance::Dark, false),
-            (WindowAppearance::VibrantDark, false),
-        ] {
-            cx.update(|app| {
-                gpui_kit::init(app);
-                apply_choice(app, appearance);
-                let theme = app.theme();
-                assert_eq!(
-                    theme.mode,
-                    if dawn {
-                        ThemeMode::Light
-                    } else {
-                        ThemeMode::Dark
-                    },
-                    "{appearance:?} must pick the matching palette"
-                );
-                assert_eq!(
-                    theme.colors.background.a, 1.0,
-                    "{appearance:?} must paint an opaque background"
-                );
-            });
-        }
-    }
-
-    #[test]
-    fn the_theme_fills_are_opaque() {
-        // Every large surface is a 6-digit token, so one that reached the
-        // window translucent would show the backdrop through the whole
-        // app rather than on a single element.
-        let p = Palette::shadow();
-        for (name, token) in [
-            ("bg", p.bg),
-            ("sidebar", p.sidebar),
-            ("surface", p.surface),
-            ("raised", p.raised),
-            ("sunken", p.sunken),
-            ("deep", p.deep),
-            ("well", p.well),
-            ("composer_bg", p.composer_bg),
-            ("bubble", p.bubble),
-        ] {
-            assert_eq!(token.a, 1.0, "{name} must be opaque");
-        }
-    }
-
-    #[test]
-    fn shadow_palette_matches_the_design_tokens() {
-        let p = Palette::shadow();
-        assert_eq!(p.bg, color(0x0F0E13));
-        assert_eq!(p.accent, color(0xF2A65A));
-        assert_eq!(p.ink, color(0xECE8F6DB));
-        assert_eq!(p.line, color(0xE8E2F51C));
-        assert_eq!(p.selection, color(0xF2A65A42));
-        assert_eq!(p.menu, color(0x16141CF2));
-        assert_eq!(p.avatars.violet.fg, color(0xA98BFA));
-    }
-
-    #[test]
-    fn dawn_palette_matches_the_design_tokens() {
-        let p = Palette::dawn();
-        assert_eq!(p.bg, color(0xF7F5F9));
-        assert_eq!(p.accent, color(0xA8580F));
-        assert_eq!(p.ink, color(0x1A142EED));
-        assert_eq!(p.selection, color(0xA8580F33));
-        assert_eq!(p.menu, color(0xFFFFFFF2));
-        assert_eq!(p.avatars.emerald.fg, color(0x1C7563));
-    }
-
-    #[test]
-    fn theme_roles_carry_the_palette() {
-        let p = Palette::shadow();
-        let dark = theme_colors(&p, ThemeMode::Dark);
-        assert_eq!(dark.background, p.bg);
-        assert_eq!(dark.primary, p.accent);
-        assert_eq!(dark.sidebar, p.sidebar);
-        assert_eq!(dark.ring, p.composer_focus_line);
-
-        let dawn = Palette::dawn();
-        let light = theme_colors(&dawn, ThemeMode::Light);
-        assert_eq!(light.background, dawn.bg);
-        assert_eq!(light.primary, dawn.accent);
-    }
-
-    #[test]
-    fn scale_and_metrics_match_the_design_tokens() {
-        assert_eq!(FS_2XS, 11.0);
-        assert_eq!(FS_BASE, 14.0);
-        assert_eq!(FS_LG, 16.0);
-        assert_eq!(LINE_HEIGHT, 1.5);
-        assert_eq!(SP_1, 2.0);
-        assert_eq!(SP_10, 48.0);
-        assert_eq!(R_XS, 4.0);
-        assert_eq!(R_COMPOSER, 32.0);
-        assert_eq!(R_FULL, 999.0);
-        assert_eq!(CTL_ICO, 26.0);
-        assert_eq!(CTL_SM, 32.0);
-        assert_eq!(PANEL_HEAD_H, 48.0);
-        assert_eq!(TAB_H, 28.0);
-        assert_eq!(SIDE_W, 270.0);
-        assert_eq!(CONTENT_W, 768.0);
-        assert_eq!(WELCOME_W, 728.0);
-        assert_eq!(T_FAST, 0.12);
-        assert_eq!(T_SLOW, 0.26);
-    }
-
-    #[test]
-    fn families_and_weights_are_the_design_families() {
-        assert_eq!(FONT_DISPLAY, "Schibsted Grotesk");
-        assert_eq!(FONT_BODY, "Schibsted Grotesk");
-        assert_eq!(FONT_MONO, "JetBrains Mono");
-        assert_eq!(WEIGHT_EXTRABOLD, FontWeight(800.0));
-    }
-
-    #[test]
-    fn body_and_mono_name_bundled_families_not_the_virtual_ones() {
-        // The component library skips its `.SystemUIFont` probe only when
-        // the theme already names a family. Naming a virtual or empty
-        // family hands the probe back a family with no web fallback, and
-        // the app panics on its first text layout instead of booting.
-        assert_ne!(FONT_BODY, ".SystemUIFont");
-        assert_ne!(FONT_MONO, ".SystemUIFont");
-        assert!(!FONT_BODY.is_empty());
-        assert!(!FONT_MONO.is_empty());
-        assert!(
-            FONT_FILES.iter().all(|bytes| !bytes.is_empty()),
-            "each bundled family has bytes to register"
+    fn colors_take_six_or_eight_digits() {
+        assert_eq!(color(0xFFFFFF), Color32::from_rgb(0xFF, 0xFF, 0xFF));
+        assert_eq!(color(0xF2A65A).a(), 255);
+        assert_eq!(
+            color(0x1A88FF47),
+            Color32::from_rgba_unmultiplied(0x1A, 0x88, 0xFF, 0x47)
         );
     }
 
-    /// The virtual family GPUI and the component library both default to.
-    /// A mode change writes it back over the theme, so `apply` has to name
-    /// the bundled family after the change and never before it.
-    const VIRTUAL_UI_FONT: &str = ".SystemUIFont";
+    #[test]
+    fn corner_radii_saturate_at_the_type_maximum() {
+        assert_eq!(corner(8.0), egui::CornerRadius::same(8));
+        assert_eq!(corner(999.0), egui::CornerRadius::same(255));
+    }
 
     #[test]
-    fn dark_shadows_are_black_not_blue() {
-        let shadow = super::Palette::shadow();
-        let color = shadow.shadow_2[0].color;
-        assert!(color.l < 0.01, "{color:?}");
-        assert!((color.a - 0x8C as f32 / 255.).abs() < 0.01, "{color:?}");
+    fn the_four_bundled_palettes_build_and_differ() {
+        let shadow = Palette::shadow();
+        let dawn = Palette::dawn();
+        assert_ne!(shadow.bg, dawn.bg);
+        for palette in [shadow, dawn, Palette::kimi_dark(), Palette::kimi_light()] {
+            assert_ne!(palette.bg, Color32::default(), "every slot is set");
+        }
     }
 
-    #[gpui_kit::test]
-    fn the_installed_theme_carries_the_bundled_families(cx: &mut App) {
-        // `apply_shadow` runs the library's real write path: the mode change
-        // reloads the registered theme, which carries `.SystemUIFont`, and
-        // only the edit after it survives. A theme left carrying the virtual
-        // family looks correct until the first text is laid out, and then
-        // takes the whole window down, so assert against the live theme
-        // rather than against the constants this module happens to name.
-        install_fonts(cx);
-        gpui_kit::init(cx);
-        apply_shadow(cx);
-        let theme = cx.theme();
-        assert_eq!(theme.font_family.as_ref(), FONT_BODY);
-        assert_eq!(theme.mono_font_family.as_ref(), FONT_MONO);
-        assert_ne!(theme.font_family.as_ref(), VIRTUAL_UI_FONT);
-        assert_ne!(theme.mono_font_family.as_ref(), VIRTUAL_UI_FONT);
+    #[test]
+    fn active_falls_back_to_the_kage_theme_of_the_mode() {
+        assert_eq!(Palette::active(Mode::Dark).bg, Palette::shadow().bg);
+        assert_eq!(Palette::active(Mode::Light).bg, Palette::dawn().bg);
     }
 
-    #[gpui_kit::test]
-    fn the_light_theme_carries_the_bundled_families_too(cx: &mut App) {
-        // The same has to hold for the dawn palette: a light mode change
-        // reloads the light theme, which is a second chance to write the
-        // virtual family back.
-        install_fonts(cx);
-        gpui_kit::init(cx);
-        apply_dawn(cx);
-        let theme = cx.theme();
-        assert_eq!(theme.font_family.as_ref(), FONT_BODY);
-        assert_eq!(theme.mono_font_family.as_ref(), FONT_MONO);
+    #[test]
+    fn the_stored_choice_reads_its_older_names() {
+        assert_eq!(ThemeChoice::from("system".to_owned()), ThemeChoice::System);
+        assert_eq!(
+            ThemeChoice::from("shadow".to_owned()),
+            ThemeChoice::Named("kage-shadow".to_owned())
+        );
+        assert_eq!(
+            String::from(ThemeChoice::Named("kage-dawn".to_owned())),
+            "kage-dawn"
+        );
     }
 }

@@ -216,6 +216,11 @@ pub enum HostEvent {
         /// when the session file records one.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         compaction: Option<CompactionCounts>,
+        /// The messages compaction summarized out of `messages` that
+        /// start agents or carry their results, oldest first, so a
+        /// client lists the agents the session ran before it.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        compacted_agents: Vec<Arc<Message>>,
     },
     /// The session title was set or generated. Durable.
     TitleChanged {
@@ -794,6 +799,7 @@ mod tests {
                 title: Some("t".into()),
                 messages: vec![Arc::new(message.clone())],
                 compaction: None,
+                compacted_agents: Vec::new(),
             }
             .into(),
             HostEvent::TitleChanged { title: "t".into() }.into(),
@@ -1011,6 +1017,7 @@ mod tests {
                     summarized: 10,
                     kept: 3,
                 }),
+                compacted_agents: vec![Arc::new(rich_message())],
             },
             HostEvent::TitleChanged { title: "t".into() },
         ]

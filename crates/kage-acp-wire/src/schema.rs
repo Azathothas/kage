@@ -1557,6 +1557,32 @@ pub struct UsageUpdate {
     /// Cumulative session cost, if known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost: Option<Cost>,
+    /// kage's token totals, under `_meta.kage`.
+    #[serde(rename = "_meta", default, skip_serializing_if = "Option::is_none")]
+    pub meta: Option<UsageMeta>,
+}
+
+/// The `_meta` of a usage update.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UsageMeta {
+    /// kage's token totals.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kage: Option<UsageTokens>,
+}
+
+/// The session's cumulative token totals, split the way providers bill
+/// them. The four counts do not overlap.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UsageTokens {
+    /// Prompt tokens neither read from nor written to the prompt cache.
+    pub input: u64,
+    /// Tokens the model emitted.
+    pub output: u64,
+    /// Prompt tokens served from the provider's cache.
+    pub cache_read: u64,
+    /// Prompt tokens written to the provider's cache.
+    pub cache_write: u64,
 }
 
 /// A monetary amount.
@@ -2727,6 +2753,7 @@ mod tests {
                     amount: 0.25,
                     currency: "USD".into(),
                 }),
+                meta: None,
             }),
             serde_json::json!({
                 "sessionUpdate": "usage_update",
@@ -2740,8 +2767,30 @@ mod tests {
                 used: 5,
                 size: 10,
                 cost: None,
+                meta: None,
             }),
             serde_json::json!({"sessionUpdate": "usage_update", "used": 5, "size": 10}),
+        );
+        roundtrip(
+            &SessionUpdate::UsageUpdate(UsageUpdate {
+                used: 5,
+                size: 10,
+                cost: None,
+                meta: Some(UsageMeta {
+                    kage: Some(UsageTokens {
+                        input: 3,
+                        output: 2,
+                        cache_read: 7,
+                        cache_write: 1,
+                    }),
+                }),
+            }),
+            serde_json::json!({
+                "sessionUpdate": "usage_update",
+                "used": 5,
+                "size": 10,
+                "_meta": {"kage": {"input": 3, "output": 2, "cacheRead": 7, "cacheWrite": 1}}
+            }),
         );
         roundtrip(
             &SessionUpdate::SessionInfoUpdate(SessionInfoUpdate {

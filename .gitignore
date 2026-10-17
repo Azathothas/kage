@@ -9,3 +9,6 @@ target/
 node_modules
 /docs/.vitepress/cache
 /docs/.vitepress/dist
+gui/tests/snapshots/*.diff.png
+gui/tests/snapshots/*.new.png
+gui/tests/snapshots/*.old.png

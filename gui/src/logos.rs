@@ -4,7 +4,7 @@
 //! The primary source is models.dev, which serves one SVG per
 //! provider at `https://models.dev/logos/{id}.svg` - the same source
 //! kage's model catalog snapshots. Two wrinkles shape this module: a
-//! few kage ids differ from models.dev's ([`MODELS_DEV_ID`] maps
+//! few kage ids differ from models.dev's ([`models_dev_id`] maps
 //! them), and models.dev answers an unknown id with HTTP 200 and a
 //! generic sparkle glyph ([`FALLBACK`]), so a reply must be checked
 //! against that placeholder before it counts as a logo.
@@ -14,10 +14,10 @@
 //! reached by dropping a leading `api.` label (`api.example.com`
 //! serves no icon; `example.com` does).
 //!
-//! Each logo is fetched at most once per run: the memory cache holds
-//! the decoded [`Image`], the disk cache under the kage cache
-//! directory holds the bytes, and an id that resolves to nothing
-//! stays `Missing` so it does not re-fetch on every render.
+//! Each logo is fetched at most once per run, on a thread of its own:
+//! the memory cache holds the bytes, the disk cache under the kage
+//! cache directory holds them across runs, and an id that resolves to
+//! nothing stays `Missing` so it does not re-fetch on every frame.
 
 // On wasm the fetch machinery is compiled out; the module keeps its
 // API shape and never resolves a logo.
@@ -26,27 +26,38 @@
 use std::collections::BTreeMap;
 use std::io::Read as _;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, LazyLock, Mutex};
 
-use gpui_kit::{App, Entity, Image, ImageFormat};
-
-use crate::views::settings::SettingsView;
-
 /// The logo an id resolves to, after at most one fetch.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 enum Logo {
-    /// Decoded and ready to render.
-    Ready(Arc<Image>),
+    /// SVG text, for the SVG loader.
+    Svg(Arc<[u8]>),
+    /// A decoded favicon, waiting for its texture.
+    Raster(Arc<egui::ColorImage>),
+    /// The favicon's texture, once the UI thread made it.
+    Texture(egui::TextureHandle),
     /// No logo anywhere for the id, or every fetch failed this run;
-    /// the client shows its fallback glyph.
+    /// the caller shows its fallback.
     Missing,
 }
 
 /// One run's logo cache. `Missing` doubles as the fetch-in-progress
-/// marker: a second render before the fetch lands also shows the
-/// fallback instead of stacking fetches.
+/// marker: a frame before the fetch lands also shows the fallback
+/// instead of stacking fetches.
 static CACHE: LazyLock<Mutex<BTreeMap<String, Logo>>> =
     LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
+static OFFLINE: AtomicBool = AtomicBool::new(false);
+
+/// Stops this process fetching logos, so an id it has not seen yet
+/// resolves to nothing. The probes call it: they must not reach the
+/// network or the user's cache, and a fetch that lands mid-frame
+/// would repaint under them.
+pub fn stay_offline() {
+    OFFLINE.store(true, Ordering::Relaxed);
+}
 
 /// Kage ids whose models.dev logo lives under another name. Only ids
 /// kage's own catalog registers get aliases; a custom provider's id
@@ -87,17 +98,36 @@ const FALLBACK: &str = r#"<svg viewBox="0 0 24 24" fill="none" xmlns="http://www
 </svg>
 "#;
 
-/// Whether the bytes are a logo this module renders: a Windows icon,
-/// or SVG text that is not the placeholder.
-fn ready(bytes: &[u8]) -> Option<Arc<Image>> {
-    let format = if bytes.starts_with(b"\x00\x00\x01\x00") {
-        ImageFormat::Ico
+/// What kind of logo the bytes are: SVG text that is not the
+/// placeholder, or a Windows icon. `None` for anything else.
+fn kind(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x00\x00\x01\x00") {
+        Some("ico")
     } else if bytes.starts_with(b"<") && bytes != FALLBACK.as_bytes() {
-        ImageFormat::Svg
+        Some("svg")
     } else {
-        return None;
-    };
-    Some(Arc::new(Image::from_bytes(format, bytes.to_vec())))
+        None
+    }
+}
+
+/// The logo `bytes` make, decoding a favicon into pixels.
+fn logo_of(bytes: Vec<u8>) -> Logo {
+    match kind(&bytes) {
+        Some("svg") => Logo::Svg(bytes.into()),
+        #[cfg(not(target_arch = "wasm32"))]
+        Some("ico") => match image::load_from_memory_with_format(&bytes, image::ImageFormat::Ico) {
+            Ok(decoded) => {
+                let rgba = decoded.to_rgba8();
+                let size = [rgba.width() as usize, rgba.height() as usize];
+                Logo::Raster(Arc::new(egui::ColorImage::from_rgba_unmultiplied(
+                    size,
+                    rgba.as_raw(),
+                )))
+            }
+            Err(_) => Logo::Missing,
+        },
+        _ => Logo::Missing,
+    }
 }
 
 /// Where the fetched logos live: `$XDG_CACHE_HOME/kage/logos`, else
@@ -117,71 +147,76 @@ fn disk_dir() -> Option<PathBuf> {
     Some(base.join("kage").join("logos"))
 }
 
-/// The id's logo, fetching it in the background when this run has
-/// not seen it yet. `site` is the provider's endpoint URL when the
-/// config names one; its host's favicon is the fallback source.
-/// `Some` right away when the cache has it; `None` means the caller
-/// renders its fallback, and a completed fetch notifies `view` so
-/// the next render picks the logo up.
-pub(crate) fn ensure(
+/// The id's logo as an image source, fetching it in the background
+/// when this run has not seen it yet. `site` is the provider's
+/// endpoint URL when the config names one; its host's favicon is the
+/// fallback source. `None` means the caller draws its fallback; a
+/// fetch that lands asks `ctx` for a frame so the next one shows it.
+#[must_use]
+pub fn ensure(
+    ctx: &egui::Context,
     id: &str,
     site: Option<&str>,
-    view: &Entity<SettingsView>,
-    cx: &App,
-) -> Option<Arc<Image>> {
-    if let Ok(cache) = CACHE.lock() {
-        if let Some(Logo::Ready(image)) = cache.get(id) {
-            return Some(image.clone());
+) -> Option<egui::ImageSource<'static>> {
+    let mut cache = CACHE.lock().ok()?;
+    match cache.get(id).cloned() {
+        Some(Logo::Svg(bytes)) => {
+            return Some(egui::ImageSource::Bytes {
+                uri: format!("bytes://provider-logo-{id}.svg").into(),
+                bytes: egui::load::Bytes::Shared(bytes),
+            });
         }
-        if cache.contains_key(id) {
-            return None;
+        Some(Logo::Raster(image)) => {
+            let texture = ctx.load_texture(
+                format!("provider-logo-{id}"),
+                (*image).clone(),
+                egui::TextureOptions::LINEAR,
+            );
+            let source =
+                egui::ImageSource::Texture(egui::load::SizedTexture::from_handle(&texture));
+            cache.insert(id.to_owned(), Logo::Texture(texture));
+            return Some(source);
         }
-    } else {
-        return None;
+        Some(Logo::Texture(texture)) => {
+            return Some(egui::ImageSource::Texture(
+                egui::load::SizedTexture::from_handle(&texture),
+            ));
+        }
+        Some(Logo::Missing) => return None,
+        None => {}
     }
-    if let Ok(mut cache) = CACHE.lock() {
-        cache.insert(id.to_owned(), Logo::Missing);
-    }
-
+    cache.insert(id.to_owned(), Logo::Missing);
+    drop(cache);
     #[cfg(not(target_arch = "wasm32"))]
-    {
+    if !OFFLINE.load(Ordering::Relaxed) {
         let id = id.to_owned();
-        let view = view.clone();
         let site = site.map(str::to_owned);
-        let dir = disk_dir();
-        cx.spawn(async move |cx| {
-            let fetched = cx
-                .background_executor()
-                .spawn({
-                    let id = id.clone();
-                    async move { fetch(&id, site.as_deref(), dir) }
-                })
-                .await;
+        let ctx = ctx.clone();
+        std::thread::spawn(move || {
+            let logo = fetch(&id, site.as_deref(), disk_dir());
             if let Ok(mut cache) = CACHE.lock() {
-                cache.insert(id, fetched);
+                cache.insert(id, logo);
             }
-            view.update(cx, |_, cx| cx.notify());
-        })
-        .detach();
+            ctx.request_repaint();
+        });
     }
     #[cfg(target_arch = "wasm32")]
-    let _ = (site, view, cx);
+    let _ = site;
     None
 }
 
-/// Fetches the id's logo: the disk cache first, then models.dev
-/// under the mapped id, then the endpoint host's favicon. Whatever
-/// fails or reads as the placeholder ends as [`Logo::Missing`].
+/// Fetches the id's logo: the disk cache first, then models.dev under
+/// the mapped id, then the endpoint host's favicon. Whatever fails or
+/// reads as the placeholder ends as [`Logo::Missing`].
 #[cfg(not(target_arch = "wasm32"))]
 fn fetch(id: &str, site: Option<&str>, dir: Option<PathBuf>) -> Logo {
     const LOGO_CAP: usize = 256 * 1024;
     if let Some(dir) = &dir {
         for ext in ["svg", "ico"] {
-            let path = dir.join(format!("{id}.{ext}"));
-            if let Ok(bytes) = std::fs::read(&path)
-                && let Some(image) = ready(&bytes)
+            if let Ok(bytes) = std::fs::read(dir.join(format!("{id}.{ext}")))
+                && kind(&bytes).is_some()
             {
-                return Logo::Ready(image);
+                return logo_of(bytes);
             }
         }
     }
@@ -189,19 +224,19 @@ fn fetch(id: &str, site: Option<&str>, dir: Option<PathBuf>) -> Logo {
         &format!("https://models.dev/logos/{}.svg", models_dev_id(id)),
         LOGO_CAP,
     );
-    if let Some(bytes) = upstream.filter(|bytes| ready(bytes).is_some()) {
+    if let Some(bytes) = upstream.filter(|bytes| kind(bytes).is_some()) {
         store(dir.as_deref(), id, "svg", &bytes);
-        return Logo::Ready(ready(&bytes).expect("checked above"));
+        return logo_of(bytes);
     }
     // models.dev does not know the id; the provider's own site may
-    // still carry an icon. `api.example.com` serves none, its
-    // web home does, so the machine label steps aside.
+    // still carry an icon. `api.example.com` serves none, its web home
+    // does, so the machine label steps aside.
     if let Some(domain) = site.and_then(site_domain)
         && let Some(bytes) = fetch_bytes(&format!("https://{domain}/favicon.ico"), LOGO_CAP)
-            .filter(|bytes| ready(bytes).is_some())
+            .filter(|bytes| kind(bytes).is_some())
     {
         store(dir.as_deref(), id, "ico", &bytes);
-        return Logo::Ready(ready(&bytes).expect("checked above"));
+        return logo_of(bytes);
     }
     Logo::Missing
 }
@@ -259,16 +294,16 @@ mod tests {
 
     #[test]
     fn the_pinned_fallback_never_reads_as_a_logo() {
-        assert!(ready(FALLBACK.as_bytes()).is_none());
-        assert!(ready(b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>").is_some());
+        assert!(kind(FALLBACK.as_bytes()).is_none());
+        assert!(kind(b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>").is_some());
     }
 
     #[test]
     fn favicon_bytes_read_as_a_logo_and_other_magic_does_not() {
         let ico = [0u8, 0, 1, 0, 2, 0].into_iter().chain([0u8; 32]);
-        assert!(ready(&ico.collect::<Vec<_>>()).is_some());
-        assert!(ready(b"").is_none());
-        assert!(ready(b"GIF89a").is_none());
+        assert!(kind(&ico.collect::<Vec<_>>()).is_some());
+        assert!(kind(b"").is_none());
+        assert!(kind(b"GIF89a").is_none());
     }
 
     #[test]

@@ -85,8 +85,7 @@ releases on the [releases page](https://github.com/QaidVoid/kage/releases):
 | Windows, `x86_64` | `kage-desktop-x86_64-windows.zip` |
 
 On Linux, the `.onelf` file is one portable executable with its
-libraries and a slimmed Vulkan driver stack inside, so it runs on any
-distribution. `--onelf-integrate` adds it to your desktop's app menu:
+libraries inside, so it runs on any distribution. `--onelf-integrate` adds it to your desktop's app menu:
 
 ```bash
 chmod +x kage-desktop-x86_64-linux.onelf

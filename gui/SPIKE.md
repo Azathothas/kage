@@ -1,6 +1,7 @@
 # Desktop client: spike report and app shell notes
 
-Status: spike done, decision recorded at the bottom. The spike window became
+Status: superseded by the egui client (2026-10-13); the spike verdict and
+the shell notes below are kept as history. The spike window became
 the app shell and transports; see "The app shell and transports" (added
 2026-09-29), and the web build skeleton; see "The web build" (added
 2026-09-30).
@@ -529,6 +530,10 @@ description names its Zed commit, and the crate metadata carries
 `zed-rev`.
 
 ## Decision: go
+
+> **Superseded (2026-10-13).** The migration this decision launched is
+> complete: the client runs on egui/eframe. Everything below is the
+> historical spike verdict, kept as written.
 
 The stack carries the client. Reasons:
 

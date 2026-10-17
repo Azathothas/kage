@@ -103,16 +103,20 @@ jobs:
           ref: ${{ env.TAG }}
 
       - name: Toolchain
-        run: rustup toolchain install nightly --profile minimal --target wasm32-unknown-unknown
+        run: rustup toolchain install --profile minimal --target wasm32-unknown-unknown
 
       # The CLI has to match the wasm-bindgen crate gui/Cargo.lock pins.
       - uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
         with:
           tool: wasm-bindgen@0.2.129
 
+      # Stable only: the previous GPUI web build needed nightly for
+      # `stdarch_wasm_atomic_wait`, which the egui stack does not use.
+      # `--no-default-features` drops the native binary target, which
+      # has no entry on wasm32; the cdylib is the whole bundle.
       - name: Build
         run: |
-          cargo +nightly build --release --locked --target wasm32-unknown-unknown
+          cargo build --release --locked --target wasm32-unknown-unknown --no-default-features
           wasm-bindgen --out-dir web --target web \
             target/wasm32-unknown-unknown/release/kage_desktop.wasm
 
@@ -122,19 +126,24 @@ jobs:
           mkdir -p "$bundle/assets/icons"
           cp web/index.html web/favicon.svg web/boot.js web/kage_desktop.js \
             web/kage_desktop_bg.wasm "$bundle/"
-          manifest="$(cargo metadata --format-version 1 --locked \
-            | jq -r '.packages[] | select(.name == "gpui-kit-assets") | .manifest_path')"
-          cp "$(dirname "$manifest")"/assets/icons/*.svg "$bundle/assets/icons/"
+          # The browser loads its icons and fonts from the bundle
+          # (FR-52), so they ship beside the wasm instead of being
+          # fetched from an origin. They are the crate's own assets.
+          cp assets/icons/*.svg "$bundle/assets/icons/"
+          cp -R assets/fonts "$bundle/assets/fonts"
           tar -C ../web-bundle -cJf ../kage-web.tar.xz web
 
       - name: Verify bundle
         run: |
           listing="$(tar -tJf ../kage-web.tar.xz)"
           echo "$listing"
-          echo "$listing" | grep -qx 'web/favicon.svg' || {
-            echo 'the web bundle is missing web/favicon.svg' >&2
-            exit 1
-          }
+          for wanted in web/favicon.svg web/boot.js web/kage_desktop.js \
+            web/kage_desktop_bg.wasm web/assets/icons/a-large-small.svg; do
+            echo "$listing" | grep -qx "$wanted" || {
+              echo "the web bundle is missing $wanted" >&2
+              exit 1
+            }
+          done
 
       - uses: svenstaro/upload-release-action@29e53e917877a24fad85510ded594ab3c9ca12de # 2.11.5
         with:
@@ -312,10 +321,8 @@ jobs:
 
   # The portable Linux bundle, built in Arch the way aeris builds its own:
   # a glibc and loader bundled from Ubuntu did not run on other systems.
-  # It carries the Vulkan stack too, slimmed, so it starts on a host
-  # without one; onelf's launch resolver weighs each bundled library
-  # against the host's copy. No lavapipe: no slimmed build of it matches
-  # the slimmed LLVM yet.
+  # It carries the slimmed Mesa GL stack too, so it draws on a host with
+  # none. gui/onelf.toml says what rides along.
   desktop-onelf:
     name: desktop onelf ${{ matrix.name }}
     needs: release
@@ -331,8 +338,7 @@ jobs:
             arch: x86_64
             runner: ubuntu-latest
             image: archlinux:latest
-            onelf-sha256: 3a990243790c026c902330a7744e8c21b25fdc8c694a88e79d6fb25d761a6351
-            vulkan: vulkan-radeon vulkan-intel vulkan-nouveau
+            onelf-sha256: 4a00ad52ef982fe26a174d256ad27ad119bab1d9cf8014d6150a8f97947f1c28
             # Slimmed packages, one "name archive sha256" row per
             # package. Upstream rebuilds the continuous release between
             # our runs, so a stale row fails the hash check: re-read the
@@ -341,30 +347,22 @@ jobs:
             slim: |
               llvm-libs-nano pkg.tar.zst f186b7d2f8367e3b53f0192a9ad60e69987188efa7a2c0770577fb3f03981170
               mesa-nano pkg.tar.zst a32ecc91a446ce73318f16befbe04742517392d07bf75d55c652bca673550082
-              vulkan-radeon-nano pkg.tar.zst e2559a93f90835305cdc91f953681fd0d35aefab135acad0e191069621e66669
-              vulkan-intel-nano pkg.tar.zst fe1fb79cb47bad431e10c40cd34c83fac437d012525268c00c77de56b032e2f3
-              vulkan-nouveau-nano pkg.tar.zst 20d27dfd967be73fa23e0107fb0977c3a560b81e8a3506e79df9be47a8352dec
               libxml2-iculess pkg.tar.zst d5220136f8d9b4eaaf173a44d3f0092e97b61cfe9f5d627c570c6e81add9e789
           - name: aarch64-linux
             arch: aarch64
             runner: ubuntu-24.04-arm
             image: menci/archlinuxarm:latest
-            onelf-sha256: 9b5b2c3d031756a064bd9a71a977e229cb359f324937a5ba8a28db1568bae15b
-            vulkan: vulkan-radeon vulkan-nouveau vulkan-panfrost vulkan-broadcom
+            onelf-sha256: 72ffda33bad3b0572df5149c7705bd3addb13d317f24ae1f435cb68a28548d58
             slim: |
               llvm-libs-nano pkg.tar.zst 4f2bd7d178432e42f2ba2a756fd0fd864795edf2fac73b5c51761103880e0b40
               mesa-nano pkg.tar.zst 1fedba1c08c845f4a034ea73cd95ef96d8bf2be91fbb247672552c48d72d12a3
-              vulkan-radeon-nano pkg.tar.zst 17a0a0be41c5036346a57ca819174962f95b7b318d993559f76eca3e66104fad
-              vulkan-nouveau-nano pkg.tar.zst b9fac6605dbf0900deb70c61c34407efee059d12a230e8b928a8bcf59507eeaa
-              vulkan-panfrost-nano pkg.tar.zst cb52c18eb7365f984ac81932171dcbe9907181752f492da233f84710eaf541f2
-              vulkan-broadcom-nano pkg.tar.zst fe01d709afab23a3614efc53b35f2a42518ad24948a149880365a25010e02d64
               libxml2-iculess pkg.tar.xz 3e9eed60d2a40ad1ca623a0ba4607c22ac4030e18416080538c04fd82ce3add4
     defaults:
       run:
         shell: bash
         working-directory: gui
     env:
-      ONELF_VERSION: 0.3.3
+      ONELF_VERSION: 0.4.1
       TAG: ${{ needs.release.outputs.tag }}
     steps:
       - name: Install Arch packages
@@ -373,7 +371,7 @@ jobs:
           pacman -Syu --disable-sandbox --noconfirm --needed \
             base-devel git curl tar xz rustup patchelf pkgconf \
             libxcb libxkbcommon libxkbcommon-x11 wayland fontconfig \
-            mesa vulkan-icd-loader ${{ matrix.vulkan }}
+            mesa xorg-server-xvfb xorg-xauth ttf-dejavu
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -456,13 +454,12 @@ jobs:
           onelf verify AppDir/kage-desktop.onelf
           mv AppDir/kage-desktop.onelf "../dist/kage-desktop-${{ matrix.name }}.onelf"
 
-      # The headless platform needs no display, so this proves the bundle
-      # unpacks and starts its event loop. The container has no fonts, and
-      # GPUI needs a system font to start.
+      # Xvfb offers no DRI3, so this proves the bundle starts and draws on
+      # its own software renderer. The replay needs no agent or network.
       - name: Smoke run the bundle
         run: |
-          pacman -S --disable-sandbox --noconfirm --needed ttf-dejavu
-          ZED_HEADLESS=1 timeout 60 "../dist/kage-desktop-${{ matrix.name }}.onelf" --smoke 3000
+          xvfb-run -a -s "-screen 0 1280x800x24" timeout 60 \
+            "../dist/kage-desktop-${{ matrix.name }}.onelf" --replay --smoke 3000
 
       - uses: svenstaro/upload-release-action@29e53e917877a24fad85510ded594ab3c9ca12de # 2.11.5
         with:

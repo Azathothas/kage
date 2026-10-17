@@ -1,187 +1,130 @@
-//! The browser entry: the same shell over a web-sys WebSocket.
+//! The browser entry: boots the shell once `web/boot.js` has drawn
+//! its connection form.
 //!
-//! The crate compiles for wasm32-unknown-unknown and binds into the
-//! static bundle with wasm-bindgen (`--target web`); the exact
-//! commands and the serving headers live in `gui/SPIKE.md`. GPUI
-//! renders through `gpui-pre-web`: WebGPU when the browser has it, an
-//! automatic WebGL2 canvas fallback when it does not. The transport is
-//! [`WebTransport`]; the token rides the `kage.<token>` subprotocol of
-//! the dial and never a query string.
+//! `boot.js` owns the page: it renders the server URL and token form,
+//! reads the `?ws=` developer override, and only then loads this
+//! bundle. It hands both values over through `window.__kageConnect`,
+//! so the token never rides a URL. This module reads that handoff,
+//! dials the WebSocket subprotocol with it, and starts the same shell
+//! the native binary runs.
 //!
-//! The page's `boot.js` draws the connection form first and hands the
-//! server URL and the token over through `window.__kageConnect` before
-//! this module loads; there is no token URL parameter. The `?ws=`
-//! query parameter stays as a developer override for the endpoint,
-//! which without it defaults to `/acp` on the page's own origin.
+//! Everything target-specific is behind a cfg in [`crate::launch`]:
+//! the browser has no local engine, so the setup screen never shows
+//! and the release check never runs.
 
-use wasm_bindgen::prelude::wasm_bindgen;
-use wasm_bindgen::{JsCast as _, JsValue};
+use wasm_bindgen::JsCast as _;
 
-use gpui_kit::assets::Assets;
-use gpui_kit::{App, AppContext, TitlebarOptions, WindowOptions, px, size};
+use crate::launch;
 
-use crate::app::{Shell, ShellArgs};
-use crate::theme;
-use crate::transport::web::WebTransport;
-
-#[wasm_bindgen]
-extern "C" {
-    /// The connection values the boot form collected, stored on the
-    /// window before this module loads.
-    #[wasm_bindgen(thread_local_v2, js_namespace = window, js_name = __kageConnect)]
-    static KAGE_CONNECT: JsValue;
-
-    type Handoff;
-
-    /// The server URL the form sent.
-    #[wasm_bindgen(method, getter)]
-    fn server(this: &Handoff) -> Option<String>;
-
-    /// The token the form sent.
-    #[wasm_bindgen(method, getter)]
-    fn token(this: &Handoff) -> Option<String>;
+/// What `boot.js` hands over once the connection form is submitted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Handshake {
+    /// The `ws://` endpoint of a `kage serve`.
+    server: String,
+    /// The token the endpoint expects, carried as a subprotocol.
+    token: String,
 }
 
-/// The path of the ACP endpoint on the page's own origin.
-const ACP_PATH: &str = "/acp";
-
-/// The absolute origin the page is served from, for same-origin asset
-/// fetches.
+/// Reads `window.__kageConnect`, or `None` while the form still shows.
 ///
-/// The browser asset source builds every icon URL as
-/// `{endpoint}/assets/{path}` and hands the result to `reqwest`, which
-/// parses it as an absolute URL. Its default endpoint is the empty
-/// string, which yields the relative `/assets/icons/x.svg`, and that
-/// parse fails, so every icon silently never loads. Naming the origin
-/// makes each URL absolute and the fetch same-origin, which is also what
-/// the page's `connect-src 'self'` allows.
-fn asset_origin() -> String {
-    web_sys::window()
-        .map(|window| window.location())
-        .and_then(|location| {
-            let host = location.host().ok()?;
-            Some(format!("{}//{host}", location.protocol().ok()?))
-        })
-        .unwrap_or_default()
-}
-
-/// Runs the shell in the page. Bound as the wasm-bindgen `start`
-/// hook, so the generated glue calls it once the module loads and
-/// the browser keeps driving it through its own event loop.
-#[wasm_bindgen(start)]
-pub fn start() {
-    gpui_kit::platform::web_init();
-    gpui_kit::application()
-        .with_assets(crate::assets::KageAssets::new(Assets::new(asset_origin())))
-        .run(|cx: &mut App| {
-            // Order matters here. `gpui_kit::init` loads the theme, and
-            // loading it probes `.SystemUIFont` against the installed
-            // families. The browser text system starts with none, so the
-            // probe must run while that is still true: with families
-            // already registered it resolves the virtual family, finds no
-            // fallback on the web and panics. Registering after init and
-            // naming both families in `apply_shadow` is what keeps it safe.
-            //
-            // Naming the families is necessary but not sufficient: the
-            // input engines copy the window's style before the theme is on
-            // its stack, so those writes wait on the element's first
-            // prepaint. See `views::deferred`.
-            gpui_kit::init(cx);
-            theme::install_fonts(cx);
-            cx.bind_keys(crate::app::key_bindings());
-            let options = WindowOptions {
-                titlebar: Some(TitlebarOptions {
-                    title: Some("kage client".into()),
-                    ..Default::default()
-                }),
-                window_min_size: Some(size(px(960.), px(640.))),
-                ..Default::default()
-            };
-            let (server, token) = connection();
-            let prefs = crate::prefs::load();
-            cx.set_global(prefs.theme.clone());
-            gpui_kit::open_window(options, cx, |window, cx| {
-                // `gpui_web` reads `prefers-color-scheme` for the window's
-                // appearance, so the System default follows the browser and
-                // the observer follows a live change.
-                theme::apply_choice(cx, window.appearance());
-                window
-                    .observe_window_appearance(|window, cx| {
-                        theme::apply_choice(cx, window.appearance());
-                        window.refresh();
-                    })
-                    .detach();
-                let args = ShellArgs {
-                    transport: Box::new(WebTransport::new(server, token)),
-                    replay: false,
-                    stream: false,
-                    prefs,
-                };
-                cx.new(|cx| Shell::new(args, window, cx))
-            })
-            .expect("failed to open the window");
-            crate::app::route_actions(cx);
-        });
-}
-
-/// The endpoint to dial: the page's `?ws=` value, else `/acp` on the
-/// page's own origin with the scheme mapped to ws or wss.
-fn endpoint() -> String {
-    let search = page_search();
-    if let Some(url) = query_parameter(&search, "ws") {
-        return url;
+/// The handoff is a plain object literal from `boot.js`, so it is read
+/// by key through `Reflect` rather than bound to a struct: a missing
+/// or non-string key refuses the dial instead of panicking in the
+/// browser.
+fn handshake() -> Option<Handshake> {
+    let value: wasm_bindgen::JsValue = web_sys::window()?
+        .get("__kageConnect")
+        .map(wasm_bindgen::JsValue::from)?;
+    if value.is_null() || value.is_undefined() {
+        return None;
     }
-    web_sys::window()
-        .map(|window| window.location())
-        .and_then(|location| {
-            let scheme = match location.protocol().ok()? {
-                proto if proto == "https:" => "wss:",
-                _ => "ws:",
-            };
-            let host = location.host().ok()?;
-            Some(format!("{scheme}//{host}{ACP_PATH}"))
-        })
-        .unwrap_or_else(|| format!("ws://localhost:0{ACP_PATH}"))
-}
-
-/// The endpoint and token the boot form handed over: the form's
-/// values win, the endpoint falls back to the page's `?ws=` override,
-/// else `/acp` on the page's own origin with the scheme mapped to ws
-/// or wss. Without the form there is no token, and the endpoint
-/// refuses the dial until one is entered. The `window.__kageConnect`
-/// holder is deleted once read, so the token never lingers on the
-/// window for same-origin scripts to recover.
-fn connection() -> (String, String) {
-    let values = KAGE_CONNECT.with(|value| {
-        let handed = value.is_object().then(|| value.unchecked_ref::<Handoff>());
-        let server = handed
-            .and_then(|handoff| handoff.server())
-            .filter(|server| !server.is_empty())
-            .unwrap_or_else(endpoint);
-        let token = handed
-            .and_then(|handoff| handoff.token())
-            .unwrap_or_default();
-        (server, token)
-    });
-    if let Some(window) = web_sys::window() {
-        let _ = js_sys::Reflect::delete_property_str(window.as_ref(), &"__kageConnect".into());
-    }
-    values
-}
-
-/// The query part of the page address, empty without a window.
-fn page_search() -> String {
-    web_sys::window()
-        .map(|window| window.location())
-        .and_then(|location| location.search().ok())
-        .unwrap_or_default()
-}
-
-/// The value of one query parameter of a search string, if present.
-fn query_parameter(search: &str, name: &str) -> Option<String> {
-    let query = search.strip_prefix('?').unwrap_or(search);
-    query.split('&').find_map(|pair| {
-        let (key, value) = pair.split_once('=')?;
-        (key == name).then(|| value.to_owned())
+    let field = |name: &str| {
+        let key: wasm_bindgen::JsValue = name.into();
+        js_sys::Reflect::get(&value, &key)
+            .ok()
+            .filter(|found| !found.is_null() && !found.is_undefined())
+            .and_then(|found| found.as_string())
+    };
+    Some(Handshake {
+        server: field("server")?,
+        token: field("token")?,
     })
+}
+
+/// Starts the shell on `canvas`. The future resolves once the canvas
+/// carries the app.
+pub async fn start(canvas: web_sys::HtmlCanvasElement) {
+    let runner = eframe::WebRunner::new();
+    let result = runner
+        .start(
+            canvas,
+            eframe::WebOptions::default(),
+            Box::new(move |cc| {
+                let prefs = crate::prefs::load();
+                crate::theme::install_fonts(&cc.egui_ctx);
+                crate::icons::install(&cc.egui_ctx);
+                crate::theme::apply_choice(&prefs.theme, &cc.egui_ctx);
+                // Until the form is submitted there is no endpoint, so
+                // the shell gets the recording: the canvas stays alive
+                // and empty, and boot.js keeps owning the page. Once
+                // the handoff lands the browser transport dials it.
+                let (transport, replay) = match handshake() {
+                    Some(handshake) => (
+                        Box::new(crate::transport::web::WebTransport::new(
+                            handshake.server,
+                            handshake.token,
+                        )) as Box<dyn crate::transport::Transport>,
+                        false,
+                    ),
+                    None => (
+                        Box::new(crate::transport::replay::ReplayTransport::new())
+                            as Box<dyn crate::transport::Transport>,
+                        true,
+                    ),
+                };
+                Ok(Box::new(
+                    launch::ShellApp::new(String::new(), replay, transport, &cc.egui_ctx)
+                        .with_prefs(prefs),
+                ))
+            }),
+        )
+        .await;
+    if let Err(why) = result {
+        crate::warn(&format!("the browser runner did not start: {why:?}"));
+    }
+}
+
+/// The wasm entry the generated glue calls: finds the page canvas by
+/// id and starts the shell on it.
+#[wasm_bindgen::prelude::wasm_bindgen(start)]
+pub fn boot() {
+    let Some(canvas) = canvas() else {
+        crate::warn("the page has no canvas and none could be created");
+        return;
+    };
+    wasm_bindgen_futures::spawn_local(async move {
+        start(canvas).await;
+    });
+}
+
+/// The canvas the shell draws on: the one `boot.js` left in the page,
+/// or one this module creates. The form script clears the body before
+/// it loads the bundle, so the bundle owns the canvas it needs. It
+/// fills the window, and the runner sizes its buffer to the element.
+fn canvas() -> Option<web_sys::HtmlCanvasElement> {
+    let document = web_sys::window()?.document()?;
+    if let Some(found) = document.get_element_by_id("kage-canvas") {
+        return found.dyn_into().ok();
+    }
+    let element = document.create_element("canvas").ok()?;
+    element.set_id("kage-canvas");
+    let canvas: web_sys::HtmlCanvasElement = element.dyn_into().ok()?;
+    let style = canvas.style();
+    let _ = style.set_property("position", "absolute");
+    let _ = style.set_property("inset", "0");
+    let _ = style.set_property("width", "100%");
+    let _ = style.set_property("height", "100%");
+    let body = document.body()?;
+    let _ = body.append_child(&canvas);
+    Some(canvas)
 }

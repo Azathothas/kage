@@ -123,6 +123,7 @@ fn events_from_other_sessions_are_ignored() {
                 title: None,
                 messages: Vec::new(),
                 compaction: None,
+                compacted_agents: Vec::new(),
             },
         ))
         .unwrap();
@@ -196,6 +197,7 @@ fn session_changed_rebuilds_the_transcript() {
                 title: None,
                 messages: vec![std::sync::Arc::new(message)],
                 compaction: None,
+                compacted_agents: Vec::new(),
             },
         ))
         .unwrap();
@@ -240,6 +242,7 @@ fn session_changed_resets_view_state_even_when_already_on_the_main_view() {
                 title: None,
                 messages: vec![std::sync::Arc::new(message)],
                 compaction: None,
+                compacted_agents: Vec::new(),
             },
         ))
         .unwrap();
@@ -322,6 +325,7 @@ fn pending_rows_fold_past_three_and_clear_on_session_change() {
                 title: None,
                 messages: Vec::new(),
                 compaction: None,
+                compacted_agents: Vec::new(),
             }
             .into(),
         ],

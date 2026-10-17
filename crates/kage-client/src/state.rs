@@ -14,7 +14,7 @@ use kage_acp_wire::{
     AgentCapabilities, ContentBlock, Cost, Implementation, McpServerStatus, PermissionOption,
     PermissionOptionKind, PromptRef, SessionConfigOption, SessionInfo, StopReason,
     SubagentSessionCapabilities, SubagentState, SubagentSwarm, SwarmMeta, ToolCallContent,
-    ToolCallStatus, ToolCallUpdate, ToolKind, TurnReason,
+    ToolCallStatus, ToolCallUpdate, ToolKind, TurnReason, UsageTokens,
 };
 
 use crate::frame::RequestId;
@@ -240,6 +240,8 @@ pub struct Usage {
     pub size: u64,
     /// Cumulative cost, when the agent priced the model.
     pub cost: Option<Cost>,
+    /// Cumulative token totals, when the agent is kage.
+    pub tokens: Option<UsageTokens>,
 }
 
 impl Usage {
@@ -581,14 +583,14 @@ mod tests {
         let usage = Usage {
             used: 500,
             size: 1000,
-            cost: None,
+            ..Usage::default()
         };
         assert!((usage.fill() - 0.5).abs() < f64::EPSILON);
         assert!(Usage::default().fill() < f64::EPSILON);
         let over = Usage {
             used: 1500,
             size: 1000,
-            cost: None,
+            ..Usage::default()
         };
         assert!((over.fill() - 1.0).abs() < f64::EPSILON);
     }

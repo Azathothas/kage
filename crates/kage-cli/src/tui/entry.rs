@@ -542,7 +542,10 @@ fn wire_sessions(app: &mut App, workdir: &std::path::Path, mirror: &Arc<Mutex<ho
     app.set_agent_loader(Box::new(move |session| {
         let dir = lock(&loader_mirror).path()?.parent()?.to_path_buf();
         let replay = kage_session::replay(&dir.join(format!("{session}.jsonl"))).ok()?;
-        Some(replay.history.into_iter().map(Arc::new).collect())
+        Some(kage_tui::StoredAgent {
+            messages: replay.history.into_iter().map(Arc::new).collect(),
+            compacted_agents: replay.compacted_agents.into_iter().map(Arc::new).collect(),
+        })
     }));
 }
 

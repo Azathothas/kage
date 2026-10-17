@@ -134,6 +134,7 @@ fn a_resumed_session_shows_line_diffs_and_no_diff_for_a_failed_edit() {
         title: None,
         messages,
         compaction: None,
+        compacted_agents: Vec::new(),
     };
     feed(&mut app, &events, vec![changed.into()]);
     app.set_all_folds(false);

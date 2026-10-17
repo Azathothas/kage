@@ -18,6 +18,6 @@
 {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"01KA5C0D1NG000000000000000","update":{"sessionUpdate":"_kage/turn","phase":"start"}}}
 {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"01KA5C0D1NG000000000000000","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"The null check is in; cargo test passes."}}}}
 {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"01KA5C0D1NG000000000000000","update":{"sessionUpdate":"_kage/turn","phase":"end","reason":"no_tool_calls"}}}
-{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"01KA5C0D1NG000000000000000","update":{"sessionUpdate":"usage_update","used":12480,"size":200000}}}
+{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"01KA5C0D1NG000000000000000","update":{"sessionUpdate":"usage_update","used":12480,"size":200000,"_meta":{"kage":{"input":3120,"output":860,"cacheRead":8400,"cacheWrite":1100}}}}}
 {"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"01KA5C0D1NG000000000000000","update":{"sessionUpdate":"session_info_update","title":"Fix the null dereference in main"}}}
 {"jsonrpc":"2.0","id":3,"result":{"stopReason":"end_turn"}}

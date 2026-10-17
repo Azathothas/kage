@@ -3660,7 +3660,7 @@ fn only_live_servers_offer_commands_and_bare_prompts_take_no_input() {
 }
 
 #[test]
-fn usage_updates_carry_cost_only_when_priced() {
+fn usage_updates_carry_tokens_and_cost_only_when_priced() {
     let mut usage = Usage {
         context_used: 50,
         context_window: 200,
@@ -3670,6 +3670,13 @@ fn usage_updates_carry_cost_only_when_priced() {
         panic!("no usage_update");
     };
     assert_eq!((update.used, update.size, update.cost), (50, 200, None));
+    usage.total.input = 30;
+    usage.total.cache_read = 12;
+    let Some(SessionUpdate::UsageUpdate(update)) = usage_update(&usage) else {
+        panic!("no usage_update");
+    };
+    let tokens = update.meta.and_then(|meta| meta.kage).unwrap();
+    assert_eq!((tokens.input, tokens.cache_read), (30, 12));
     usage.cost = 0.25;
     let Some(SessionUpdate::UsageUpdate(update)) = usage_update(&usage) else {
         panic!("no usage_update");
@@ -5404,6 +5411,57 @@ fn loading_a_session_rebuilds_its_agents_at_every_depth() {
         .expect("the inner agent comes back from the outer one's file");
     assert_eq!(inner["sessionId"], outer_id, "announced on its parent");
     assert_eq!(inner["update"]["state"], "completed");
+}
+
+#[test]
+fn loading_a_compacted_session_still_lists_its_agents() {
+    let dir = tempfile::tempdir().unwrap();
+    let task = serde_json::json!({"description": "look around", "prompt": "list"});
+    let h = serve_agents(
+        vec![
+            tool_turn("call_agent", "agent", task),
+            text_turn("child done"),
+            text_turn("parent done"),
+        ],
+        dir.path(),
+        dir.path(),
+        default_agents(),
+    );
+    initialize(&h.client);
+    let prompt_end = prompt_async(&h.client, &h.session, "go");
+    prompt_end.recv_timeout(WAIT).unwrap().unwrap();
+    drain(&h.inbox);
+    h.client
+        .request("session/close", serde_json::json!({"sessionId": h.session}))
+        .unwrap();
+
+    // A compaction that summarizes the whole run, agent call included.
+    let path = kage_session::find_by_prefix(dir.path(), &h.session)
+        .unwrap()
+        .unwrap();
+    let summarized = kage_session::replay(&path).unwrap().history.len();
+    let mut writer = SessionWriter::open(&path).unwrap();
+    writer
+        .append(&SessionEntry::Compaction(kage_session::Compaction {
+            id: EntryId::new(),
+            ts: chrono::Utc::now(),
+            kept: 0,
+            summarized,
+            summary: "the agent looked around".into(),
+        }))
+        .unwrap();
+    drop(writer);
+
+    let cwd = dir.path().display().to_string();
+    let params = serde_json::json!({"sessionId": h.session, "cwd": cwd, "mcpServers": []});
+    h.client.request("session/load", params).unwrap();
+    let updates = drain(&h.inbox);
+    let agent = updates
+        .iter()
+        .find(|p| p["update"]["sessionUpdate"] == "subagent_update")
+        .unwrap_or_else(|| panic!("the compacted agent comes back: {updates:#?}"));
+    assert_eq!(agent["update"]["toolCallId"], "call_agent");
+    assert_eq!(agent["update"]["state"], "completed");
 }
 
 #[test]

@@ -513,6 +513,7 @@ fn the_main_session_change_forgets_its_agents() {
                 title: None,
                 messages: Vec::new(),
                 compaction: None,
+                compacted_agents: Vec::new(),
             }
             .into(),
         ],
@@ -906,6 +907,7 @@ fn the_main_session_change_while_focused_returns_to_the_main_view() {
                 title: None,
                 messages: Vec::new(),
                 compaction: None,
+                compacted_agents: Vec::new(),
             }
             .into(),
         ],
@@ -1486,14 +1488,15 @@ fn resumed_app() -> (
     );
     result.ts = call.ts + chrono::Duration::milliseconds(8_800);
     app.set_agent_loader(Box::new(move |session| {
-        (session == child).then(|| {
-            vec![std::sync::Arc::new(kage_core::Message::new(
+        (session == child).then(|| crate::app::StoredAgent {
+            messages: vec![std::sync::Arc::new(kage_core::Message::new(
                 kage_core::Role::User,
                 vec![kage_core::Content::Text {
                     text: "map everything under src".into(),
                 }],
                 None,
-            ))]
+            ))],
+            ..Default::default()
         })
     }));
     feed(
@@ -1505,6 +1508,7 @@ fn resumed_app() -> (
                 title: None,
                 messages: vec![std::sync::Arc::new(call), std::sync::Arc::new(result)],
                 compaction: None,
+                compacted_agents: Vec::new(),
             }
             .into(),
         ],
@@ -1584,7 +1588,10 @@ fn a_resume_lists_agents_at_every_depth_with_their_recorded_stats() {
         std::sync::Arc::new(result("b1", grandchild)),
     ];
     app.set_agent_loader(Box::new(move |session| {
-        (session == child).then(|| nested.clone())
+        (session == child).then(|| crate::app::StoredAgent {
+            messages: nested.clone(),
+            ..Default::default()
+        })
     }));
     feed(
         &mut app,
@@ -1598,6 +1605,7 @@ fn a_resume_lists_agents_at_every_depth_with_their_recorded_stats() {
                     std::sync::Arc::new(result("a1", child)),
                 ],
                 compaction: None,
+                compacted_agents: Vec::new(),
             }
             .into(),
         ],
@@ -1611,6 +1619,74 @@ fn a_resume_lists_agents_at_every_depth_with_their_recorded_stats() {
     assert_eq!(deep.title, "map the tests");
     assert_eq!(deep.tokens, 1_500);
     assert_eq!(deep.elapsed_ms, Some(4_000));
+}
+
+#[test]
+fn a_resume_lists_the_agents_its_compactions_summarized() {
+    let (mut app, _rx, events) = app_with_events();
+    let (child, grandchild) = (kage_core::SessionId::new(), kage_core::SessionId::new());
+    let call = |id: &str, description: &str| {
+        std::sync::Arc::new(kage_core::Message::new(
+            kage_core::Role::Assistant,
+            vec![kage_core::Content::ToolCall {
+                id: kage_core::ToolCallId::new(id),
+                name: "agent".into(),
+                input: serde_json::json!({ "agent": "explore", "description": description }),
+            }],
+            None,
+        ))
+    };
+    let result = |id: &str, session: kage_core::SessionId| {
+        std::sync::Arc::new(kage_core::Message::new(
+            kage_core::Role::ToolResult,
+            vec![kage_core::Content::ToolResultBlock {
+                call_id: kage_core::ToolCallId::new(id),
+                output: format!(
+                    "<agent name=\"explore\" session=\"{session}\" state=\"completed\">\ndone\n</agent>"
+                ),
+                is_error: false,
+            }],
+            None,
+        ))
+    };
+    let nested = vec![call("b1", "map the tests"), result("b1", grandchild)];
+    app.set_agent_loader(Box::new(move |session| {
+        (session == child).then(|| crate::app::StoredAgent {
+            compacted_agents: nested.clone(),
+            ..Default::default()
+        })
+    }));
+    let summary = std::sync::Arc::new(kage_core::Message::new(
+        kage_core::Role::User,
+        vec![kage_core::Content::Text {
+            text: "summary".into(),
+        }],
+        None,
+    ));
+    feed(
+        &mut app,
+        &events,
+        vec![
+            kage_core::protocol::HostEvent::SessionChanged {
+                path: std::path::PathBuf::from("/tmp/s.jsonl"),
+                title: None,
+                messages: vec![summary],
+                compaction: Some(kage_core::protocol::CompactionCounts {
+                    summarized: 2,
+                    kept: 0,
+                }),
+                compacted_agents: vec![call("a1", "map src"), result("a1", child)],
+            }
+            .into(),
+        ],
+    );
+    let rows = app.agents_overlay_rows();
+    let listed = |session| rows.iter().any(|row| row.session == Some(session));
+    assert!(listed(child), "the root's compacted agent is listed");
+    assert!(
+        listed(grandchild),
+        "and the one the child's compaction summarized"
+    );
 }
 
 #[test]

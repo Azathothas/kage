@@ -10,7 +10,8 @@ use kage_acp::acp::{
     NoticeUpdate, Plan, QuestionChoice, QuestionPrompt, SessionConfigSelectOption,
     SessionInfoUpdate, SessionUpdate, SubagentSessionCapabilities, SubagentState, SubagentSwarm,
     SubagentUpdate, SubagentUsage, SwarmMeta, ToolCall, ToolCallContent, ToolCallMeta,
-    ToolCallStatus, ToolCallUpdate, ToolKind, TurnPhase, TurnReason, TurnUpdate, UsageUpdate,
+    ToolCallStatus, ToolCallUpdate, ToolKind, TurnPhase, TurnReason, TurnUpdate, UsageMeta,
+    UsageTokens, UsageUpdate,
 };
 use kage_acp::agent::{
     PermissionDecision, PlanReviewDecision, QuestionsAnswer, request_plan_review,
@@ -1369,7 +1370,8 @@ fn is_live(node: &kage_core::protocol::AgentNode) -> bool {
 }
 
 /// The `usage_update` for `usage`, or `None` while the context window is
-/// unknown. Cost is left out until the model has pricing.
+/// unknown. Cost is left out until the model has pricing; the token
+/// totals ride under `_meta.kage`.
 pub(super) fn usage_update(usage: &Usage) -> Option<SessionUpdate> {
     if usage.context_window == 0 {
         return None;
@@ -1378,10 +1380,17 @@ pub(super) fn usage_update(usage: &Usage) -> Option<SessionUpdate> {
         amount: usage.cost,
         currency: "USD".to_owned(),
     });
+    let tokens = UsageTokens {
+        input: usage.total.input,
+        output: usage.total.output,
+        cache_read: usage.total.cache_read,
+        cache_write: usage.total.cache_write,
+    };
     Some(SessionUpdate::UsageUpdate(UsageUpdate {
         used: usage.context_used,
         size: usage.context_window,
         cost,
+        meta: Some(UsageMeta { kage: Some(tokens) }),
     }))
 }
 
