@@ -708,10 +708,6 @@ pub struct Palette {
     pub menu: Color32,
     /// Inline code fill.
     pub code_inline: Color32,
-    /// Brand orb gradient start.
-    pub orb_1: Color32,
-    /// Brand orb gradient end.
-    pub orb_2: Color32,
     /// The agent avatar hues.
     pub avatars: Avatars,
     /// Small ambient shadow.
@@ -893,8 +889,6 @@ impl Palette {
             selection: color(0xF2A65A42),
             menu: color(0x16141CF2),
             code_inline: color(0xE8E2F514),
-            orb_1: color(0xF2A65A),
-            orb_2: color(0xA98BFA),
             avatars: Avatars {
                 amber: AvatarColor {
                     bg: color(0xE8E2F50D),
@@ -1002,8 +996,6 @@ impl Palette {
             selection: color(0xA8580F33),
             menu: color(0xFFFFFFF2),
             code_inline: color(0x1A142E0F),
-            orb_1: color(0xA8580F),
-            orb_2: color(0x6A47CC),
             avatars: Avatars {
                 amber: AvatarColor {
                     bg: color(0x1A142E0B),
@@ -1111,8 +1103,6 @@ impl Palette {
             selection: color(0x1A88FF45),
             menu: color(0x292929F2),
             code_inline: color(0xFFFFFF1A),
-            orb_1: color(0x1A88FF),
-            orb_2: color(0x76E3EA),
             ..Self::shadow()
         }
     }
@@ -1176,8 +1166,6 @@ impl Palette {
             selection: color(0x1783FF58),
             menu: color(0xFFFFFFF2),
             code_inline: black(0x08),
-            orb_1: color(0x1783FF),
-            orb_2: color(0x1B7C83),
             ..Self::dawn()
         }
     }

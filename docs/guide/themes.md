@@ -305,8 +305,6 @@ Settings sets both from its Appearance page.
 | `selection` | Text selection fill |
 | `menu` | Menus and popovers, slightly translucent |
 | `code_inline` | Inline code fill |
-| `orb_1` | Brand orb gradient start |
-| `orb_2` | Brand orb gradient end |
 
 ## transparency
 

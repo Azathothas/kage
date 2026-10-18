@@ -229,8 +229,6 @@ tokens!(
     selection,
     menu,
     code_inline,
-    orb_1,
-    orb_2,
 );
 
 #[cfg(test)]
