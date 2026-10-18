@@ -111,8 +111,10 @@ pub fn use_cache(path: &Path) -> Result<usize, String> {
     Ok(count)
 }
 
-/// Download the curated catalog from `url`, check it parses, and write
-/// it to `dest`, replacing it atomically. Returns the number of models
+/// Read the curated catalog from `url`, check it parses to at least
+/// one of kage's providers, and write it to `dest`, replacing it
+/// atomically. A `file://` URL reads a local file, which is how an
+/// offline run or a test pins a catalog. Returns the number of models
 /// kage's providers expose.
 ///
 /// The body is written as it came, unpruned: the curated feed is
@@ -125,19 +127,29 @@ pub fn use_cache(path: &Path) -> Result<usize, String> {
 /// # Errors
 ///
 /// The download fails, the body exceeds [`DOWNLOAD_LIMIT`], the body is
-/// not a catalog, or `dest` cannot be written.
+/// not a catalog or names none of kage's providers, or `dest` cannot be
+/// written.
 pub fn refresh(url: &str, dest: &Path) -> Result<usize, String> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(std::time::Duration::from_secs(60)))
-        .build()
-        .into();
-    let response = agent
-        .get(url)
-        .header("user-agent", concat!("kage/", env!("CARGO_PKG_VERSION")))
-        .call()
-        .map_err(|e| format!("get {url}: {e}"))?;
-    let body = read_limited(response.into_body().into_reader(), DOWNLOAD_LIMIT)?;
-    let count = source::parse(&body)?.iter().map(|p| p.models.len()).sum();
+    let body = if let Some(path) = url.strip_prefix("file://") {
+        let file = std::fs::File::open(path).map_err(|e| format!("read {path}: {e}"))?;
+        read_limited(file, DOWNLOAD_LIMIT)?
+    } else {
+        let agent: ureq::Agent = ureq::Agent::config_builder()
+            .timeout_global(Some(std::time::Duration::from_secs(60)))
+            .build()
+            .into();
+        let response = agent
+            .get(url)
+            .header("user-agent", concat!("kage/", env!("CARGO_PKG_VERSION")))
+            .call()
+            .map_err(|e| format!("get {url}: {e}"))?;
+        read_limited(response.into_body().into_reader(), DOWNLOAD_LIMIT)?
+    };
+    let providers = source::parse(&body)?;
+    if providers.is_empty() {
+        return Err("catalog has none of kage's providers".to_owned());
+    }
+    let count: usize = providers.iter().map(|p| p.models.len()).sum();
     if let Some(dir) = dest.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     }
@@ -371,6 +383,44 @@ mod tests {
         let ok = read_limited(std::io::Cursor::new(&body), 16).unwrap();
         assert_eq!(ok.len(), 16);
         assert!(read_limited(std::io::Cursor::new(&body), 15).is_err());
+    }
+
+    #[test]
+    fn refresh_reads_a_local_catalog_and_writes_the_cache() {
+        let dir = std::env::temp_dir().join(format!("kage-refresh-ok-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let source = dir.join("catalog.json");
+        std::fs::write(
+            &source,
+            r#"{"anthropic": {"name": "Anthropic", "models": {
+                "a": {"id": "a", "name": "A", "tool_call": true}}}}"#,
+        )
+        .expect("write catalog fixture");
+        let dest = dir.join("cache").join("models.json");
+        let url = format!("file://{}", source.display());
+        let count = refresh(&url, &dest).expect("refresh reads the file");
+        assert_eq!(count, 1);
+        assert_eq!(
+            std::fs::read_to_string(&dest).unwrap(),
+            std::fs::read_to_string(&source).unwrap()
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn refresh_refuses_a_catalog_without_kages_providers() {
+        let dir = std::env::temp_dir().join(format!("kage-refresh-empty-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let source = dir.join("catalog.json");
+        std::fs::write(&source, r#"{"unrelated": {}}"#).expect("write catalog fixture");
+        let dest = dir.join("cache").join("models.json");
+        let url = format!("file://{}", source.display());
+        let err = refresh(&url, &dest).unwrap_err();
+        assert!(err.contains("none of kage's providers"), "{err}");
+        assert!(!dest.parent().unwrap().exists(), "nothing written");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     fn model(id: &'static str, release_date: Option<&'static str>) -> ModelInfo {
