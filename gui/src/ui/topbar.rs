@@ -136,7 +136,7 @@ pub fn show(
     );
 }
 
-/// The working pill: the turning eclipse and the elapsed label on the
+/// The working pill: the working cat and the elapsed label on the
 /// fill, 24px tall. `compacting` renames the run to what it is doing
 /// while the agent summarizes older turns.
 fn working_pill(ui: &mut egui::Ui, compacting: bool, elapsed: &str, palette: &Palette) {
@@ -159,7 +159,7 @@ fn working_pill(ui: &mut egui::Ui, compacting: bool, elapsed: &str, palette: &Pa
         egui::pos2(rect.left() + 9.0, rect.center().y - 7.0),
         egui::vec2(14.0, 14.0),
     );
-    crate::ui::eclipse::paint(ui, mark, 14.0, Some(crate::clock::epoch()), palette);
+    crate::ui::mark::working(ui, mark, crate::clock::epoch());
     ui.painter().galley(
         egui::pos2(
             mark.right() + 6.0,

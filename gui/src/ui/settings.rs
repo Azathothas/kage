@@ -1962,9 +1962,9 @@ fn about(
             rect.left(),
             crate::theme::snap(rect.top() + (height - 48.0) / 2.0),
         ),
-        egui::vec2(48.0, 48.0),
+        crate::ui::mark::size(48.0),
     );
-    crate::ui::eclipse::paint(ui, mark, 48.0, None, palette);
+    crate::ui::mark::paint(ui, mark);
     let x = mark.right() + 14.0;
     let top = crate::theme::snap(rect.top() + (height - name_h - versions_h) / 2.0);
     let y = crate::theme::line_y(top, name_h, &name);

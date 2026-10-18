@@ -276,13 +276,11 @@ jobs:
             iconset="$RUNNER_TEMP/kage.iconset"
             mkdir -p "$iconset"
             for slot in 16 32 128 256 512; do
-              sips -z "$slot" "$slot" assets/brand/kage-glyph-shadow.png \
+              sips -z "$slot" "$slot" assets/brand/kage-icon.png \
                 --out "$iconset/icon_${slot}x${slot}.png" >/dev/null
               px=$((slot * 2))
-              if [ "$px" -le 608 ]; then
-                sips -z "$px" "$px" assets/brand/kage-glyph-shadow.png \
-                  --out "$iconset/icon_${slot}x${slot}@2x.png" >/dev/null
-              fi
+              sips -z "$px" "$px" assets/brand/kage-icon.png \
+                --out "$iconset/icon_${slot}x${slot}@2x.png" >/dev/null
             done
             iconutil -c icns "$iconset" -o "$app/Contents/Resources/kage.icns"
           else
@@ -409,8 +407,8 @@ jobs:
           mkdir -p AppDir/bin AppDir/.onelf/icons AppDir/.onelf/desktop \
             AppDir/share/icons ../dist
           cp target/release/kage-desktop AppDir/bin/kage-desktop
-          cp assets/brand/kage-glyph-shadow.png AppDir/.onelf/icons/default.png
-          cp assets/brand/kage-glyph-dawn.png AppDir/.onelf/icons/kage-desktop.png
+          cp assets/icons/hicolor/512x512/apps/kage.png AppDir/.onelf/icons/default.png
+          cp assets/icons/hicolor/512x512/apps/kage.png AppDir/.onelf/icons/kage-desktop.png
           cp -R assets/icons/hicolor AppDir/share/icons/hicolor
           printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=kage' \
             'Comment=Desktop client for the kage coding agent' \

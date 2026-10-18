@@ -17,7 +17,6 @@ const { frontmatter } = useData();
         <div class="kage-hero__line">
           <span class="kage-hero__prompt">$</span>
           <span class="kage-hero__cmd">kage</span>
-          <span class="kage-hero__caret" aria-hidden="true"></span>
         </div>
         <div class="kage-hero__output">
           <h1 class="kage-hero__title">

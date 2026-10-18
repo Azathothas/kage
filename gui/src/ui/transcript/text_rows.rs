@@ -450,7 +450,7 @@ pub fn render_thinking(
         ui,
         Head {
             lead: if live {
-                Lead::Eclipse
+                Lead::Working
             } else {
                 Lead::Icon(crate::icons::Icon::Lightbulb, palette.muted)
             },

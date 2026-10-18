@@ -32,8 +32,8 @@ pub(crate) enum Lead {
     Icon(Icon, egui::Color32),
     /// The working spinner in one color.
     Spinner(egui::Color32),
-    /// The turning eclipse of live reasoning.
-    Eclipse,
+    /// The working cat of live reasoning.
+    Working,
 }
 
 /// One item of the meta cluster at the head's right edge.
@@ -128,9 +128,7 @@ pub(crate) fn show(ui: &mut egui::Ui, head: Head) -> egui::Response {
             crate::icons::themed_image(icon, ICON, color).paint_snapped(ui, lead);
         }
         Lead::Spinner(color) => paint_spinner(ui, lead, color),
-        Lead::Eclipse => {
-            crate::ui::eclipse::paint(ui, lead, ICON, Some(crate::clock::epoch()), palette);
-        }
+        Lead::Working => crate::ui::mark::working(ui, lead, crate::clock::epoch()),
     }
     x = lead.right() + SP_4;
 

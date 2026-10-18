@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/public/kage-mark-shadow.svg">
+    <img src="docs/public/kage-mark-dawn.svg" alt="" width="120">
+  </picture>
+</p>
+
 # kage
 
 A coding agent for your terminal, your editor and your browser.

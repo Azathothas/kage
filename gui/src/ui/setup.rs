@@ -151,7 +151,7 @@ impl SetupView {
             ui.add_space(48.0);
             ui.horizontal(|ui| {
                 ui.horizontal(|ui| {
-                    crate::ui::eclipse::eclipse(ui, 44.0, None);
+                    crate::ui::mark::mark(ui, 44.0);
                 });
                 ui.vertical(|ui| {
                     ui.label(
