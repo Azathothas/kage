@@ -46,9 +46,6 @@ impl ProviderMap {
 pub const SUPPORTED_PROVIDERS: &[ProviderMap] = &[
     ProviderMap::same("anthropic"),
     ProviderMap::same("openai"),
-    // The Responses API hits the same upstream provider; re-emit the
-    // OpenAI model list under a second kage id so the model picker
-    // offers `openai-responses:` rows alongside `openai:`.
     ProviderMap {
         api_id: "openai",
         kage_id: "openai-responses",
@@ -64,9 +61,6 @@ pub const SUPPORTED_PROVIDERS: &[ProviderMap] = &[
     ProviderMap::same("openrouter"),
     ProviderMap::same("fireworks-ai"),
     ProviderMap::same("moonshotai"),
-    // models.dev renamed the `kimi-for-coding` key to regional
-    // `kimi-code-plan-*` providers; the cn flavor serves the endpoint
-    // kage's compat entry declares.
     ProviderMap {
         api_id: "kimi-code-plan-cn",
         kage_id: "kimi-for-coding",
@@ -75,15 +69,8 @@ pub const SUPPORTED_PROVIDERS: &[ProviderMap] = &[
     ProviderMap::same("xiaomi-token-plan-ams"),
     ProviderMap::same("xiaomi-token-plan-cn"),
     ProviderMap::same("xiaomi-token-plan-sgp"),
-    // Command Code (commandcode.ai) is absent from models.dev; kage-models
-    // builds its rows from Command Code's own model list and effort
-    // levels. Claude models are served on the Anthropic Messages endpoint
-    // only, so they list under their own kage id.
     ProviderMap::same("commandcode"),
     ProviderMap::same("commandcode-claude"),
-    // kage-models narrows models.dev's Kenari pay-as-you-go catalog to
-    // what the subscription plans serve, with Claude models under their
-    // own Messages-format kage id.
     ProviderMap::same("kenari"),
     ProviderMap::same("kenari-claude"),
     ProviderMap::same("opencode-go"),

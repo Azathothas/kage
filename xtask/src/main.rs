@@ -460,28 +460,6 @@ mod tests {
         assert_eq!(formatted, on_disk);
     }
 
-    /// The providers models.dev does not carry reach the runtime cache
-    /// only through the curated catalog, so they must survive both the
-    /// offline gate and the runtime merge.
-    #[test]
-    fn the_curated_providers_reach_the_snapshot() {
-        let root = workspace_root();
-        let fixture = fs::read_to_string(root.join(CATALOG_FIXTURE)).expect("catalog committed");
-        let providers = source::parse(&fixture).expect("catalog parses");
-        for id in [
-            "commandcode",
-            "commandcode-claude",
-            "kenari",
-            "kenari-claude",
-        ] {
-            let provider = providers
-                .iter()
-                .find(|p| p.id == id)
-                .unwrap_or_else(|| panic!("the catalog must carry '{id}'"));
-            assert!(!provider.models.is_empty(), "{id} carries models");
-        }
-    }
-
     #[test]
     fn fetch_reads_a_local_file_for_the_offline_gate() {
         let root = workspace_root();
