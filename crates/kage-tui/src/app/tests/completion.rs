@@ -245,6 +245,39 @@ fn slash_completion_with_no_args_offers_everything_then_names_filter() {
 }
 
 #[test]
+fn slash_completion_survives_the_cursor_before_the_slash() {
+    let buffer = shared_buffer();
+    let (tx, _rx) = mpsc::channel();
+    let mut app = app_with_defaults(buffer, tx);
+    app.handle_key(key('/'));
+    let all = app
+        .input_completion
+        .as_ref()
+        .expect("bare slash completes")
+        .items()
+        .len();
+
+    // Home puts the cursor before the slash, which used to slice
+    // &text[1..0] and panic the TUI thread.
+    app.handle_key(code(KeyCode::Home));
+    let items = app
+        .input_completion
+        .as_ref()
+        .expect("Home before the slash keeps the popup open");
+    assert_eq!(
+        items.items().len(),
+        all,
+        "an empty prefix offers every command"
+    );
+
+    app.handle_key(code(KeyCode::Left));
+    assert!(
+        app.input_completion.is_some(),
+        "Left at the start of the draft keeps the popup open"
+    );
+}
+
+#[test]
 fn slash_argument_positions_complete_against_the_spec() {
     let buffer = shared_buffer();
     let (tx, _rx) = mpsc::channel();
