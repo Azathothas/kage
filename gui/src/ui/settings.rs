@@ -11,7 +11,7 @@ use crate::prefs::Prefs;
 use crate::store::Store;
 use crate::theme::{
     FAMILY_BODY_BOLD, FAMILY_BODY_MEDIUM, FAMILY_BODY_REGULAR, FAMILY_BODY_SEMIBOLD,
-    FAMILY_MONO_REGULAR, FS_SM, FS_XS, Palette, R_LG, R_MD, R_XL, family,
+    FAMILY_MONO_REGULAR, FS_SM, FS_XS, Palette, R_LG, R_MD, family,
 };
 use crate::ui::forms::ShowCrisp as _;
 use crate::ui::settings_config as config;
@@ -534,7 +534,7 @@ impl SettingsView {
                     egui::Frame::NONE
                         .fill(palette.bg)
                         .stroke(egui::Stroke::new(1.0, palette.line))
-                        .corner_radius(egui::CornerRadius::same(R_XL as u8))
+                        .corner_radius(egui::CornerRadius::same(R_LG as u8))
                         .show_shadowed(ui, &palette.shadow_2, |ui| {
                             // The card's size counts its border, as the
                             // reference's box does.

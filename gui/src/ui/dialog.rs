@@ -16,7 +16,7 @@ use kage_client::{Session, TranscriptItem, unquote_and_trim};
 
 use crate::store::{FoldersRead, Store};
 use crate::theme::{
-    FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_SM, FS_XS, Palette, R_FULL, R_MD, R_SM, R_XL,
+    FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_SM, FS_XS, Palette, R_FULL, R_LG, R_MD, R_SM,
     family,
 };
 use crate::ui::settings_config::{BtnTone, btn_sm_at};
@@ -318,7 +318,7 @@ impl Dialogs {
                     egui::Frame::NONE
                         .fill(palette.bg)
                         .stroke(egui::Stroke::new(1.0, palette.line))
-                        .corner_radius(egui::CornerRadius::same(R_XL as u8))
+                        .corner_radius(egui::CornerRadius::same(R_LG as u8))
                         .show_shadowed(ui, &palette.shadow_2, |ui| {
                             ui.set_width(width - 2.0);
                             ui.spacing_mut().item_spacing.y = 0.0;

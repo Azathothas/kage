@@ -39,7 +39,7 @@ use serde_json::Value;
 use crate::store::Store;
 use crate::theme::{
     FAMILY_BODY_SEMIBOLD, FAMILY_MONO_REGULAR, FS_2XS, FS_BASE, FS_SM, FS_XS, Palette, R_FULL,
-    R_MD, R_XL, SP_4, family,
+    R_LG, R_MD, SP_4, family,
 };
 
 /// The three tones an option button carries: the filled success for
@@ -291,7 +291,7 @@ impl Approval {
             egui::Frame::NONE
                 .fill(fill)
                 .stroke(egui::Stroke::new(1.0, border))
-                .corner_radius(egui::CornerRadius::same(R_XL as u8))
+                .corner_radius(egui::CornerRadius::same(R_LG as u8))
                 .show_crisp(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.spacing_mut().item_spacing.y = 0.0;
@@ -319,7 +319,7 @@ impl Approval {
         egui::Frame::NONE
             .fill(fill)
             .stroke(egui::Stroke::new(1.0, border))
-            .corner_radius(egui::CornerRadius::same(R_XL as u8))
+            .corner_radius(egui::CornerRadius::same(R_LG as u8))
             .shadow(ring)
             .inner_margin(egui::Margin::symmetric(14, 12))
             .show_crisp(ui, |ui| {

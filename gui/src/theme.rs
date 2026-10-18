@@ -97,8 +97,8 @@ pub const R_XL: f32 = 16.0;
 /// 20px, extra large surfaces.
 pub const R_2XL: f32 = 20.0;
 
-/// 32px, the composer's pill shape.
-pub const R_COMPOSER: f32 = 32.0;
+/// 16px, the composer card.
+pub const R_COMPOSER: f32 = 16.0;
 
 /// Fully round, pills and dots.
 pub const R_FULL: f32 = 999.0;

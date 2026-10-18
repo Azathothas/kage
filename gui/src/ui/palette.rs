@@ -17,7 +17,7 @@ use kage_client::Session;
 use serde_json::Value;
 
 use crate::theme::{
-    FAMILY_BODY_MEDIUM, FAMILY_BODY_REGULAR, FS_2XS, FS_SM, FS_XS, Palette as Theme, R_MD, R_XL,
+    FAMILY_BODY_MEDIUM, FAMILY_BODY_REGULAR, FS_2XS, FS_SM, FS_XS, Palette as Theme, R_LG, R_MD,
     family,
 };
 
@@ -560,7 +560,7 @@ impl Palette {
                     egui::Frame::NONE
                         .fill(palette.bg)
                         .stroke(egui::Stroke::new(1.0, palette.line))
-                        .corner_radius(egui::CornerRadius::same(R_XL as u8))
+                        .corner_radius(egui::CornerRadius::same(R_LG as u8))
                         .show_shadowed(ui, &palette.shadow_2, |ui| {
                             ui.set_width(width - 2.0);
                             ui.spacing_mut().item_spacing = egui::Vec2::ZERO;

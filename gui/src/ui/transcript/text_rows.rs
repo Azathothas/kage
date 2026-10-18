@@ -25,14 +25,14 @@ use kage_client::{Session, TranscriptItem};
 use super::head::{self, Head, Lead, Target};
 use super::model::last_sentence;
 use crate::theme::{
-    FAMILY_BODY_REGULAR, FAMILY_MONO_REGULAR, FS_2XS, FS_BASE, FS_SM, FS_XS, Palette, R_FULL, SP_1,
-    SP_2, SP_3, SP_4, SP_5, family,
+    FAMILY_BODY_REGULAR, FAMILY_MONO_REGULAR, FS_2XS, FS_BASE, FS_SM, FS_XS, Palette, R_FULL,
+    R_MD, SP_1, SP_2, SP_3, SP_4, SP_5, family,
 };
 
 /// The activity row's height, the design's minimum row height.
 const ROW_H: f32 = 28.0;
 /// The user bubble's corner radius.
-const BUBBLE_R: f32 = 18.0;
+const BUBBLE_R: f32 = 12.0;
 /// The user bubble's horizontal padding.
 const BUBBLE_PX: f32 = 14.0;
 /// The user bubble's vertical padding.
@@ -636,11 +636,8 @@ fn ruled_line(
     ui.painter()
         .hline(body.right() + SP_4..=rect.right(), mid, stroke);
     if pill {
-        ui.painter().rect_filled(
-            body,
-            egui::CornerRadius::same(R_FULL as u8),
-            palette.danger_soft,
-        );
+        ui.painter()
+            .rect_filled(body, egui::CornerRadius::same(R_MD as u8), palette.danger_soft);
     }
     ui.painter().galley(body.min + pad, galley, color);
     response
