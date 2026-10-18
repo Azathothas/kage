@@ -52,7 +52,9 @@ pub fn catalog_origin() -> Option<String> {
 /// itself comes from.
 ///
 /// A `file://` catalog reads from the `logos/` directory beside the
-/// file, so a single override pins the catalog and its logos together.
+/// file, and an HTTP catalog whose path ends in a file segment (no
+/// trailing slash) likewise, so a single override pins the catalog and
+/// its logos together.
 #[must_use]
 pub fn logo_url(id: &str) -> String {
     let base = catalog_url();
@@ -62,7 +64,16 @@ pub fn logo_url(id: &str) -> String {
             .unwrap_or(std::path::Path::new("."));
         return format!("file://{}/{LOGOS_PATH}/{id}.svg", dir.display());
     }
-    format!("{}/{LOGOS_PATH}/{id}.svg", base.trim_end_matches('/'))
+    // A trailing slash names the logo directory itself; otherwise the
+    // last segment is the catalog file and the logos sit beside it.
+    let dir = if let Some(dir) = base.strip_suffix('/') {
+        dir
+    } else if let Some((dir, _)) = base.rsplit_once('/') {
+        dir
+    } else {
+        base.as_str()
+    };
+    format!("{dir}/{LOGOS_PATH}/{id}.svg")
 }
 
 #[cfg(test)]
@@ -148,6 +159,16 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.set_env(CATALOG_URL_ENV, "https://example.com/feed/");
             assert_eq!(logo_url("groq"), "https://example.com/feed/logos/groq.svg");
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn a_file_shaped_http_url_reads_the_logos_beside_the_catalog() {
+        let _globals = process_globals();
+        figment::Jail::expect_with(|jail| {
+            jail.set_env(CATALOG_URL_ENV, "http://127.0.0.1:8787/catalog.json");
+            assert_eq!(logo_url("groq"), "http://127.0.0.1:8787/logos/groq.svg");
             Ok(())
         });
     }
