@@ -2,7 +2,7 @@
 //!
 //! The bundled snapshot lives in `generated.rs`, which is rewritten by
 //! `cargo xtask refresh-models` from the curated catalog at
-//! [`source::CATALOG_URL`]. `kage models refresh` writes a newer copy of
+//! [`source::catalog_url`]. `kage models refresh` writes a newer copy of
 //! that same catalog to the model cache; [`use_cache`] lays its model
 //! entries over the snapshot. This module exposes a hand-curated API on
 //! top so callers don't depend on the generator's exact shape.
@@ -35,7 +35,7 @@ pub struct ProviderInfo {
     pub id: &'static str,
     /// Human-friendly display name.
     pub name: &'static str,
-    /// Documented API endpoint, when models.dev publishes one.
+    /// Documented API endpoint, when the catalog publishes one.
     pub api: Option<&'static str>,
     /// Models the provider exposes that support tool calling.
     pub models: &'static [ModelInfo],
@@ -60,7 +60,7 @@ pub struct ModelInfo {
     /// Inputs the model accepts.
     pub input: Inputs,
     /// Field an OpenAI-compatible model reads its reasoning back from
-    /// during a tool loop (models.dev `interleaved.field`).
+    /// during a tool loop (the catalog's `interleaved.field`).
     pub interleaved: Option<ReasoningField>,
     /// ISO-8601 date string the catalog associates with this model.
     pub release_date: Option<&'static str>,
@@ -111,14 +111,16 @@ pub fn use_cache(path: &Path) -> Result<usize, String> {
     Ok(count)
 }
 
-/// Download the curated catalog from `url`, cut it down to kage's
-/// providers and write it to `dest`, replacing it atomically. Returns
-/// the number of models written.
+/// Download the curated catalog from `url`, check it parses, and write
+/// it to `dest`, replacing it atomically. Returns the number of models
+/// kage's providers expose.
 ///
-/// Unlike the runtime path, this keeps the providers models.dev does not
-/// carry: [`CATALOG_URL`] publishes them, and pruning them away would
-/// leave Kenari and Command Code frozen at whatever shipped in
-/// `generated.rs`.
+/// The body is written as it came, unpruned: the curated feed is
+/// already scoped to kage's providers and their tool-calling models,
+/// and re-pruning it here would only risk dropping a provider on a
+/// schema change. The cache loader reads it through
+/// `SUPPORTED_PROVIDERS`, so an unexpected extra key is ignored rather
+/// than cached.
 ///
 /// # Errors
 ///
@@ -139,11 +141,6 @@ pub fn refresh(url: &str, dest: &Path) -> Result<usize, String> {
     if let Some(dir) = dest.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
     }
-    // The body is written unpruned. It came from the curated feed, which
-    // is already scoped to kage's providers and to tool-calling models;
-    // re-pruning would only risk dropping a provider on a schema change.
-    // `use_cache` parses through `SUPPORTED_PROVIDERS` either way, so an
-    // unexpected extra key is ignored rather than cached.
     kage_core::fsutil::atomic_write(dest, body.as_bytes())
         .map_err(|e| format!("write {}: {e}", dest.display()))?;
     Ok(count)
@@ -292,7 +289,6 @@ mod tests {
         }
     }
 
-    /// `kimi-for-coding` once shipped with no catalog entry at all.
     #[test]
     fn kimi_for_coding_has_models_with_cost_data() {
         let p = provider("kimi-for-coding").expect("kimi-for-coding in the snapshot");

@@ -6,7 +6,8 @@
 //! Subcommands:
 //!
 //! * `refresh-models`: fetch the curated catalog from
-//!   `kage-provider`'s [`source::CATALOG_URL`], render it with
+//!   `kage-provider`'s [`source::catalog_url`] (the published feed,
+//!   overridable with `KAGE_CATALOG_URL`), render it with
 //!   `kage_provider::catalog::source`, and rewrite
 //!   `crates/kage-provider/src/catalog/generated.rs`. The catalog
 //!   itself is built by
@@ -139,8 +140,8 @@ fn refresh_models(source: Option<&str>, check: bool) -> Result<PathBuf, String> 
     }
     // Keep the committed catalog copy in step with generated.rs so the
     // offline drift gate and its unit test stay exact. It is the body
-    // verbatim: parse drops nothing it could have kept, so both render
-    // identically.
+    // verbatim, so the gate parses and renders what the snapshot was
+    // rendered from.
     let fixture = workspace_root().join(CATALOG_FIXTURE);
     if let Some(dir) = fixture.parent() {
         fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
@@ -152,10 +153,10 @@ fn refresh_models(source: Option<&str>, check: bool) -> Result<PathBuf, String> 
     Ok(dest)
 }
 
-/// `source` run through `rustfmt` so the rendered catalog matches what
-/// the old write-then-format pass produced. Formatted output is read
-/// from the child's stdout, so the destination file is only ever
-/// touched by the final atomic write.
+/// `source` run through `rustfmt`, so the rendered catalog is
+/// `cargo fmt`-clean. Formatted output is read from the child's
+/// stdout, so the destination file is only ever touched by the final
+/// atomic write.
 fn rustfmt_formatted(source: &str) -> Result<String, String> {
     use std::io::Write as _;
     use std::process::{Command, Stdio};
@@ -481,8 +482,6 @@ mod tests {
         }
     }
 
-    /// `--source` accepts a `file://` path, which is what makes the
-    /// offline drift gate possible at all.
     #[test]
     fn fetch_reads_a_local_file_for_the_offline_gate() {
         let root = workspace_root();

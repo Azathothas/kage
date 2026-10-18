@@ -20,9 +20,6 @@ use serde_json::Value;
 
 use super::ModelCost;
 
-// The catalog's address lives in `kage-core`, where every crate that
-// reads the catalog can reach it, and is re-exported here beside the
-// parser that consumes it.
 pub use kage_core::catalog_url::{CATALOG_URL, CATALOG_URL_ENV, LOGOS_PATH, catalog_url, logo_url};
 
 /// A catalog provider key and the kage provider id it feeds.
@@ -43,9 +40,9 @@ impl ProviderMap {
     }
 }
 
-/// Provider ids kage carries `Provider` impls for. The catalog is
-/// pruned to just these; adding a provider impl means appending its id
-/// here and re-running `cargo xtask refresh-models`.
+/// Provider ids kage carries `Provider` impls for. kage reads only
+/// these from the catalog; adding a provider impl means appending its
+/// id here and re-running `cargo xtask refresh-models`.
 pub const SUPPORTED_PROVIDERS: &[ProviderMap] = &[
     ProviderMap::same("anthropic"),
     ProviderMap::same("openai"),
@@ -78,17 +75,15 @@ pub const SUPPORTED_PROVIDERS: &[ProviderMap] = &[
     ProviderMap::same("xiaomi-token-plan-ams"),
     ProviderMap::same("xiaomi-token-plan-cn"),
     ProviderMap::same("xiaomi-token-plan-sgp"),
-    // Command Code (commandcode.ai) is absent from models.dev. Its rows
-    // are built by kage-models from Command Code's own model list and
-    // the official CLI's published effort levels. Claude models are
-    // served on the Anthropic Messages endpoint only, so they list under
-    // their own kage id.
+    // Command Code (commandcode.ai) is absent from models.dev; kage-models
+    // builds its rows from Command Code's own model list and effort
+    // levels. Claude models are served on the Anthropic Messages endpoint
+    // only, so they list under their own kage id.
     ProviderMap::same("commandcode"),
     ProviderMap::same("commandcode-claude"),
-    // models.dev lists Kenari's pay-as-you-go catalog, which is wider
-    // than what Kenari's subscription plans serve. kage-models narrows
-    // it to the plans' union, with Claude models under their own
-    // Messages-format kage id.
+    // kage-models narrows models.dev's Kenari pay-as-you-go catalog to
+    // what the subscription plans serve, with Claude models under their
+    // own Messages-format kage id.
     ProviderMap::same("kenari"),
     ProviderMap::same("kenari-claude"),
     ProviderMap::same("opencode-go"),
@@ -126,7 +121,7 @@ pub struct SourceModel {
     /// Inputs the model accepts.
     pub input: Inputs,
     /// Field an OpenAI-compatible model reads its reasoning back from
-    /// during a tool loop. `None` for models.dev `interleaved: true`,
+    /// during a tool loop. `None` for a bare `interleaved: true`,
     /// which names no field.
     pub interleaved: Option<ReasoningField>,
     /// Release date (`YYYY-MM-DD`).
@@ -196,7 +191,7 @@ struct ApiCost {
     cache_write: Option<f64>,
 }
 
-/// Parse a models.dev catalog into kage's supported providers, in
+/// Parse the curated catalog into kage's supported providers, in
 /// [`SUPPORTED_PROVIDERS`] order. Providers the catalog lacks are left
 /// out, and so are models that fail to parse or lack tool calling.
 ///
@@ -216,12 +211,7 @@ pub fn parse(json: &str) -> Result<Vec<SourceProvider>, String> {
 }
 
 /// `json` cut down to the supported providers and their tool-calling
-/// models, still in the catalog shape, for the model cache.
-///
-/// The published catalog is already pruned to this subset, so for it
-/// this is a pass-through. It exists for `--source`, where the body may
-/// be raw models.dev: there the unsupported providers are dropped rather
-/// than carried into the cache.
+/// models, still in the catalog shape.
 ///
 /// # Errors
 ///
@@ -237,9 +227,9 @@ pub fn prune(json: &str) -> Result<String, String> {
         if let Some(models) = provider.get_mut("models").and_then(Value::as_object_mut) {
             models.retain(|_, m| m.get("tool_call").and_then(Value::as_bool) == Some(true));
         }
-        // Two entries share the `openai` key, and `kimi-code-plan-cn`
-        // feeds `kimi-for-coding`; inserting twice under one key is
-        // what lets both kage ids read the same provider body.
+        // Several kage ids can share one catalog key (`openai` feeds
+        // both `openai` and `openai-responses`), so the key is kept
+        // once and `parse` reads it once per kage id.
         kept.insert(map.api_id.to_owned(), provider);
     }
     if kept.is_empty() {
@@ -470,9 +460,7 @@ mod tests {
     }
 
     /// The providers models.dev lacks are curated by kage-models into
-    /// the published catalog, so prune must keep them. Dropping them
-    /// here is what kept Kenari and Command Code out of every runtime
-    /// cache before the curated feed existed.
+    /// the published catalog, so prune must keep them.
     #[test]
     fn prune_keeps_the_curated_providers_models_dev_lacks() {
         let body = with_providers(&[
@@ -491,8 +479,8 @@ mod tests {
         assert!(value.get("unrelated").is_none(), "still prunes");
     }
 
-    /// Two kage ids read one `openai` key, so a single insertion must
-    /// not drop the body for the second reader.
+    /// `prune` keeps a shared catalog key once, and `parse` still
+    /// serves it to both kage ids that read it.
     #[test]
     fn prune_serves_both_kage_ids_that_share_one_key() {
         let body = with_providers(&[(

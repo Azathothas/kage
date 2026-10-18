@@ -7,15 +7,12 @@
 //! %-escapes decoded before the check. The assets hold no secret, so
 //! the token still guards `/acp` only.
 //!
-//! The bundle makes exactly one non-self request, to the model catalog:
-//! the page loads `boot.js`, the glue and the module from its own
-//! origin and fetches the icons same-origin on first use, while the
-//! model list and each provider's logo come from the catalog's origin,
-//! which [`content_security_policy`] allows by name. The cross-origin
-//! isolation headers on the page and the module follow the measurement
-//! of the web build (see `gui/SPIKE.md`): the page runs identically
-//! with and without them, and they are sent so a future atomics build
-//! can use `SharedArrayBuffer` without a serving change.
+//! The bundle makes exactly one cross-origin request: the model list
+//! and each provider's logo, from the catalog's origin, which
+//! [`content_security_policy`] allows by name. The cross-origin
+//! isolation headers on the page and the module are sent so a future
+//! atomics build can use `SharedArrayBuffer` without a serving change
+//! (measured in `gui/SPIKE.md`).
 
 use std::io::{Read as _, Write as _};
 use std::net::{Shutdown, TcpStream};
@@ -27,7 +24,7 @@ use std::time::Duration;
 /// same-origin (`script-src 'self'`), and `'wasm-unsafe-eval'` is the
 /// minimum WebAssembly compilation needs; styles come from same-origin
 /// sheets, images from same-origin or data URLs. The four hashes admit
-/// the exact `style` attributes of the GPUI web platform's safe-area
+/// the exact `style` attributes of the web bundle's safe-area
 /// probes, one per edge, and nothing else.
 ///
 /// [`content_security_policy`] appends the one origin the bundle does
@@ -337,9 +334,8 @@ fn is_safe_segment(segment: &str) -> bool {
 mod tests {
     use super::*;
 
-    /// The catalog origin the CSP allows, checked against a catalog
-    /// override so the relaxation cannot quietly widen. The env is read
-    /// here rather than in the serving path so the test can vary it.
+    /// The catalog origin the CSP allows, so the relaxation cannot
+    /// quietly widen.
     #[test]
     fn the_policy_names_the_catalog_origin_and_nothing_wider() {
         let policy = content_security_policy();

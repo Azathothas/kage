@@ -1,29 +1,18 @@
 //! Where the curated model catalog is published.
 //!
-//! The constant lives here rather than in `kage-provider` because every
-//! crate that reads the catalog has to agree on its address: the CLI
-//! that refreshes it, the provider crate that parses it, and the GUI,
-//! which loads a provider's logo from the same origin. `kage-provider`
-//! re-exports these, so a caller reaching for the catalog through its
-//! parser finds the same values.
+//! Every crate that reads the catalog has to agree on its address: the
+//! CLI that refreshes it, the provider crate that parses it, and the
+//! GUI, which loads a provider's logo from the same origin.
 
 /// The curated catalog, published by
 /// [`kage-models`](https://github.com/QaidVoid/kage-models). It merges
 /// models.dev with the model lists and plans the other providers
-/// publish, so kage never fetches an upstream itself.
-///
-/// Served statically from Cloudflare Pages by a scheduled run that
-/// rebuilds the source TOML from the upstreams. The path is bare: the
-/// site's root serves the catalog, so the subdomain alone is the URL.
-/// Override with [`CATALOG_URL_ENV`] to pin a revision or read a local
-/// file.
+/// publish, so kage never fetches an upstream itself. Override with
+/// [`CATALOG_URL_ENV`] to pin a revision or read a local file.
 pub const CATALOG_URL: &str = "https://models.kage.qaidvoid.dev/";
 
 /// The directory on the same origin holding one SVG per provider, which
 /// kage-models publishes beside the catalog.
-///
-/// A logo is a kage provider id with `.svg` appended, so a provider
-/// needs no aliasing against the catalog's own ids.
 pub const LOGOS_PATH: &str = "logos";
 
 /// Environment variable overriding [`CATALOG_URL`].
@@ -63,8 +52,7 @@ pub fn catalog_origin() -> Option<String> {
 /// itself comes from.
 ///
 /// A `file://` catalog reads from the `logos/` directory beside the
-/// file, so a single override pins the catalog and its logos together,
-/// which is what an offline run and the tests need.
+/// file, so a single override pins the catalog and its logos together.
 #[must_use]
 pub fn logo_url(id: &str) -> String {
     let base = catalog_url();
@@ -107,7 +95,6 @@ mod tests {
         figment::Jail::expect_with(|jail| {
             jail.set_env(CATALOG_URL_ENV, "https://example.com/feed/");
             assert_eq!(catalog_origin(), Some("https://example.com".to_owned()));
-            // A port is part of the origin, so it stays.
             jail.set_env(CATALOG_URL_ENV, "http://127.0.0.1:8787/catalog.json");
             assert_eq!(catalog_origin(), Some("http://127.0.0.1:8787".to_owned()));
             Ok(())
@@ -118,9 +105,6 @@ mod tests {
     fn a_local_catalog_allows_no_origin() {
         let _globals = process_globals();
         figment::Jail::expect_with(|jail| {
-            // The engine reads a `file://` catalog; no page fetches it, so
-            // there is nothing to allow and no scheme to leak into a
-            // security header.
             jail.set_env(CATALOG_URL_ENV, "file:///tmp/catalog.json");
             assert_eq!(catalog_origin(), None);
             Ok(())
@@ -149,8 +133,6 @@ mod tests {
         let _globals = process_globals();
         figment::Jail::expect_with(|jail| {
             jail.set_env(CATALOG_URL_ENV, CATALOG_URL);
-            // The catalog is served at the bare origin, so the logo path
-            // is appended to it without doubling the slash.
             assert_eq!(
                 logo_url("groq"),
                 "https://models.kage.qaidvoid.dev/logos/groq.svg"
@@ -174,8 +156,7 @@ mod tests {
     fn a_file_catalog_reads_the_logos_beside_it() {
         let _globals = process_globals();
         figment::Jail::expect_with(|jail| {
-            // One override pins the catalog and its logos together, which
-            // is what an offline run and the tests need.
+            // One override pins the catalog and its logos together.
             let path = jail.directory().join("catalog.json");
             jail.set_env(CATALOG_URL_ENV, format!("file://{}", path.display()));
             assert_eq!(
@@ -190,7 +171,6 @@ mod tests {
     fn a_blank_override_falls_back_to_the_published_catalog() {
         let _globals = process_globals();
         figment::Jail::expect_with(|jail| {
-            // An exported-but-blank variable must not break a refresh.
             for blank in ["", "   "] {
                 jail.set_env(CATALOG_URL_ENV, blank);
                 assert_eq!(catalog_url(), CATALOG_URL, "blank: {blank:?}");

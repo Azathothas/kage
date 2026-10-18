@@ -1,19 +1,15 @@
 //! Provider logos for the settings screens, fetched once and cached
 //! on disk.
 //!
-//! The logos come from kage-models, which snapshots one SVG per
-//! provider and publishes it beside the model catalog, at
-//! `https://models.kage.qaidvoid.dev/logos/<id>.svg`. kage-models takes
-//! them from models.dev and rejects the two replies that are not logos:
-//! the generic glyph models.dev serves with HTTP 200 for an id it does
-//! not know, and anything that is not an SVG. So what arrives here and
-//! is an SVG is a logo, and the check left to do is only that it is one
-//! ([`kind`]).
+//! The logos come from kage-models, which publishes one SVG per
+//! provider beside the model catalog, at
+//! `https://models.kage.qaidvoid.dev/logos/<id>.svg`. Replies are not
+//! trusted: what arrives is a logo only if [`kind`] says so.
 //!
 //! A provider kage-models does not know is a custom one, which is in no
 //! catalog. Those fall back to the favicon of their endpoint's own site:
 //! the endpoint host's `/favicon.ico`, reached by dropping a leading
-//! `api.` label (`api.example.com` serves no icon; `example.com` does).
+//! `api.` label.
 //!
 //! Each logo is fetched at most once per run, on a thread of its own:
 //! the memory cache holds the bytes, the disk cache under the kage cache
@@ -66,11 +62,9 @@ pub fn stay_offline() {
 /// What kind of logo the bytes are: SVG text, or a Windows icon. `None`
 /// for anything else.
 ///
-/// The SVG test looks for the root tag rather than a leading `<`. A host
+/// The SVG test looks for the root tag rather than a leading `<`: a host
 /// that parks its domain answers `/favicon.ico` with an HTML page and a
-/// 200, which a prefix check accepts and egui then fails to rasterize,
-/// leaving a blank tile where a logo should be. Verified against a live
-/// `kenari.id`, which serves 2942 bytes of HTML there.
+/// 200, which a prefix check accepts and egui then fails to rasterize.
 fn kind(bytes: &[u8]) -> Option<&'static str> {
     if bytes.starts_with(b"\x00\x00\x01\x00") {
         Some("ico")
@@ -190,10 +184,7 @@ pub fn ensure(
                 ctx.request_repaint();
             });
         }
-        // The browser build has no threads and no cache directory. It
-        // asks for the SVG itself and lands the bytes in the same cache,
-        // so `ensure` resolves on the frame after the request completes
-        // exactly as the native build does.
+        // The web build has neither threads nor a disk cache.
         #[cfg(target_arch = "wasm32")]
         {
             let _ = site;
@@ -224,9 +215,8 @@ fn fetch(id: &str, site: Option<&str>, dir: Option<PathBuf>) -> Logo {
         store(dir.as_deref(), id, "svg", &bytes);
         return logo_of(bytes);
     }
-    // kage-models has no logo for this id, so it is a provider outside
-    // the catalog. Its own site may still carry an icon. `api.example.com`
-    // serves none, its web home does, so the machine label steps aside.
+    // Not in the catalog, so possibly a custom provider; its own site
+    // may still carry an icon.
     if let Some(domain) = site.and_then(site_domain)
         && let Some(bytes) = fetch_bytes(&format!("https://{domain}/favicon.ico"), LOGO_CAP)
             .filter(|bytes| kind(bytes).is_some())
@@ -261,9 +251,7 @@ fn web_fetch(ctx: egui::Context, id: String, url: String) {
             settled(None);
             return;
         };
-        // `fetch_with_str` hands back a bare `Promise`, so the `Response`
-        // arrives from awaiting it rather than from the call. The
-        // `JsFuture` type argument is spelled out because `from` is
+        // The `JsFuture` type argument is spelled out because `from` is
         // otherwise ambiguous: `Result<T, E>: From<T>` also applies and
         // inference picks that one, which has no `Future` impl.
         let promise = window.fetch_with_str(&url);
@@ -277,8 +265,7 @@ fn web_fetch(ctx: egui::Context, id: String, url: String) {
             return;
         };
         // Unlike `fetch_with_str`, `array_buffer` returns the promise
-        // inside a `Result`, so a thrown or rejected call needs no await
-        // to report itself.
+        // inside a `Result`.
         let Some(promise) = response.array_buffer().ok() else {
             settled(None);
             return;
@@ -288,8 +275,8 @@ fn web_fetch(ctx: egui::Context, id: String, url: String) {
             .ok()
             .map(|buffer| js_sys::Uint8Array::new(&buffer).to_vec());
         // A favicon fallback would need a second request; the catalog
-        // covers every provider kage ships, so a missing logo here is a
-        // provider with no mark and the caller's own glyph stands in.
+        // covers every provider kage ships, so a missing logo just
+        // stays missing.
         settled(bytes);
     };
     wasm_bindgen_futures::spawn_local(future);
@@ -340,9 +327,6 @@ mod tests {
     #[test]
     fn svg_bytes_read_as_a_logo_and_other_markup_does_not() {
         assert!(kind(b"<svg xmlns=\"http://www.w3.org/2000/svg\"/>").is_some());
-        // A host that parks its domain serves HTML for /favicon.ico with
-        // a 200. A leading-`<` test accepts this and egui then fails to
-        // rasterize it, so the root tag is what counts.
         assert!(kind(b"<!DOCTYPE html><html lang=\"id\"><head>").is_none());
         assert!(kind(b"<html><body>404</body></html>").is_none());
         assert!(kind(b"{\"error\":\"not found\"}").is_none());
@@ -352,7 +336,7 @@ mod tests {
     fn a_declaration_or_bom_ahead_of_the_root_still_reads_as_svg() {
         assert!(kind(b"<?xml version=\"1.0\"?><svg/>").is_some());
         assert!(kind(b"\xef\xbb\xbf<svg/>").is_some());
-        // models.dev's own logos open with a newline.
+        // The upstream SVGs open with a newline.
         assert!(kind(b"\n<svg viewBox=\"0 0 24 24\"/>").is_some());
     }
 
