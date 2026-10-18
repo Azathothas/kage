@@ -12,6 +12,7 @@
 pub mod assistant;
 pub mod compaction;
 pub mod custom;
+pub(crate) mod mark;
 pub mod plugin_block;
 pub mod registry;
 pub mod thinking;

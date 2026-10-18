@@ -12,9 +12,9 @@ you can set one and restart instead. After connecting, you land in the
 interactive TUI. The cursor sits in the input box at the bottom of
 the screen, ready for your prompt.
 
-Above the input, the start card shows the model, the working
-directory, the permission summary and the thinking level, each with
-the key or command that changes it. The thinking level reads
+Above the input, the start card shows the kage cat, then the model,
+the working directory, the permission summary and the thinking level,
+each with the key or command that changes it. The thinking level reads
 `high (auto)` until you pick one: kage uses high, or the nearest level
 the model accepts, and `model default` for a model with no thinking
 setting. Below them come your three most

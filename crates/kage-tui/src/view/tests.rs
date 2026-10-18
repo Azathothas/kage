@@ -1502,6 +1502,20 @@ fn the_card_ends_directly_above_the_input_rule() {
 }
 
 #[test]
+fn the_card_leads_with_the_mark_and_drops_it_before_the_tip() {
+    let info = start_info(3);
+    let is_mark = |r: &String| r.contains('\u{2580}') || r.contains('\u{2584}');
+    let tall = card_rows(&mut Buffer::new(), &info, Rect::new(0, 0, 80, 40));
+    let brand = tall.iter().position(|r| r.starts_with("   kage ")).unwrap();
+    let mark = &tall[brand - crate::view::mark::HEIGHT..brand];
+    assert!(mark.iter().all(is_mark), "{tall:#?}");
+    assert!(mark.iter().all(|r| r.starts_with("   ")), "{tall:#?}");
+    let short = card_rows(&mut Buffer::new(), &info, Rect::new(0, 0, 80, 24));
+    assert!(!short.iter().any(is_mark), "{short:#?}");
+    assert!(short.iter().any(|r| r.contains("Tip:")), "{short:#?}");
+}
+
+#[test]
 fn a_short_card_drops_the_tip_then_the_sessions() {
     let info = start_info(3);
     let area = Rect::new(0, 0, 100, 24);
