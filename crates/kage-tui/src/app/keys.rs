@@ -523,7 +523,7 @@ impl App {
         let text = self.input.text();
         let cursor = self.input.cursor();
         if text.starts_with('/') {
-            let raw = &text[1..cursor];
+            let raw = if cursor >= 1 { &text[1..cursor] } else { "" };
             let resolver = self.input_resolver();
             let completions =
                 crate::cmdparse::complete(&self.command_registry(), raw, raw.len(), &resolver);
