@@ -20,10 +20,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use kage_core::protocol::CompactionCounts;
+use kage_core::protocol::{CompactionRecord, TimelineItem};
 use kage_core::{Content, Message, MessageId, Role};
 
-use crate::entry::{Compaction, Header, SessionEntry};
+use crate::entry::{Compaction, Header, MessageEntry, SessionEntry};
 use crate::error::SessionError;
 use crate::tree::SessionTree;
 
@@ -71,12 +71,14 @@ pub struct ReplayResult {
     /// Latest plan mode recorded by a `kage:plan_mode` custom entry, or
     /// `None` if the session never toggled it.
     pub plan_mode: Option<bool>,
-    /// Counts of the last [`SessionEntry::Compaction`], whose summary
-    /// opens `history`, or `None` if the session never compacted.
-    pub compaction: Option<CompactionCounts>,
     /// Whether the file carries a `kage:agent` marker: it records an
     /// agent an `agent` or `swarm` call started, not a user's session.
     pub agent: bool,
+    /// The conversation as the user saw it, oldest first: every
+    /// message in order with each compaction as a card at the point
+    /// it ran, carrying the counts and tokens the file records. A
+    /// compaction shrinks the model's `history`, never this view.
+    pub timeline: Vec<TimelineItem>,
 }
 
 impl ReplayResult {
@@ -121,6 +123,41 @@ fn capped(mut message: Message) -> Message {
     message
 }
 
+/// Record one message entry on both views: the model's `history` and
+/// the user's `timeline` share the capped message, and the entry's
+/// timestamps feed the tool-call durations.
+fn record_message(
+    entry: &MessageEntry,
+    call_starts: &mut HashMap<String, DateTime<Utc>>,
+    tool_durations: &mut HashMap<String, u64>,
+    timeline: &mut Vec<TimelineItem>,
+    history: &mut Vec<Message>,
+) {
+    let ts = entry.ts;
+    for block in &entry.message.content {
+        match block {
+            Content::ToolCall { id, .. } => {
+                call_starts.insert(id.to_string(), ts);
+            }
+            Content::ToolResultBlock { call_id, .. } => {
+                if let Some(start) = call_starts.remove(&call_id.to_string()) {
+                    let delta = ts.signed_duration_since(start).num_milliseconds();
+                    if delta >= 0 {
+                        tool_durations.insert(
+                            call_id.to_string(),
+                            u64::try_from(delta).unwrap_or(u64::MAX),
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let message = Arc::new(capped(Arc::unwrap_or_clone(Arc::clone(&entry.message))));
+    timeline.push(TimelineItem::Message(Arc::clone(&message)));
+    history.push(Arc::unwrap_or_clone(message));
+}
+
 /// Replay the active chain of `path`, returning the final history.
 pub fn replay(path: &Path) -> Result<ReplayResult, SessionError> {
     let tree = SessionTree::read(path)?;
@@ -142,7 +179,12 @@ pub fn replay(path: &Path) -> Result<ReplayResult, SessionError> {
     let mut call_starts: HashMap<String, DateTime<Utc>> = HashMap::new();
     let mut tool_durations: HashMap<String, u64> = HashMap::new();
     let mut usage_total = ReplayUsage::default();
-    let mut compaction = None;
+    let mut timeline: Vec<TimelineItem> = Vec::new();
+    // Index into `timeline` of the newest compaction card still missing
+    // its `after` count. The first usage recorded after the compaction
+    // is the post-compaction context fill, so the next usage-carrying
+    // message fills it in.
+    let mut pending_after: Option<usize> = None;
     for (node, entry) in tree.iter() {
         if !tree.is_active(node.id) {
             continue;
@@ -155,44 +197,44 @@ pub fn replay(path: &Path) -> Result<ReplayResult, SessionError> {
                     usage_total.output = usage_total.output.saturating_add(u.output);
                     usage_total.cache_read = usage_total.cache_read.saturating_add(u.cache_read);
                     usage_total.cache_write = usage_total.cache_write.saturating_add(u.cache_write);
-                    usage_total.last_context = u
+                    let fill = u
                         .input
                         .saturating_add(u.output)
                         .saturating_add(u.cache_read)
                         .saturating_add(u.cache_write);
-                }
-                let ts = m.ts;
-                for block in &m.message.content {
-                    match block {
-                        Content::ToolCall { id, .. } => {
-                            call_starts.insert(id.to_string(), ts);
-                        }
-                        Content::ToolResultBlock { call_id, .. } => {
-                            if let Some(start) = call_starts.remove(&call_id.to_string()) {
-                                let delta = ts.signed_duration_since(start).num_milliseconds();
-                                if delta >= 0 {
-                                    tool_durations.insert(
-                                        call_id.to_string(),
-                                        u64::try_from(delta).unwrap_or(u64::MAX),
-                                    );
-                                }
-                            }
-                        }
-                        _ => {}
+                    usage_total.last_context = fill;
+                    if let Some(at) = pending_after.take()
+                        && let TimelineItem::Compaction(card) = &mut timeline[at]
+                    {
+                        card.after = Some(fill);
                     }
                 }
-                history.push(capped(Arc::unwrap_or_clone(Arc::clone(&m.message))));
+                record_message(
+                    m,
+                    &mut call_starts,
+                    &mut tool_durations,
+                    &mut timeline,
+                    &mut history,
+                );
             }
             SessionEntry::Compaction(c) => {
-                compaction = Some(CompactionCounts {
-                    summarized: c.summarized,
-                    kept: c.kept,
-                });
                 compacted_agents.extend(
                     apply_compaction(&mut history, c.clone())
                         .into_iter()
                         .filter(records_agents),
                 );
+                // The entry sits where the compaction ran, after every
+                // turn it could see, so the card goes there too and a
+                // resumed transcript reads like the live one did.
+                timeline.push(TimelineItem::Compaction(CompactionRecord {
+                    summarized: c.summarized,
+                    kept: c.kept,
+                    before: c.before,
+                    after: None,
+                    summary: c.summary.clone(),
+                }));
+                let at = timeline.len() - 1;
+                pending_after = Some(at);
             }
             SessionEntry::ModelChange(mc) => model = kage_core::canonical_model(&mc.model),
             SessionEntry::ThinkingLevelChange(t) => thinking_level = Some(t.level.clone()),
@@ -214,8 +256,8 @@ pub fn replay(path: &Path) -> Result<ReplayResult, SessionError> {
         title,
         swarm_mode,
         plan_mode,
-        compaction,
         agent,
+        timeline,
     })
 }
 
@@ -486,19 +528,13 @@ mod tests {
                     kept: 2,
                     summarized: 4,
                     summary: "[summary of 4 earlier turns]\nthey did stuff".into(),
+                    before: Some(160_000),
                 }),
                 message_entry(Role::User, "post-compact"),
             ],
         );
 
         let result = replay(&path).unwrap();
-        assert_eq!(
-            result.compaction,
-            Some(CompactionCounts {
-                summarized: 4,
-                kept: 2
-            })
-        );
         // 1 synthetic + 2 kept + 1 post-compact
         assert_eq!(result.history.len(), 4);
         assert_eq!(result.history[0].role, Role::User);
@@ -512,6 +548,215 @@ mod tests {
         match &result.history[1].content[0] {
             Content::Text { text } => assert_eq!(text, "kept 1"),
             other => panic!("expected text, got {other:?}"),
+        }
+    }
+
+    /// The timeline keeps the turns a compaction summarized, and the
+    /// card sits where the compaction ran: after the kept turns, which
+    /// existed when it ran, so a resumed transcript matches the live
+    /// one. The card carries the counts and the before tokens.
+    #[test]
+    fn timeline_keeps_summarized_turns_and_the_card_where_it_ran() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("a.jsonl");
+        write(
+            &path,
+            fresh_header(),
+            &[
+                message_entry(Role::User, "old 1"),
+                message_entry(Role::Assistant, "old 2"),
+                message_entry(Role::User, "old 3"),
+                message_entry(Role::Assistant, "old 4"),
+                message_entry(Role::User, "kept 1"),
+                message_entry(Role::Assistant, "kept 2"),
+                SessionEntry::Compaction(Compaction {
+                    id: EntryId::new(),
+                    ts: Utc::now(),
+                    kept: 2,
+                    summarized: 4,
+                    summary: "summary".into(),
+                    before: Some(160_000),
+                }),
+                message_entry(Role::User, "post-compact"),
+            ],
+        );
+
+        let timeline = replay(&path).unwrap().timeline;
+        let texts: Vec<String> = timeline
+            .iter()
+            .map(|item| match item {
+                TimelineItem::Message(m) => match &m.content[0] {
+                    Content::Text { text } => text.clone(),
+                    other => panic!("expected text, got {other:?}"),
+                },
+                TimelineItem::Compaction(_) => "<card>".to_owned(),
+            })
+            .collect();
+        assert_eq!(
+            texts,
+            [
+                "old 1",
+                "old 2",
+                "old 3",
+                "old 4",
+                "kept 1",
+                "kept 2",
+                "<card>",
+                "post-compact"
+            ],
+            "nothing a compaction summarized may leave the user's view"
+        );
+        match &timeline[6] {
+            TimelineItem::Compaction(card) => {
+                assert_eq!(card.summarized, 4);
+                assert_eq!(card.kept, 2);
+                assert_eq!(card.before, Some(160_000));
+                assert_eq!(card.summary, "summary");
+            }
+            other @ TimelineItem::Message(_) => panic!("expected the card, got {other:?}"),
+        }
+    }
+
+    /// A keep window that spans the whole history (a manual compaction
+    /// on a short session) must not pull the card to the very top, and
+    /// a second compaction's card follows the first in run order.
+    #[test]
+    fn timeline_keeps_each_card_at_its_own_point() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("a.jsonl");
+        let compaction = |summarized: usize, kept: usize| {
+            SessionEntry::Compaction(Compaction {
+                id: EntryId::new(),
+                ts: Utc::now(),
+                kept,
+                summarized,
+                summary: "summary".into(),
+                before: None,
+            })
+        };
+        write(
+            &path,
+            fresh_header(),
+            &[
+                message_entry(Role::User, "one"),
+                message_entry(Role::Assistant, "two"),
+                compaction(2, 2),
+                message_entry(Role::User, "three"),
+                message_entry(Role::Assistant, "four"),
+                compaction(3, 2),
+                message_entry(Role::User, "five"),
+            ],
+        );
+
+        let timeline = replay(&path).unwrap().timeline;
+        let texts: Vec<String> = timeline
+            .iter()
+            .map(|item| match item {
+                TimelineItem::Message(m) => match &m.content[0] {
+                    Content::Text { text } => text.clone(),
+                    other => panic!("expected text, got {other:?}"),
+                },
+                TimelineItem::Compaction(_) => "<card>".to_owned(),
+            })
+            .collect();
+        assert_eq!(
+            texts,
+            ["one", "two", "<card>", "three", "four", "<card>", "five"],
+            "cards land in the order the compactions ran"
+        );
+    }
+
+    /// The card's `after` is the fill of the first turn recorded with
+    /// usage after the compaction, the same pairing the live bridge
+    /// performs.
+    #[test]
+    fn timeline_fills_the_card_after_from_the_next_usage() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("a.jsonl");
+        let used = |input: u64| {
+            SessionEntry::Message(MessageEntry {
+                id: EntryId::new(),
+                ts: Utc::now(),
+                message: Arc::new(Message::new(
+                    Role::Assistant,
+                    vec![Content::Text {
+                        text: "reply".into(),
+                    }],
+                    None,
+                )),
+                usage: Some(kage_core::TokenUsage {
+                    input,
+                    output: 100,
+                    ..kage_core::TokenUsage::default()
+                }),
+            })
+        };
+        write(
+            &path,
+            fresh_header(),
+            &[
+                message_entry(Role::User, "old"),
+                used(1_000),
+                message_entry(Role::User, "kept"),
+                SessionEntry::Compaction(Compaction {
+                    id: EntryId::new(),
+                    ts: Utc::now(),
+                    kept: 1,
+                    summarized: 2,
+                    summary: "summary".into(),
+                    before: Some(9_000),
+                }),
+                message_entry(Role::User, "post-compact"),
+                used(42_000),
+            ],
+        );
+
+        let timeline = replay(&path).unwrap().timeline;
+        let card = timeline
+            .iter()
+            .find_map(|item| match item {
+                TimelineItem::Compaction(card) => Some(card),
+                TimelineItem::Message(_) => None,
+            })
+            .unwrap();
+        assert_eq!(card.before, Some(9_000));
+        assert_eq!(card.after, Some(42_100), "the first usage after the card");
+    }
+
+    /// A compaction whose next turn never recorded usage keeps its
+    /// `after` unset rather than guessing.
+    #[test]
+    fn timeline_leaves_the_card_after_unset_without_usage() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("a.jsonl");
+        write(
+            &path,
+            fresh_header(),
+            &[
+                message_entry(Role::User, "old"),
+                message_entry(Role::Assistant, "reply"),
+                SessionEntry::Compaction(Compaction {
+                    id: EntryId::new(),
+                    ts: Utc::now(),
+                    kept: 1,
+                    summarized: 1,
+                    summary: "summary".into(),
+                    before: None,
+                }),
+                message_entry(Role::User, "post-compact"),
+            ],
+        );
+
+        let timeline = replay(&path).unwrap().timeline;
+        match timeline.iter().find_map(|item| match item {
+            TimelineItem::Compaction(card) => Some(card),
+            TimelineItem::Message(_) => None,
+        }) {
+            Some(card) => {
+                assert_eq!(card.before, None);
+                assert_eq!(card.after, None);
+            }
+            None => panic!("the compaction card is missing"),
         }
     }
 
@@ -547,6 +792,7 @@ mod tests {
                     kept: 2,
                     summarized: 2,
                     summary: "summary".into(),
+                    before: None,
                 }),
             ],
         );
@@ -601,6 +847,7 @@ mod tests {
                     kept: 1,
                     summarized: 4,
                     summary: "summary".into(),
+                    before: None,
                 }),
             ],
         );

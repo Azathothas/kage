@@ -517,19 +517,97 @@ pub fn render_engine_note(ui: &mut egui::Ui, ix: usize, note: &str) -> egui::Res
     response
 }
 
-/// A compaction row with the tokens the summary saved, between the same
-/// flanking hairlines the notices use.
+/// What a compaction card shows: the item's index (its expansion id),
+/// the counts the update delivered and, when the agent reported them,
+/// the summary text. `expanded` is the row's fold state.
+pub struct CompactionCard<'a> {
+    /// The transcript item index.
+    pub ix: usize,
+    /// Recent turns kept verbatim.
+    pub kept: u64,
+    /// Context tokens in use before the compaction, when the agent
+    /// reported them.
+    pub before: Option<u64>,
+    /// Context tokens in use by the first turn after it, when that
+    /// turn reported within the same run.
+    pub after: Option<u64>,
+    /// Older turns the summary replaced, when the agent reported it.
+    pub summarized: Option<u64>,
+    /// The summary that replaced the older turns, when reported.
+    pub summary: Option<&'a str>,
+    /// Whether the summary body shows.
+    pub expanded: bool,
+}
+
+/// A compaction card: the counts the summary saved in its head, the
+/// summary itself folded under it and read as markdown when opened.
+/// Without a summary (an agent that predates reporting it) the card
+/// stays one line with no chevron.
 pub fn render_compaction(
     ui: &mut egui::Ui,
-    ix: usize,
-    kept: u64,
-    before: u64,
-    after: u64,
+    pipeline: &mut super::markdown::Pipeline,
+    card: CompactionCard<'_>,
 ) -> egui::Response {
     let palette = Palette::active_of(ui.ctx());
-    let text = format!("context compacted: kept {kept} turns, {before} -> {after} tokens");
-    let _ = ix;
-    ruled_line(ui, &text, palette.faint, false, palette)
+    let CompactionCard {
+        ix,
+        kept,
+        before,
+        after,
+        summarized,
+        summary,
+        expanded,
+    } = card;
+    let mut meta = Vec::new();
+    match summarized {
+        Some(summarized) => meta.push(head::Meta::Faint(format!(
+            "{summarized} {} summarized",
+            if summarized == 1 { "turn" } else { "turns" }
+        ))),
+        None => meta.push(head::Meta::Faint(format!(
+            "kept {kept} {}",
+            if kept == 1 { "turn" } else { "turns" }
+        ))),
+    }
+    if let (Some(before), Some(after)) = (before, after) {
+        meta.push(head::Meta::Faint(format!(
+            "{} \u{2192} {} tokens",
+            compact_tokens(before),
+            compact_tokens(after)
+        )));
+    }
+    let response = head::show(
+        ui,
+        Head {
+            lead: Lead::Icon(crate::icons::Icon::Layers, palette.muted),
+            verb: "Context compacted".to_owned(),
+            verb_color: palette.ink,
+            target: None,
+            meta,
+            chevron: summary.map(|_| expanded),
+            nested: false,
+        },
+    );
+    if expanded && let Some(body) = summary.and_then(summary_of) {
+        ui.add_space(SP_2);
+        let id = format!("compaction-{ix}");
+        detail_frame(ui, palette, |ui| {
+            pipeline.show(&id, body, false, ui);
+        });
+    }
+    response
+}
+
+/// Compact token count in the modeline's style: `999`, `84.2k`,
+/// `1.2M`.
+fn compact_tokens(n: u64) -> String {
+    if n < 1_000 {
+        n.to_string()
+    } else if n < 1_000_000 {
+        format!("{:.1}k", n as f64 / 1_000.0)
+    } else {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    }
 }
 
 /// Small text centered between two hairlines that take the rest of the
@@ -671,14 +749,15 @@ pub fn render_decision(
 }
 
 /// The working row: a spinner and a quiet label while the run goes on
-/// with nothing streaming yet.
-pub fn render_waiting(ui: &mut egui::Ui) -> egui::Response {
+/// with nothing streaming yet. `label` names what it is doing, such
+/// as `Working` or `Compacting`.
+pub fn render_waiting(ui: &mut egui::Ui, label: &str) -> egui::Response {
     let palette = Palette::active_of(ui.ctx());
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), ROW_H),
         egui::Sense::hover(),
     );
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Working"));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label));
     let mid = rect.center().y;
     head::paint_spinner(
         ui,
@@ -691,7 +770,7 @@ pub fn render_waiting(ui: &mut egui::Ui) -> egui::Response {
     ui.painter().text(
         egui::pos2(rect.left() + ICON_SM + SP_4, mid),
         egui::Align2::LEFT_CENTER,
-        "Working",
+        label,
         egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
         palette.muted,
     );

@@ -118,12 +118,17 @@ pub fn show(
                     session_menu(ui, store, session, palette, events);
                     // The working pill at the bar's end, with how long
                     // the run has gone, as the reference shows it.
-                    if session.in_turn || session.running {
+                    if session.in_turn || session.running || session.compacting {
                         let took = store
                             .timings(&session.id)
                             .and_then(|times| times.running_for())
                             .unwrap_or_default();
-                        working_pill(ui, &crate::clock::duration(took.as_secs() as i64), palette);
+                        working_pill(
+                            ui,
+                            session.compacting,
+                            &crate::clock::duration(took.as_secs() as i64),
+                            palette,
+                        );
                     }
                 }
             });
@@ -132,9 +137,11 @@ pub fn show(
 }
 
 /// The working pill: the turning eclipse and the elapsed label on the
-/// fill, 24px tall.
-fn working_pill(ui: &mut egui::Ui, elapsed: &str, palette: &Palette) {
-    let label = format!("Working {elapsed}");
+/// fill, 24px tall. `compacting` renames the run to what it is doing
+/// while the agent summarizes older turns.
+fn working_pill(ui: &mut egui::Ui, compacting: bool, elapsed: &str, palette: &Palette) {
+    let verb = if compacting { "Compacting" } else { "Working" };
+    let label = format!("{verb} {elapsed}");
     let galley = ui.painter().layout_no_wrap(
         label.clone(),
         egui::FontId::new(

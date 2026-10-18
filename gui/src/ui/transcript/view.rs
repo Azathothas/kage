@@ -925,7 +925,27 @@ fn render_row(
                 kept,
                 before,
                 after,
-            }) => text_rows::render_compaction(ui, *ix, *kept, *before, *after),
+                summarized,
+                summary,
+            }) => {
+                let response = text_rows::render_compaction(
+                    ui,
+                    pipeline,
+                    text_rows::CompactionCard {
+                        ix: *ix,
+                        kept: *kept,
+                        before: *before,
+                        after: *after,
+                        summarized: *summarized,
+                        summary: summary.as_deref(),
+                        expanded: ui_state.expanded.contains(&RowKey::Item(*ix)),
+                    },
+                );
+                if response.clicked() {
+                    tool_rows::toggle(ui_state, RowKey::Item(*ix));
+                }
+                response
+            }
             _ => blank_row(ui),
         },
         Row::Plan { ix } => match session.items.get(*ix) {
@@ -948,7 +968,14 @@ fn render_row(
             }
             _ => blank_row(ui),
         },
-        Row::Waiting => text_rows::render_waiting(ui),
+        Row::Waiting => {
+            let label = if session.compacting {
+                "Compacting"
+            } else {
+                "Working"
+            };
+            text_rows::render_waiting(ui, label)
+        }
     }
 }
 

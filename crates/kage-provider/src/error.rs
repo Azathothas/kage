@@ -99,6 +99,26 @@ impl ProviderError {
         }
     }
 
+    /// Whether the provider rejected the request because it exceeds the
+    /// model's context window. Best-effort: providers phrase the refusal
+    /// differently and none of them tag it with a stable code, so this
+    /// matches the phrases they actually send, on the statuses a size
+    /// rejection arrives with. A false positive costs one bounded
+    /// compaction retry before the error surfaces; a false negative
+    /// costs the retry the loop would have attempted anyway.
+    #[must_use]
+    pub fn is_context_overflow(&self) -> bool {
+        let (Self::Http {
+            status: 400 | 413 | 422,
+            body: text,
+        }
+        | Self::Decode(text)) = self
+        else {
+            return false;
+        };
+        is_context_overflow_text(text)
+    }
+
     /// Classify an in-band provider error event (kind + message) so a
     /// mid-stream failure gets the same retryability treatment as the
     /// equivalent HTTP status: rate limits and 5xx-class kinds are
@@ -125,9 +145,31 @@ impl ProviderError {
     }
 }
 
+/// Phrases providers use to refuse a request that exceeds the model's
+/// context window, matched case-insensitively. Anthropic: "prompt is
+/// too long". `OpenAI`: "maximum context length". Gemini: "input token
+/// count exceeds".
+const OVERFLOW_MARKERS: [&str; 4] = [
+    "prompt is too long",
+    "context length",
+    "context window",
+    "input token count",
+];
+
+/// Whether an error text reads as a context-window size rejection.
+/// Free function so callers holding an already-stringified error (the
+/// loop wraps provider failures as `LoopError::Provider { message }`)
+/// can classify without unwrapping.
+#[must_use]
+pub fn is_context_overflow_text(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    OVERFLOW_MARKERS.iter().any(|marker| lower.contains(marker))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error;
 
     #[test]
     fn auth_message_includes_detail() {
@@ -199,6 +241,48 @@ mod tests {
             Some(Duration::from_secs(7))
         );
         assert_eq!(ProviderError::Transport("x".into()).retry_after(), None);
+    }
+
+    #[test]
+    fn context_overflow_classification_matches_provider_phrases() {
+        for body in [
+            "prompt is too long: 210000 tokens > 200000 maximum",
+            "This model's maximum context length is 8192 tokens",
+            "input token count (250000) exceeds the maximum (1000000)",
+            "conversation exceeds the model context window",
+        ] {
+            assert!(
+                ProviderError::Http {
+                    status: 400,
+                    body: body.into()
+                }
+                .is_context_overflow(),
+                "{body} should classify as overflow"
+            );
+            assert!(
+                ProviderError::Decode(format!(
+                    "provider stream error (invalid_request_error): {body}"
+                ))
+                .is_context_overflow(),
+                "{body} should classify as overflow"
+            );
+        }
+        for (status, body) in [
+            (500, "prompt is too long"),
+            (400, "invalid role in messages"),
+            (401, "context length"),
+        ] {
+            assert!(
+                !ProviderError::Http {
+                    status,
+                    body: body.into()
+                }
+                .is_context_overflow(),
+                "{status}: {body} must not classify as overflow"
+            );
+        }
+        assert!(!ProviderError::Transport("context length".into()).is_context_overflow());
+        assert!(!error::is_context_overflow_text("all quiet"));
     }
 
     #[test]

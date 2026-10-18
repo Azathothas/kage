@@ -105,6 +105,8 @@ impl App {
             pending_permission: None,
             permission_queue: std::collections::VecDeque::new(),
             run_started: None,
+            compacting: None,
+            pending_compaction_before: None,
             swarm_oneshot: None,
             key_labels: chrome::KeyLabels::default(),
             start_info: None,

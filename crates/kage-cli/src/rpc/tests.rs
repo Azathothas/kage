@@ -2836,13 +2836,86 @@ fn a_compacting_run_reports_kept_and_the_usage_around_it() {
     let prompt_end = prompt_async(&h.client, &h.session, "go");
 
     let updates = updates_until(&h.inbox, &h.session, "_kage/compaction");
+    let started = &updates.last().unwrap()["update"];
+    assert_eq!(started["phase"], "started");
+    assert_eq!(started["summarized"], 1);
+    assert_eq!(started["kept"], 4);
+
+    let updates = updates_until(&h.inbox, &h.session, "_kage/compaction");
     let update = &updates.last().unwrap()["update"];
+    assert_eq!(update["phase"], "complete");
     assert_eq!(update["kept"], 4);
     assert_eq!(update["before"], 900);
     assert_eq!(update["after"], 120);
+    assert_eq!(update["summarized"], 1);
+    let summary = update["summary"].as_str().unwrap();
+    assert!(summary.contains("kept decisions"), "{summary:?}");
+    assert!(summary.contains("<summary>"), "{summary:?}");
 
     let response = prompt_end.recv_timeout(WAIT).unwrap().unwrap();
     assert_eq!(response["stopReason"], "end_turn");
+}
+
+#[test]
+fn a_compaction_the_run_ends_with_arrives_without_an_after() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("notes.txt"), "tiny").unwrap();
+    let input = serde_json::json!({ "path": "notes.txt" });
+    // The third turn is consumed by the summarizer; the script then
+    // runs dry, the run fails, and no turn ever reports a fill after
+    // the compaction.
+    let h = serve(
+        vec![
+            tool_turn_with_usage("call_1", "read", input.clone(), 900),
+            tool_turn_with_usage("call_2", "read", input, 900),
+            text_turn("kept decisions"),
+        ],
+        dir.path(),
+        dir.path(),
+    );
+    let prompt_end = prompt_async(&h.client, &h.session, "go");
+
+    let updates = updates_until(&h.inbox, &h.session, "_kage/compaction");
+    assert_eq!(updates.last().unwrap()["update"]["phase"], "started");
+    let updates = updates_until(&h.inbox, &h.session, "_kage/compaction");
+    let update = &updates.last().unwrap()["update"];
+    assert_eq!(update["phase"], "complete");
+    assert_eq!(update["before"], 900);
+    assert_eq!(update["summarized"], 1);
+    assert!(
+        update.get("after").is_none(),
+        "no turn reported a fill after the compaction: {update}"
+    );
+
+    let response = prompt_end.recv_timeout(WAIT).unwrap();
+    assert!(response.is_err(), "the exhausted script fails the run");
+}
+
+#[test]
+fn a_failed_summarizer_aborts_the_compaction() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("notes.txt"), "tiny").unwrap();
+    let input = serde_json::json!({ "path": "notes.txt" });
+    let failure: Script = vec![Err(ProviderError::Auth("token expired".into()))];
+    let h = serve(
+        vec![
+            tool_turn_with_usage("call_1", "read", input.clone(), 900),
+            tool_turn_with_usage("call_2", "read", input, 900),
+            failure,
+        ],
+        dir.path(),
+        dir.path(),
+    );
+    let prompt_end = prompt_async(&h.client, &h.session, "go");
+
+    let updates = updates_until(&h.inbox, &h.session, "_kage/compaction");
+    assert_eq!(updates.last().unwrap()["update"]["phase"], "started");
+    let updates = updates_until(&h.inbox, &h.session, "_kage/compaction");
+    let update = &updates.last().unwrap()["update"];
+    assert_eq!(update["phase"], "aborted");
+
+    let response = prompt_end.recv_timeout(WAIT).unwrap();
+    assert!(response.is_err(), "{response:?}");
 }
 
 #[test]
@@ -5467,6 +5540,7 @@ fn loading_a_compacted_session_still_lists_its_agents() {
             kept: 0,
             summarized,
             summary: "the agent looked around".into(),
+            before: None,
         }))
         .unwrap();
     drop(writer);
@@ -5481,6 +5555,103 @@ fn loading_a_compacted_session_still_lists_its_agents() {
         .unwrap_or_else(|| panic!("the compacted agent comes back: {updates:#?}"));
     assert_eq!(agent["update"]["toolCallId"], "call_agent");
     assert_eq!(agent["update"]["state"], "completed");
+}
+
+/// A restart shows the compaction card with the token counts the file
+/// recorded: the restore emits the `_kage/compaction` update carrying
+/// the `before` the loop stored and the `after` replay read from the
+/// next turn's usage, and the summarized turns stay visible around it.
+#[test]
+fn restoring_a_compacted_session_emits_the_card_with_its_tokens() {
+    let dir = tempfile::tempdir().unwrap();
+    let h = serve_agents(
+        vec![text_turn_with_usage("early reply", 500)],
+        dir.path(),
+        dir.path(),
+        default_agents(),
+    );
+    initialize(&h.client);
+    let prompt_end = prompt_async(&h.client, &h.session, "go");
+    prompt_end.recv_timeout(WAIT).unwrap().unwrap();
+    drain(&h.inbox);
+    h.client
+        .request("session/close", serde_json::json!({"sessionId": h.session}))
+        .unwrap();
+
+    let path = kage_session::find_by_prefix(dir.path(), &h.session)
+        .unwrap()
+        .unwrap();
+    let summarized = kage_session::replay(&path).unwrap().history.len();
+    let mut writer = {
+        let deadline = std::time::Instant::now() + WAIT;
+        loop {
+            match SessionWriter::open(&path) {
+                Ok(writer) => break writer,
+                Err(SessionError::Locked { .. }) => {
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "the closed session's file stays locked"
+                    );
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(err) => panic!("{err}"),
+            }
+        }
+    };
+    writer
+        .append(&SessionEntry::Compaction(kage_session::Compaction {
+            id: EntryId::new(),
+            ts: chrono::Utc::now(),
+            kept: 0,
+            summarized,
+            summary: "the handoff".into(),
+            before: Some(900),
+        }))
+        .unwrap();
+    // The post-compaction turn whose fill pairs with `before`.
+    writer
+        .append(&SessionEntry::Message(kage_session::MessageEntry {
+            id: EntryId::new(),
+            ts: chrono::Utc::now(),
+            message: std::sync::Arc::new(kage_core::Message::new(
+                kage_core::Role::Assistant,
+                vec![kage_core::Content::Text {
+                    text: "after the cut".into(),
+                }],
+                None,
+            )),
+            usage: Some(kage_core::TokenUsage {
+                input: 42_000,
+                output: 100,
+                ..kage_core::TokenUsage::default()
+            }),
+        }))
+        .unwrap();
+    drop(writer);
+
+    let cwd = dir.path().display().to_string();
+    let params = serde_json::json!({"sessionId": h.session, "cwd": cwd, "mcpServers": []});
+    h.client.request("session/load", params).unwrap();
+    let updates = drain(&h.inbox);
+    let card = updates
+        .iter()
+        .find(|p| p["update"]["sessionUpdate"] == "_kage/compaction")
+        .unwrap_or_else(|| panic!("the compaction card is restored: {updates:#?}"));
+    assert_eq!(card["update"]["phase"], "complete");
+    assert_eq!(card["update"]["before"], 900);
+    assert_eq!(
+        card["update"]["after"], 42_100,
+        "the first usage after the cut"
+    );
+    assert_eq!(card["update"]["summary"], "the handoff");
+    let prompts = updates
+        .iter()
+        .filter(|p| p["update"]["sessionUpdate"] == "user_message_chunk")
+        .count();
+    assert!(
+        prompts >= 1,
+        "the pre-compaction turns stay visible on a restore: {updates:#?}"
+    );
 }
 
 #[test]

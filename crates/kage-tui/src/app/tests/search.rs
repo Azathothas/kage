@@ -257,8 +257,7 @@ fn idle_esc_clears_the_search_and_a_session_change_drops_it() {
             kage_core::protocol::HostEvent::SessionChanged {
                 path: std::path::PathBuf::from("/tmp/s.jsonl"),
                 title: None,
-                messages: Vec::new(),
-                compaction: None,
+                timeline: Vec::new(),
                 compacted_agents: Vec::new(),
             }
             .into(),

@@ -121,8 +121,7 @@ fn events_from_other_sessions_are_ignored() {
             kage_core::protocol::HostEvent::SessionChanged {
                 path: "/tmp/s.jsonl".into(),
                 title: None,
-                messages: Vec::new(),
-                compaction: None,
+                timeline: Vec::new(),
                 compacted_agents: Vec::new(),
             },
         ))
@@ -195,8 +194,9 @@ fn session_changed_rebuilds_the_transcript() {
             kage_core::protocol::HostEvent::SessionChanged {
                 path: "/tmp/s.jsonl".into(),
                 title: None,
-                messages: vec![std::sync::Arc::new(message)],
-                compaction: None,
+                timeline: vec![kage_core::protocol::TimelineItem::Message(
+                    std::sync::Arc::new(message),
+                )],
                 compacted_agents: Vec::new(),
             },
         ))
@@ -240,8 +240,9 @@ fn session_changed_resets_view_state_even_when_already_on_the_main_view() {
             kage_core::protocol::HostEvent::SessionChanged {
                 path: "/tmp/s.jsonl".into(),
                 title: None,
-                messages: vec![std::sync::Arc::new(message)],
-                compaction: None,
+                timeline: vec![kage_core::protocol::TimelineItem::Message(
+                    std::sync::Arc::new(message),
+                )],
                 compacted_agents: Vec::new(),
             },
         ))
@@ -323,8 +324,7 @@ fn pending_rows_fold_past_three_and_clear_on_session_change() {
             kage_core::protocol::HostEvent::SessionChanged {
                 path: std::path::PathBuf::from("/tmp/s.jsonl"),
                 title: None,
-                messages: Vec::new(),
-                compaction: None,
+                timeline: Vec::new(),
                 compacted_agents: Vec::new(),
             }
             .into(),

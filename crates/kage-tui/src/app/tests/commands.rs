@@ -84,8 +84,7 @@ fn a_session_switch_clears_a_pending_oneshot_swarm() {
             kage_core::protocol::HostEvent::SessionChanged {
                 path: std::path::PathBuf::from("x.jsonl"),
                 title: None,
-                messages: Vec::new(),
-                compaction: None,
+                timeline: Vec::new(),
                 compacted_agents: Vec::new(),
             },
         )],

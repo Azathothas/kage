@@ -1100,7 +1100,7 @@ fn waiting(session: &Session, last: Option<&Row>) -> bool {
         Row::Group { running, .. } => *running,
         _ => false,
     });
-    session.running && session.permissions.is_empty() && !moving
+    (session.running || session.compacting) && session.permissions.is_empty() && !moving
 }
 
 /// The row one non-grouped transcript item renders as, if any: a turn
@@ -1797,17 +1797,26 @@ mod tests {
     fn compaction_rows_keep_the_delivered_token_counts() {
         let session = session_with(vec![TranscriptItem::Compaction {
             kept: 4,
-            before: 90_000,
-            after: 12_000,
+            before: Some(90_000),
+            after: Some(12_000),
+            summarized: Some(12),
+            summary: Some("framed".to_owned()),
         }]);
         let model = row_model(&session, &UiState::default());
         assert_eq!(model.kinds(), vec!["compaction"]);
-        match session.items[0] {
+        match &session.items[0] {
             TranscriptItem::Compaction {
                 kept,
                 before,
                 after,
-            } => assert_eq!((kept, before, after), (4, 90_000, 12_000)),
+                summarized,
+                summary,
+            } => {
+                assert_eq!(*kept, 4);
+                assert_eq!((*before, *after), (Some(90_000), Some(12_000)));
+                assert_eq!(*summarized, Some(12));
+                assert_eq!(summary.as_deref(), Some("framed"));
+            }
             _ => unreachable!(),
         }
     }

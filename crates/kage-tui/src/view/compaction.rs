@@ -47,10 +47,31 @@ impl CompactionBlockWidget {
             _ => (HEADER, self.text.as_str()),
         };
         let t = crate::theme::current();
-        let mut out = vec![Line::from(Span::styled(
-            header.to_owned(),
-            Style::default().fg(t.muted_fg).add_modifier(Modifier::BOLD),
-        ))];
+        let (title, counts) = match header.strip_prefix(HEADER) {
+            Some(counts) => (HEADER, counts.trim_start()),
+            None => (header, ""),
+        };
+        let mut spans = vec![
+            Span::styled(
+                "\u{2022} ".to_owned(),
+                Style::default()
+                    .fg(t.success_fg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                title.to_owned(),
+                Style::default()
+                    .fg(t.tool_result_fg)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ];
+        if !counts.is_empty() {
+            spans.push(Span::styled(
+                format!(" {counts}"),
+                Style::default().fg(t.muted_fg),
+            ));
+        }
+        let mut out = vec![Line::from(spans)];
         if !self.folded {
             let body_style = Style::default().fg(t.assistant_fg);
             for line in crate::markdown::render(&strip_summary_framing(framed), body_style) {
@@ -116,7 +137,7 @@ mod tests {
         let text = "Compacted history (7 messages summarized, 3 kept)\n<summary>\nbody\n</summary>";
         assert_eq!(
             rows(text, true),
-            ["Compacted history (7 messages summarized, 3 kept)"]
+            ["\u{2022} Compacted history (7 messages summarized, 3 kept)"]
         );
     }
 
@@ -132,7 +153,7 @@ mod tests {
     #[test]
     fn replayed_compaction_gets_the_plain_header() {
         let rows = rows("prefix\n\n<summary>\n# Title\n</summary>", true);
-        assert_eq!(rows, ["Compacted history"]);
+        assert_eq!(rows, ["\u{2022} Compacted history"]);
     }
 
     #[test]

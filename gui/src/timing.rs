@@ -97,7 +97,7 @@ impl SessionTimes {
             self.thinking.clear();
             self.run_ends.clear();
         }
-        if session.running && self.run_started.is_none() {
+        if (session.running || session.compacting) && self.run_started.is_none() {
             self.run_started = Some(now);
         }
         let last = items.len().checked_sub(1);
@@ -178,7 +178,7 @@ impl SessionTimes {
                 close(self.agents.get_mut(id), now);
             }
         }
-        if !session.running {
+        if !session.running && !session.compacting {
             self.run_started = None;
         }
         self.seen = items.len();

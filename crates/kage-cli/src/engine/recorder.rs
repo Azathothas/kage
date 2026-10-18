@@ -130,12 +130,14 @@ impl Recorder {
                 kept,
                 summarized,
                 summary,
+                before,
             } => self.writer()?.append(&SessionEntry::Compaction(Compaction {
                 id: EntryId::new(),
                 ts: Utc::now(),
                 kept: *kept,
                 summarized: *summarized,
                 summary: summary.clone(),
+                before: Some(*before),
             })),
             LoopEvent::TurnEnded { .. } => self.write_plugin_ops(),
             _ => Ok(()),
@@ -261,6 +263,7 @@ mod tests {
                 kept: 1,
                 summarized: 2,
                 summary: "s".into(),
+                before: 9_000,
             })
             .unwrap();
 

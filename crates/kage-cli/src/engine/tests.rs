@@ -6,7 +6,7 @@ use kage_core::agent_report::{AgentLimit, AgentMail, AgentReport, ReportState};
 use kage_core::agents::AgentDefs;
 use kage_core::permissions::{PermissionAction, PermissionsConfig};
 use kage_core::protocol::{EXIT_PLAN_TOOL, Envelope, Event, RunOutcome};
-use kage_core::{LoopEvent, StopReason, TokenUsage, ToolCallId, ToolOutput};
+use kage_core::{LoopError, LoopEvent, StopReason, TokenUsage, ToolCallId, ToolOutput};
 use kage_provider::testing::MockProvider;
 use kage_provider::{ProviderError, ProviderEvent};
 use kage_session::{EntryId, FORMAT_VERSION, Header, SessionWriter};
@@ -724,15 +724,15 @@ fn undo_branches_the_session_in_place_and_returns_its_prompt() {
     let (changed, messages, same_id) = seen
         .iter()
         .find_map(|e| match &e.event {
-            Event::Host(HostEvent::SessionChanged { path, messages, .. }) => {
-                Some((path.clone(), messages.clone(), e.session))
+            Event::Host(HostEvent::SessionChanged { path, timeline, .. }) => {
+                Some((path.clone(), timeline.len(), e.session))
             }
             _ => None,
         })
         .expect("undo reloads the session");
     assert_eq!(changed, path, "undo keeps the same file");
     assert_eq!(same_id, id, "undo keeps the same session id");
-    assert_eq!(messages.len(), 2, "the first exchange stays");
+    assert_eq!(messages, 2, "the first exchange stays");
     let undone = seen
         .iter()
         .find_map(|e| match &e.event {
@@ -957,11 +957,11 @@ fn undo_keeps_entries_older_than_the_last_prompt() {
 
     h.engine.send(Command::to(id, CommandKind::Undo));
     let seen = wait_for(&h.events, is_session_changed);
-    let Event::Host(HostEvent::SessionChanged { messages, .. }) = &seen.last().unwrap().event
+    let Event::Host(HostEvent::SessionChanged { timeline, .. }) = &seen.last().unwrap().event
     else {
         unreachable!()
     };
-    assert_eq!(messages.len(), 2, "only the first exchange survives");
+    assert_eq!(timeline.len(), 2, "only the first exchange survives");
     // The label stays in the file, on the active chain: the branch
     // marker continues the session from it.
     let kept: Vec<kage_session::SessionEntry> = kage_session::SessionReader::iter(&path)
@@ -1029,15 +1029,15 @@ fn rewind_keeps_the_picked_prompt_and_drops_the_rest() {
     let (changed, messages) = seen
         .iter()
         .find_map(|e| match &e.event {
-            Event::Host(HostEvent::SessionChanged { path, messages, .. }) => {
-                Some((path.clone(), messages.clone()))
+            Event::Host(HostEvent::SessionChanged { path, timeline, .. }) => {
+                Some((path.clone(), timeline.len()))
             }
             _ => None,
         })
         .expect("rewind reloads the session");
     assert_eq!(changed, path, "rewind keeps the same file");
     // The picked prompt's full turn stays: the prompt and its reply.
-    assert_eq!(messages.len(), 4, "the picked turn is kept whole");
+    assert_eq!(messages, 4, "the picked turn is kept whole");
     assert_eq!(
         kage_session::replay(&path).unwrap().history.len(),
         4,
@@ -1139,10 +1139,10 @@ fn load_session_switches_to_the_stored_conversation() {
     let seen = wait_for(&h.events, is_session_changed);
     match &seen.last().unwrap().event {
         Event::Host(HostEvent::SessionChanged {
-            messages, path: p, ..
+            timeline, path: p, ..
         }) => {
             assert_eq!(p, &path);
-            assert_eq!(messages.len(), 2);
+            assert_eq!(timeline.len(), 2);
         }
         _ => unreachable!(),
     }
@@ -1166,7 +1166,7 @@ fn clone_continues_on_a_copy() {
     let seen = wait_for(&h.events, is_session_changed);
     let Event::Host(HostEvent::SessionChanged {
         path: copy,
-        messages,
+        timeline,
         ..
     }) = &seen.last().unwrap().event
     else {
@@ -1174,7 +1174,7 @@ fn clone_continues_on_a_copy() {
     };
     assert_ne!(copy, &path);
     assert!(copy.exists());
-    assert_eq!(messages.len(), 2);
+    assert_eq!(timeline.len(), 2);
 }
 
 #[test]
@@ -1592,6 +1592,49 @@ fn compact_without_history_is_a_no_op() {
     let events = until_runs_end(&h.events, 1);
     assert_eq!(outcomes(&events), [RunOutcome::Completed]);
     assert!(notices(&events).contains(&"compact: not enough history yet".to_owned()));
+}
+
+/// A manual compaction whose summarizer fails must be visible: the
+/// engine emits the error event that renders in every transcript, and
+/// the run outcome carries the compaction failure for reports.
+#[test]
+fn a_failed_manual_compaction_emits_the_error_event() {
+    let h = harness(MockProvider::replaying(vec![Err(
+        kage_provider::ProviderError::Auth("no key".into()),
+    )]));
+    let id = SessionId::new();
+    let mut cx = AgentContext::new("m", "").with_workdir(std::env::temp_dir());
+    for i in 0..8 {
+        cx.history.push(Arc::new(Message::new(
+            kage_core::Role::User,
+            vec![Content::Text {
+                text: format!("turn {i}"),
+            }],
+            None,
+        )));
+    }
+    h.engine.open(SessionSpec {
+        id,
+        cx,
+        ..h.spec(id)
+    });
+    h.engine.send(Command::to(id, CommandKind::Compact));
+    let events = until_runs_end(&h.events, 1);
+    assert!(events.iter().any(|e| matches!(
+        &e.event,
+        Event::Loop(LoopEvent::Error {
+            kind: LoopError::Compaction { message },
+        }) if message.contains("authentication failed")
+    )));
+    let run_outcomes = outcomes(&events);
+    assert_eq!(run_outcomes.len(), 1);
+    match &run_outcomes[0] {
+        RunOutcome::Failed { error } => assert!(
+            matches!(error, LoopError::Compaction { message } if message.contains("authentication failed")),
+            "{error}"
+        ),
+        other => panic!("expected a failed compact run, got {other:?}"),
+    }
 }
 
 #[test]

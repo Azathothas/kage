@@ -819,7 +819,7 @@ fn one_line(s: &str) -> String {
     }
 }
 
-fn plural(n: usize, one: &'static str, many: &'static str) -> &'static str {
+pub(crate) fn plural(n: usize, one: &'static str, many: &'static str) -> &'static str {
     if n == 1 { one } else { many }
 }
 

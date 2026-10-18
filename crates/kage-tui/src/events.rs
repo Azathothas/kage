@@ -10,11 +10,11 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use kage_core::agent_report::{AgentText, split_agent_text};
-use kage_core::protocol::CompactionCounts;
+use kage_core::protocol::{CompactionCounts, TimelineItem};
 use kage_core::resource_block::{self, ResourceRef};
 use kage_core::{Content, LoopError, LoopEvent, Message, MessageId, Role, StopReason};
 
-use crate::buffer::Buffer;
+use crate::buffer::{Block, Buffer};
 use crate::view::tool_view::ToolPhase;
 
 /// Cloneable handle to the conversation buffer shared between the App
@@ -38,7 +38,8 @@ pub fn apply_loop_event(buf: &mut Buffer, event: &LoopEvent) {
         LoopEvent::MessageStart { .. }
         | LoopEvent::MessageAppended { .. }
         | LoopEvent::TurnStarted { .. }
-        | LoopEvent::TurnEnded { .. } => {
+        | LoopEvent::TurnEnded { .. }
+        | LoopEvent::CompactionStarted { .. } => {
             // The buffer lazily begins an Assistant block on the first
             // text/thinking delta, so MessageStart is a no-op here.
         }
@@ -85,6 +86,7 @@ pub fn apply_loop_event(buf: &mut Buffer, event: &LoopEvent) {
             kept,
             summarized,
             summary,
+            ..
         } => {
             let counts = CompactionCounts {
                 summarized: *summarized,
@@ -92,7 +94,7 @@ pub fn apply_loop_event(buf: &mut Buffer, event: &LoopEvent) {
             };
             buf.push_custom(
                 "kage:compaction",
-                compaction_text(Some(counts), summary),
+                compaction_text(Some(counts), None, summary),
                 true,
             );
         }
@@ -210,14 +212,60 @@ pub fn tool_durations(messages: &[Arc<Message>]) -> ToolDurations {
 }
 
 /// The text of a `kage:compaction` block: a header line naming the
-/// message `counts` when known, over the `summary`.
-fn compaction_text(counts: Option<CompactionCounts>, summary: &str) -> String {
+/// message `counts` and, when known, the tokens the summary saved,
+/// over the `summary`.
+fn compaction_text(
+    counts: Option<CompactionCounts>,
+    tokens: Option<(u64, u64)>,
+    summary: &str,
+) -> String {
     match counts {
-        Some(CompactionCounts { summarized, kept }) => {
-            format!("Compacted history ({summarized} messages summarized, {kept} kept)\n{summary}")
-        }
+        Some(CompactionCounts { summarized, kept }) => format!(
+            "Compacted history ({summarized} messages summarized, {kept} kept){}\n{summary}",
+            tokens_suffix(tokens),
+        ),
         None => summary.to_owned(),
     }
+}
+
+/// The ` \u{b7} 84k \u{2192} 12k tokens` a compaction header carries once the
+/// post-compaction usage has arrived. A block pushed before then gets
+/// its header line amended with this, so the suffix must ride the
+/// header's first line.
+pub(crate) fn tokens_suffix(tokens: Option<(u64, u64)>) -> String {
+    match tokens {
+        Some((before, after)) => format!(
+            " \u{b7} {} \u{2192} {} tokens",
+            crate::usage::compact_tokens(before),
+            crate::usage::compact_tokens(after),
+        ),
+        None => String::new(),
+    }
+}
+
+/// Fold the post-compaction context fill into the newest compaction
+/// card that still lacks a token delta. Returns whether one was
+/// amended. The delta rides the header's first line, so a card whose
+/// header already names one is left alone.
+pub fn amend_compaction_with_usage(buf: &mut Buffer, before: u64, after: u64) -> bool {
+    let found = buf.blocks().iter().rev().find_map(|b| match b.as_ref() {
+        Block::Custom { kind, text, .. } if kind == "kage:compaction" => {
+            let header = text.lines().next().unwrap_or_default();
+            (!header.contains('\u{2192}')).then(|| (text.clone(), header.to_owned()))
+        }
+        _ => None,
+    });
+    let Some((text, header)) = found else {
+        return false;
+    };
+    let rest = &text[header.len()..];
+    let amended = format!("{header}{}{rest}", tokens_suffix(Some((before, after))));
+    buf.replace_custom_where(
+        "kage:compaction",
+        |t| !t.lines().next().unwrap_or_default().contains('\u{2192}'),
+        amended,
+    );
+    true
 }
 
 /// Last line of a shell block cancelled before its command finished.
@@ -253,103 +301,113 @@ pub(crate) fn is_shell_status(line: &str) -> bool {
     line.starts_with("(exit code ") || line == SHELL_CANCELLED || line == SHELL_KILLED
 }
 
-/// Pour a replayed `Vec<Message>` into a fresh [`Buffer`] so the user
-/// sees the prior conversation rendered with the current TUI styling.
+/// Pour a replayed session timeline into a fresh [`Buffer`] so the
+/// user sees the prior conversation rendered with the current TUI
+/// styling.
 ///
-/// The translator walks each message in order: user prompts become user
+/// The timeline is the conversation as the user saw it: every message
+/// in order, and at each point a compaction ran, its card with the
+/// counts and token delta the session file recorded. Nothing a
+/// compaction summarized is missing here; the compacted form is what
+/// the model reads, not what this renders.
+///
+/// Each message translates in order: user prompts become user
 /// bubbles, assistant text/thinking blocks become their respective
-/// streamed-and-finished blocks, tool calls and tool results become the
-/// merged tool composites the renderer pairs at draw time. Pass
+/// streamed-and-finished blocks, tool calls and tool results become
+/// the merged tool composites the renderer pairs at draw time. Pass
 /// `tool_durations` to recover real durations from session entry
 /// timestamps; a call missing from the map shows none. Calls left
-/// without a result read as interrupted. `compaction` holds the counts
-/// of the compaction whose summary opens `messages`, when recorded.
+/// without a result read as interrupted.
 pub fn populate_from_history(
     buf: &mut Buffer,
-    messages: &[Arc<Message>],
+    timeline: &[TimelineItem],
     tool_durations: &ToolDurations,
-    compaction: Option<CompactionCounts>,
 ) {
-    let mut compaction = compaction;
-    for msg in messages {
-        match msg.role {
-            Role::User => {
-                if let Some(text) = user_text(msg) {
-                    if is_compaction_summary(&text) {
-                        let text = compaction_text(compaction.take(), &text);
-                        buf.push_custom("kage:compaction", text, true);
-                    } else if let Some(run) = kage_core::message::ShellRun::parse(&text) {
-                        let body = shell_block(&run.command, &run.output, run.exit_code);
-                        buf.push_custom("kage:shell", body, false);
-                    } else {
-                        push_user_text(buf, text);
-                    }
-                }
-                push_user_image_rows(buf, msg);
+    for item in timeline {
+        match item {
+            TimelineItem::Compaction(record) => {
+                let tokens = match (record.before, record.after) {
+                    (Some(before), Some(after)) => Some((before, after)),
+                    _ => None,
+                };
+                let text = compaction_text(
+                    Some(CompactionCounts {
+                        summarized: record.summarized,
+                        kept: record.kept,
+                    }),
+                    tokens,
+                    &record.summary,
+                );
+                buf.push_custom("kage:compaction", text, true);
             }
-            Role::Assistant => {
-                for block in &msg.content {
-                    match block {
-                        Content::Text { text } => {
-                            if is_compaction_summary(text) {
-                                let text = compaction_text(compaction.take(), text);
-                                buf.push_custom("kage:compaction", text, true);
-                            } else {
-                                buf.append_assistant_delta(text);
-                                buf.finish_streaming();
-                            }
-                        }
-                        Content::Thinking {
-                            text, duration_ms, ..
-                        } if !text.trim().is_empty() => {
-                            buf.push_thinking(text.clone(), *duration_ms);
-                        }
-                        Content::ToolCall { id, name, input } => {
-                            buf.push_tool_call(id.to_string(), name, input.clone());
-                        }
-                        Content::Thinking { .. }
-                        | Content::ToolResultBlock { .. }
-                        | Content::Image { .. }
-                        | Content::Custom { .. } => {}
-                    }
-                }
-            }
-            Role::ToolResult => {
-                for block in &msg.content {
-                    if let Content::ToolResultBlock {
-                        call_id,
-                        output,
-                        is_error,
-                    } = block
-                    {
-                        // Replay: real timing is recovered from the
-                        // session's per-entry `ts` deltas via
-                        // `tool_durations`. A miss yields `None`,
-                        // shown without a duration.
-                        let duration = tool_durations.get(&(msg.id, call_id.to_string())).copied();
-                        buf.push_tool_result_with_duration(
-                            call_id.to_string(),
-                            output.clone(),
-                            *is_error,
-                            duration,
-                        );
-                    }
-                }
-            }
-            Role::System => {}
+            TimelineItem::Message(msg) => push_replayed_message(buf, msg, tool_durations),
         }
     }
     buf.interrupt_running_tools();
 }
 
-/// True when `text` is exactly the synthetic compaction-summary
-/// message the loop inserts in place of drained history: framed by
-/// the constants in [`kage_core::message`] on both ends. Strict
-/// framing keeps a user prompt that merely contains `<summary>` tags
-/// in a user bubble instead of the compaction widget.
-fn is_compaction_summary(text: &str) -> bool {
-    text.starts_with(kage_core::message::COMPACTION_SUMMARY_PREFIX)
-        && text.ends_with(kage_core::message::COMPACTION_SUMMARY_SUFFIX)
+/// Translate one replayed message into its blocks. The live event path
+/// and this share the shapes; the difference is timing, which replay
+/// recovers from `tool_durations` instead of live phase changes.
+fn push_replayed_message(buf: &mut Buffer, msg: &Arc<Message>, tool_durations: &ToolDurations) {
+    match msg.role {
+        Role::User => {
+            if let Some(text) = user_text(msg) {
+                if let Some(run) = kage_core::message::ShellRun::parse(&text) {
+                    let body = shell_block(&run.command, &run.output, run.exit_code);
+                    buf.push_custom("kage:shell", body, false);
+                } else {
+                    push_user_text(buf, text);
+                }
+            }
+            push_user_image_rows(buf, msg);
+        }
+        Role::Assistant => {
+            for block in &msg.content {
+                match block {
+                    Content::Text { text } => {
+                        buf.append_assistant_delta(text);
+                        buf.finish_streaming();
+                    }
+                    Content::Thinking {
+                        text, duration_ms, ..
+                    } if !text.trim().is_empty() => {
+                        buf.push_thinking(text.clone(), *duration_ms);
+                    }
+                    Content::ToolCall { id, name, input } => {
+                        buf.push_tool_call(id.to_string(), name, input.clone());
+                    }
+                    Content::Thinking { .. }
+                    | Content::ToolResultBlock { .. }
+                    | Content::Image { .. }
+                    | Content::Custom { .. } => {}
+                }
+            }
+        }
+        Role::ToolResult => {
+            for block in &msg.content {
+                if let Content::ToolResultBlock {
+                    call_id,
+                    output,
+                    is_error,
+                } = block
+                {
+                    // Replay: real timing is recovered from the
+                    // session's per-entry `ts` deltas via
+                    // `tool_durations`. A miss yields `None`,
+                    // shown without a duration.
+                    let duration = tool_durations.get(&(msg.id, call_id.to_string())).copied();
+                    buf.push_tool_result_with_duration(
+                        call_id.to_string(),
+                        output.clone(),
+                        *is_error,
+                        duration,
+                    );
+                }
+            }
+        }
+        Role::System => {}
+    }
 }
 
 /// Push the text of a user message: the person's own words as a
@@ -1094,6 +1152,28 @@ mod tests {
         assert!(!buf.is_timed(0));
     }
 
+    /// Wrap plain messages into the timeline shape the replay carries.
+    fn timeline_of(messages: &[Arc<Message>]) -> Vec<TimelineItem> {
+        messages
+            .iter()
+            .map(|m| TimelineItem::Message(Arc::clone(m)))
+            .collect()
+    }
+
+    fn card(summarized: usize, kept: usize, tokens: (Option<u64>, Option<u64>)) -> TimelineItem {
+        TimelineItem::Compaction(kage_core::protocol::CompactionRecord {
+            summarized,
+            kept,
+            before: tokens.0,
+            after: tokens.1,
+            summary: format!(
+                "{}summary{}",
+                kage_core::message::COMPACTION_SUMMARY_PREFIX,
+                kage_core::message::COMPACTION_SUMMARY_SUFFIX
+            ),
+        })
+    }
+
     #[test]
     fn replayed_thinking_keeps_its_stored_timing_and_orphan_calls_are_interrupted() {
         let mut buf = Buffer::new();
@@ -1118,7 +1198,7 @@ mod tests {
             ],
             None,
         ))];
-        populate_from_history(&mut buf, &history, &HashMap::new(), None);
+        populate_from_history(&mut buf, &timeline_of(&history), &HashMap::new());
         assert!(matches!(
             buf.blocks()[0].as_ref(),
             Block::Thinking {
@@ -1151,6 +1231,7 @@ mod tests {
             kept: 4,
             summarized: 12,
             summary: "everyone agrees".into(),
+            before: 84_000,
         });
         let buf = buf.lock().unwrap();
         match buf.blocks()[0].as_ref() {
@@ -1158,6 +1239,59 @@ mod tests {
                 assert_eq!(kind, "kage:compaction");
                 assert!(text.starts_with("Compacted history (12 messages summarized, 4 kept)"));
                 assert!(text.contains("everyone agrees"));
+            }
+            other => panic!("expected Custom, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compaction_usage_amends_the_newest_bare_card_header() {
+        let mut buf = Buffer::new();
+        buf.push_custom(
+            "kage:compaction",
+            "Compacted history (12 messages summarized, 4 kept)\n<summary>\nbody\n</summary>",
+            true,
+        );
+        assert!(amend_compaction_with_usage(&mut buf, 84_000, 12_000));
+        match buf.blocks()[0].as_ref() {
+            Block::Custom { text, .. } => assert!(
+                text.starts_with("Compacted history (12 messages summarized, 4 kept) \u{b7} 84k \u{2192} 12k tokens\n"),
+                "{text}"
+            ),
+            other => panic!("expected Custom, got {other:?}"),
+        }
+        assert!(!amend_compaction_with_usage(&mut buf, 1, 2));
+    }
+
+    #[test]
+    fn compaction_usage_amends_only_the_card_without_a_delta() {
+        let mut buf = Buffer::new();
+        buf.push_custom(
+            "kage:compaction",
+            "Compacted history (9 summarized, 4 kept) \u{b7} 50k \u{2192} 8k tokens\nold",
+            true,
+        );
+        buf.push_custom(
+            "kage:compaction",
+            "Compacted history (3 summarized, 4 kept)\nnew",
+            true,
+        );
+        assert!(amend_compaction_with_usage(&mut buf, 20_000, 5_000));
+        match buf.blocks()[0].as_ref() {
+            Block::Custom { text, .. } => {
+                assert!(text.contains("50k \u{2192} 8k tokens"), "{text}");
+                assert!(!text.contains("20k"), "{text}");
+            }
+            other => panic!("expected Custom, got {other:?}"),
+        }
+        match buf.blocks()[1].as_ref() {
+            Block::Custom { text, .. } => {
+                assert!(
+                    text.starts_with(
+                        "Compacted history (3 summarized, 4 kept) \u{b7} 20k \u{2192} 5k tokens\n"
+                    ),
+                    "{text}"
+                );
             }
             other => panic!("expected Custom, got {other:?}"),
         }
@@ -1267,7 +1401,11 @@ mod tests {
                 None,
             )),
         ];
-        populate_from_history(&mut buf, &history, &std::collections::HashMap::new(), None);
+        populate_from_history(
+            &mut buf,
+            &timeline_of(&history),
+            &std::collections::HashMap::new(),
+        );
         let blocks = buf.blocks();
         assert!(matches!(blocks[0].as_ref(), Block::User { .. }));
         assert!(matches!(blocks[1].as_ref(), Block::Thinking { .. }));
@@ -1283,65 +1421,99 @@ mod tests {
     }
 
     #[test]
-    fn populate_routes_compaction_summary_to_custom_block() {
-        let framed = format!(
-            "{}{}{}",
-            kage_core::message::COMPACTION_SUMMARY_PREFIX,
-            "the actual summary content",
-            kage_core::message::COMPACTION_SUMMARY_SUFFIX
-        );
+    fn populate_renders_a_timeline_card_with_counts_and_tokens() {
         let mut buf = Buffer::new();
-        let history = vec![Arc::new(Message::new(
-            Role::User,
-            vec![Content::Text { text: framed }],
-            None,
-        ))];
-        populate_from_history(&mut buf, &history, &std::collections::HashMap::new(), None);
+        let timeline = vec![card(4, 2, (Some(160_000), Some(42_000)))];
+        populate_from_history(&mut buf, &timeline, &std::collections::HashMap::new());
         let blocks = buf.blocks();
         assert_eq!(blocks.len(), 1);
         match blocks[0].as_ref() {
-            Block::Custom { kind, .. } => assert_eq!(kind, "kage:compaction"),
+            Block::Custom { kind, text, .. } => {
+                assert_eq!(kind, "kage:compaction");
+                assert!(
+                    text.starts_with(
+                        "Compacted history (4 messages summarized, 2 kept) \u{b7} 160k \u{2192} 42k tokens\n"
+                    ),
+                    "{text}"
+                );
+            }
             other => panic!("expected Custom compaction block, got {other:?}"),
         }
     }
 
     #[test]
-    fn a_replayed_compaction_keeps_its_recorded_counts() {
-        let framed = format!(
-            "{}summary{}",
-            kage_core::message::COMPACTION_SUMMARY_PREFIX,
-            kage_core::message::COMPACTION_SUMMARY_SUFFIX
-        );
-        let history = vec![Arc::new(Message::new(
-            Role::User,
-            vec![Content::Text { text: framed }],
-            None,
-        ))];
-        let header = |counts| {
+    fn a_replayed_card_without_tokens_shows_counts_only() {
+        let header = |tokens| {
             let mut buf = Buffer::new();
-            populate_from_history(&mut buf, &history, &HashMap::new(), counts);
+            let timeline = vec![card(4, 2, tokens)];
+            populate_from_history(&mut buf, &timeline, &HashMap::new());
             match buf.blocks()[0].as_ref() {
                 Block::Custom { text, .. } => text.lines().next().unwrap().to_owned(),
                 other => panic!("expected a compaction block, got {other:?}"),
             }
         };
-        let counts = CompactionCounts {
-            summarized: 4,
-            kept: 2,
-        };
         assert_eq!(
-            header(Some(counts)),
-            "Compacted history (4 messages summarized, 2 kept)"
+            header((None, None)),
+            "Compacted history (4 messages summarized, 2 kept)",
+            "a session recorded before tokens were kept"
         );
-        assert!(!header(None).starts_with("Compacted history"));
+        assert_eq!(
+            header((Some(160_000), None)),
+            "Compacted history (4 messages summarized, 2 kept)",
+            "a one-sided delta reads as none"
+        );
     }
 
+    /// The user's view of a compacted session: the summarized turns
+    /// stay visible, and the card sits where the compaction ran, after
+    /// the turns that existed when it ran.
     #[test]
-    fn summary_tags_in_a_user_prompt_stay_a_user_bubble() {
-        let counts = CompactionCounts {
-            summarized: 4,
-            kept: 2,
-        };
+    fn a_replayed_timeline_keeps_every_turn_and_the_card_in_place() {
+        let old_user = Arc::new(Message::new(
+            Role::User,
+            vec![Content::Text {
+                text: "old ask".into(),
+            }],
+            None,
+        ));
+        let kept_user = Arc::new(Message::new(
+            Role::User,
+            vec![Content::Text {
+                text: "kept ask".into(),
+            }],
+            None,
+        ));
+        let mut buf = Buffer::new();
+        let timeline = vec![
+            TimelineItem::Message(Arc::clone(&old_user)),
+            TimelineItem::Message(Arc::clone(&kept_user)),
+            card(1, 1, (Some(84_000), Some(12_000))),
+        ];
+        populate_from_history(&mut buf, &timeline, &HashMap::new());
+        let blocks = buf.blocks();
+        assert_eq!(blocks.len(), 3, "{blocks:?}");
+        match blocks[0].as_ref() {
+            Block::User { .. } => {}
+            other => panic!("the summarized turn stays visible, got {other:?}"),
+        }
+        match blocks[1].as_ref() {
+            Block::User { .. } => {}
+            other => panic!("the kept turn stays visible, got {other:?}"),
+        }
+        match blocks[2].as_ref() {
+            Block::Custom { kind, text, .. } => {
+                assert_eq!(kind, "kage:compaction");
+                assert!(text.contains("84k \u{2192} 12k tokens"), "{text}");
+            }
+            other => panic!("expected the card where the compaction ran, got {other:?}"),
+        }
+    }
+
+    /// Cards come only from timeline entries: a message that happens
+    /// to carry the framing (a typed or replayed oddity) stays a user
+    /// bubble, never a fabricated card.
+    #[test]
+    fn framed_text_in_a_timeline_message_stays_a_user_bubble() {
         let framed = format!(
             "{}the real summary{}",
             kage_core::message::COMPACTION_SUMMARY_PREFIX,
@@ -1362,19 +1534,11 @@ mod tests {
             )),
         ];
         let mut buf = Buffer::new();
-        populate_from_history(&mut buf, &history, &HashMap::new(), Some(counts));
+        populate_from_history(&mut buf, &timeline_of(&history), &HashMap::new());
         let blocks = buf.blocks();
+        assert_eq!(blocks.len(), 2);
         assert!(matches!(blocks[0].as_ref(), Block::User { .. }));
-        match blocks[1].as_ref() {
-            Block::Custom { kind, text, .. } => {
-                assert_eq!(kind, "kage:compaction");
-                assert!(
-                    text.starts_with("Compacted history (4 messages summarized, 2 kept)"),
-                    "{text}"
-                );
-            }
-            other => panic!("expected the framed summary to keep the counts, got {other:?}"),
-        }
+        assert!(matches!(blocks[1].as_ref(), Block::User { .. }));
     }
 
     #[test]
@@ -1387,7 +1551,11 @@ mod tests {
             }],
             None,
         ))];
-        populate_from_history(&mut buf, &history, &std::collections::HashMap::new(), None);
+        populate_from_history(
+            &mut buf,
+            &timeline_of(&history),
+            &std::collections::HashMap::new(),
+        );
         let blocks = buf.blocks();
         assert_eq!(blocks.len(), 1);
         assert!(matches!(blocks[0].as_ref(), Block::User { .. }));
@@ -1419,7 +1587,11 @@ mod tests {
         });
         assert!(matches!(lock(&buf).blocks()[0].as_ref(), Block::User { text } if text == want));
         let mut replayed = Buffer::new();
-        populate_from_history(&mut replayed, &[Arc::new(message)], &HashMap::new(), None);
+        populate_from_history(
+            &mut replayed,
+            &[TimelineItem::Message(Arc::new(message))],
+            &HashMap::new(),
+        );
         assert!(matches!(replayed.blocks()[0].as_ref(), Block::User { text } if text == want));
     }
 
@@ -1460,7 +1632,11 @@ mod tests {
         assert_eq!(blocks.len(), 1, "{blocks:?}");
         assert!(matches!(blocks[0].as_ref(), Block::User { text } if text == want));
         let mut replayed = Buffer::new();
-        populate_from_history(&mut replayed, &[Arc::new(message)], &HashMap::new(), None);
+        populate_from_history(
+            &mut replayed,
+            &[TimelineItem::Message(Arc::new(message))],
+            &HashMap::new(),
+        );
         assert!(matches!(replayed.blocks()[0].as_ref(), Block::User { text } if text == want));
     }
 
@@ -1506,7 +1682,7 @@ mod tests {
             None,
         ))];
         let mut buf = Buffer::new();
-        populate_from_history(&mut buf, &history, &HashMap::new(), None);
+        populate_from_history(&mut buf, &timeline_of(&history), &HashMap::new());
         let blocks = buf.blocks();
         assert_eq!(blocks.len(), 2, "bubble then image row");
         assert!(matches!(blocks[0].as_ref(), Block::User { text } if text == "hello"));
@@ -1577,7 +1753,7 @@ mod tests {
             .map(Arc::new)
             .collect();
         let mut buf = Buffer::new();
-        populate_from_history(&mut buf, &history, &tool_durations(&history), None);
+        populate_from_history(&mut buf, &timeline_of(&history), &tool_durations(&history));
         let durations: Vec<Option<u64>> = buf
             .blocks()
             .iter()

@@ -1661,6 +1661,219 @@ fn good_turn() -> Vec<Result<ProviderEvent, kage_provider::ProviderError>> {
     ]
 }
 
+fn overflow_turn() -> Vec<Result<ProviderEvent, kage_provider::ProviderError>> {
+    vec![Err(kage_provider::ProviderError::Http {
+        status: 400,
+        body: "prompt is too long: 300000 tokens > 200000 maximum".into(),
+    })]
+}
+
+fn plain_assistant(text: &str) -> Message {
+    Message::new(
+        Role::Assistant,
+        vec![Content::Text {
+            text: text.to_owned(),
+        }],
+        None,
+    )
+}
+
+fn summary_call() -> Vec<Result<ProviderEvent, kage_provider::ProviderError>> {
+    vec![
+        Ok(ProviderEvent::TextDelta {
+            delta: "the handoff".into(),
+        }),
+        Ok(ProviderEvent::MessageEnd {
+            stop_reason: StopReason::EndTurn,
+            usage: TokenUsage::default(),
+        }),
+    ]
+}
+
+/// A turn the provider rejects for size is answered by compacting
+/// harder and re-issuing a rebuilt request, not by failing the run.
+#[test]
+fn context_overflow_compacts_harder_and_the_turn_succeeds() {
+    let mock = MockProvider::sequence(vec![overflow_turn(), summary_call(), good_turn()]);
+    let mut cx = AgentContext::new("mock:m", "");
+    for i in 0..12 {
+        cx.history.push(Arc::new(user_msg(&format!("turn {i}"))));
+        cx.history
+            .push(Arc::new(plain_assistant(&format!("reply {i}"))));
+    }
+    let cfg = LoopConfig::default();
+    let log = EventLog::default();
+    let cancel = CancelFlag::new();
+    let registry = ToolRegistry::new();
+
+    let res = run(
+        &mock,
+        &registry,
+        &mut cx,
+        cfg,
+        &mut NoopHooks,
+        &cancel,
+        |e| log.record(e),
+    );
+    assert!(
+        res.is_ok(),
+        "run should recover via compaction, got {res:?}"
+    );
+    assert_eq!(mock.call_count(), 3, "overflow, summarizer, retried turn");
+    assert!(
+        cx.history
+            .iter()
+            .any(|m| matches!(&m.content[0], kage_core::Content::Text { text } if text.contains("<summary>"))),
+        "history must carry the synthetic summary"
+    );
+    assert!(!log.events.borrow().iter().any(|e| matches!(
+        e,
+        LoopEvent::Error {
+            kind: LoopError::ContextOverflow
+        }
+    )));
+}
+
+/// With compaction off (`compaction_threshold: 0`), an overflowing
+/// turn ends the run with `ContextOverflow` instead of compacting
+/// against the user's setting.
+#[test]
+fn overflow_with_compaction_off_ends_with_context_overflow() {
+    let mock = MockProvider::sequence(vec![overflow_turn()]);
+    let mut cx = AgentContext::new("mock:m", "");
+    for i in 0..12 {
+        cx.history.push(Arc::new(user_msg(&format!("turn {i}"))));
+        cx.history
+            .push(Arc::new(plain_assistant(&format!("reply {i}"))));
+    }
+    let cfg = LoopConfig {
+        compaction_threshold: 0.0,
+        ..LoopConfig::default()
+    };
+    let log = EventLog::default();
+    let cancel = CancelFlag::new();
+    let registry = ToolRegistry::new();
+
+    let res = run(
+        &mock,
+        &registry,
+        &mut cx,
+        cfg,
+        &mut NoopHooks,
+        &cancel,
+        |e| log.record(e),
+    );
+    assert_eq!(res, Err(LoopError::ContextOverflow));
+    assert_eq!(mock.call_count(), 1, "no summarizer call");
+    assert_eq!(cx.history.len(), 24, "history untouched");
+}
+
+/// An automatic compaction whose summarizer fails does not end the
+/// run: the failure is surfaced as an error event and the turn
+/// proceeds with the full history.
+#[test]
+fn a_failed_auto_compaction_warns_and_the_run_continues() {
+    let mock = MockProvider::sequence(vec![
+        vec![Err(kage_provider::ProviderError::Auth("no key".into()))],
+        good_turn(),
+    ]);
+    let mut cx = AgentContext::new("mock:m", "");
+    for i in 0..12 {
+        cx.history.push(Arc::new(user_msg(&format!("turn {i}"))));
+        cx.history
+            .push(Arc::new(plain_assistant(&format!("reply {i}"))));
+    }
+    // Over the threshold before the first turn, so the summarizer is
+    // the run's first provider call.
+    cx.budget.current_context = 150_000;
+    cx.context_window = 200_000;
+    let cfg = LoopConfig {
+        compaction_threshold: 0.5,
+        ..LoopConfig::default()
+    };
+    let log = EventLog::default();
+    let cancel = CancelFlag::new();
+    let registry = ToolRegistry::new();
+
+    let res = run(
+        &mock,
+        &registry,
+        &mut cx,
+        cfg,
+        &mut NoopHooks,
+        &cancel,
+        |e| log.record(e),
+    );
+    assert!(res.is_ok(), "the run must survive the failed compaction");
+    assert_eq!(mock.call_count(), 2, "summarizer, then the real turn");
+    assert_eq!(
+        cx.history.len(),
+        25,
+        "nothing was compacted away; the reply appended"
+    );
+    assert!(
+        !cx.history
+            .iter()
+            .any(|m| matches!(&m.content[0], Content::Text { text } if text.contains("<summary>"))),
+        "no summary was spliced in"
+    );
+    assert!(
+        log.events.borrow().iter().any(|e| matches!(
+            e,
+            LoopEvent::Error {
+                kind: LoopError::Compaction { .. }
+            }
+        )),
+        "the failure must be surfaced"
+    );
+}
+
+/// Once the recovery rounds are spent, an overflowing request ends the
+/// run with `ContextOverflow`, the variant that names the real cause.
+#[test]
+fn exhausted_overflow_compactions_end_with_context_overflow() {
+    let mock = MockProvider::sequence(vec![
+        overflow_turn(),
+        summary_call(),
+        overflow_turn(),
+        summary_call(),
+        overflow_turn(),
+        summary_call(),
+        overflow_turn(),
+    ]);
+    let mut cx = AgentContext::new("mock:m", "");
+    for i in 0..12 {
+        cx.history.push(Arc::new(user_msg(&format!("turn {i}"))));
+        cx.history
+            .push(Arc::new(plain_assistant(&format!("reply {i}"))));
+    }
+    let cfg = LoopConfig::default();
+    let log = EventLog::default();
+    let cancel = CancelFlag::new();
+    let registry = ToolRegistry::new();
+
+    let res = run(
+        &mock,
+        &registry,
+        &mut cx,
+        cfg,
+        &mut NoopHooks,
+        &cancel,
+        |e| log.record(e),
+    );
+    assert_eq!(res, Err(LoopError::ContextOverflow));
+    assert_eq!(
+        mock.call_count(),
+        7,
+        "3 overflow rounds (turn + summarizer each), then the fatal turn"
+    );
+    assert_eq!(
+        cx.history.len(),
+        1,
+        "the last round summarizes the whole history"
+    );
+}
+
 #[test]
 fn transient_provider_failure_is_retried_then_succeeds() {
     let mock = MockProvider::sequence(vec![transient_turn(), good_turn()]);

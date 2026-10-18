@@ -208,17 +208,16 @@ pub enum HostEvent {
         /// Stored title, if any.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         title: Option<String>,
-        /// Conversation history, oldest first. Shared with the
-        /// engine's session state; serializes identically to
-        /// `Vec<Message>`.
-        messages: Vec<Arc<Message>>,
-        /// Counts of the compaction whose summary opens `messages`,
-        /// when the session file records one.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        compaction: Option<CompactionCounts>,
-        /// The messages compaction summarized out of `messages` that
-        /// start agents or carry their results, oldest first, so a
-        /// client lists the agents the session ran before it.
+        /// The conversation as the user saw it, oldest first: every
+        /// message and, where a compaction ran, its card with the
+        /// counts and tokens the file recorded. The model's context is
+        /// the compacted form of this and is deliberately not what a
+        /// client renders.
+        timeline: Vec<TimelineItem>,
+        /// The messages compaction summarized out of the model's
+        /// history that start agents or carry their results, oldest
+        /// first, so a client lists the agents the session ran before
+        /// it.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         compacted_agents: Vec<Arc<Message>>,
     },
@@ -446,6 +445,43 @@ pub struct CompactionCounts {
     pub summarized: usize,
     /// Recent messages kept verbatim.
     pub kept: usize,
+}
+
+/// One compaction a session records, with everything its card shows:
+/// the message counts and the context tokens before and after.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CompactionRecord {
+    /// Older turns the summary replaced.
+    pub summarized: usize,
+    /// Recent turns kept verbatim.
+    pub kept: usize,
+    /// Context tokens in use right before the compaction spliced the
+    /// summary in. `None` for sessions recorded before the count was
+    /// kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before: Option<u64>,
+    /// Context fill of the first turn recorded after the compaction,
+    /// when the file holds one; the other half of the card's token
+    /// delta.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<u64>,
+    /// The framed summary text the model reads in the summarized
+    /// turns' place.
+    pub summary: String,
+}
+
+/// One entry of a session's visual timeline: the conversation as the
+/// user saw it, with each compaction as a card at the point it ran.
+/// Compaction shrinks the model's context, never this view; the turns
+/// a compaction summarized stay in the timeline.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum TimelineItem {
+    /// A conversation message.
+    Message(Arc<Message>),
+    /// A compaction card: the turns before it were summarized into
+    /// `summary`, which the model reads in their place.
+    Compaction(CompactionRecord),
 }
 
 /// Running token and cost totals for a session.
@@ -797,8 +833,7 @@ mod tests {
             HostEvent::SessionChanged {
                 path: PathBuf::from("/tmp/s.jsonl"),
                 title: Some("t".into()),
-                messages: vec![Arc::new(message.clone())],
-                compaction: None,
+                timeline: vec![TimelineItem::Message(Arc::new(message.clone()))],
                 compacted_agents: Vec::new(),
             }
             .into(),
@@ -948,6 +983,7 @@ mod tests {
                 kept: 2,
                 summarized: 9,
                 summary: "s".into(),
+                before: 150_000,
             },
             LoopEvent::ProviderRetry {
                 attempt: 2,
@@ -1012,11 +1048,16 @@ mod tests {
             HostEvent::SessionChanged {
                 path: PathBuf::from("/tmp/s.jsonl"),
                 title: None,
-                messages: vec![Arc::new(rich_message())],
-                compaction: Some(CompactionCounts {
-                    summarized: 10,
-                    kept: 3,
-                }),
+                timeline: vec![
+                    TimelineItem::Message(Arc::new(rich_message())),
+                    TimelineItem::Compaction(CompactionRecord {
+                        summarized: 10,
+                        kept: 3,
+                        before: Some(160_000),
+                        after: Some(42_000),
+                        summary: "the handoff".into(),
+                    }),
+                ],
                 compacted_agents: vec![Arc::new(rich_message())],
             },
             HostEvent::TitleChanged { title: "t".into() },

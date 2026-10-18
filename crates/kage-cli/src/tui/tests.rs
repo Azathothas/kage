@@ -59,6 +59,10 @@ fn render_session_markdown_covers_roles_and_blocks() {
             None,
         ),
     ];
+    let timeline = history
+        .iter()
+        .map(|m| kage_core::protocol::TimelineItem::Message(std::sync::Arc::new(m.clone())))
+        .collect();
     let replay = kage_session::ReplayResult {
         header,
         history,
@@ -70,8 +74,8 @@ fn render_session_markdown_covers_roles_and_blocks() {
         title: None,
         swarm_mode: None,
         plan_mode: None,
-        compaction: None,
         agent: false,
+        timeline,
     };
     let md = render_session_markdown(&replay);
     assert!(md.starts_with("# kage session "));

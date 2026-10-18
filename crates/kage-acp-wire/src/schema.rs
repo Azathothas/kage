@@ -1787,17 +1787,48 @@ pub struct NoticeUpdate {
     pub text: String,
 }
 
-/// A `_kage/compaction` update: older turns were summarized to fit
-/// the context window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// The phase of a `_kage/compaction` update.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompactionPhase {
+    /// The agent began summarizing older turns.
+    Started,
+    /// The summary replaced the older turns.
+    #[default]
+    Complete,
+    /// The compaction was given up before a summary replaced any
+    /// turns, as when the summarizer failed or the run was cancelled.
+    Aborted,
+}
+
+/// A `_kage/compaction` update: the agent summarized older turns to
+/// fit the context window, or gave up trying. `phase` names which;
+/// an absent phase (a host older than the field) reads as
+/// [`CompactionPhase::Complete`], the shape such hosts always sent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompactionUpdate {
-    /// Recent turns kept verbatim.
-    pub kept: u64,
-    /// Context tokens in use before the compaction.
-    pub before: u64,
-    /// Context tokens in use by the first turn after the compaction.
-    pub after: u64,
+    /// What happened.
+    #[serde(default)]
+    pub phase: CompactionPhase,
+    /// Recent turns kept verbatim, on `started` and `complete`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kept: Option<u64>,
+    /// Older turns the summary replaced, on `started` and `complete`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summarized: Option<u64>,
+    /// Context tokens in use before the compaction, on `complete`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before: Option<u64>,
+    /// Context tokens in use by the first turn after the compaction,
+    /// on `complete` once that turn has reported usage. Absent when
+    /// the run ended before such a turn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<u64>,
+    /// The summary text that replaced the older turns, framed for the
+    /// model, on `complete`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
 }
 
 /// How a permission option resolves.
@@ -2968,17 +2999,84 @@ mod tests {
     fn compaction_update_shapes() {
         roundtrip(
             &SessionUpdate::Compaction(CompactionUpdate {
-                kept: 4,
-                before: 1200,
-                after: 300,
+                phase: CompactionPhase::Complete,
+                kept: Some(4),
+                summarized: Some(12),
+                before: Some(1200),
+                after: Some(300),
+                summary: Some("framed summary".into()),
             }),
             serde_json::json!({
+                "sessionUpdate": "_kage/compaction",
+                "phase": "complete",
+                "kept": 4,
+                "summarized": 12,
+                "before": 1200,
+                "after": 300,
+                "summary": "framed summary"
+            }),
+        );
+    }
+
+    #[test]
+    fn compaction_started_shapes() {
+        roundtrip(
+            &SessionUpdate::Compaction(CompactionUpdate {
+                phase: CompactionPhase::Started,
+                kept: Some(4),
+                summarized: Some(12),
+                before: None,
+                after: None,
+                summary: None,
+            }),
+            serde_json::json!({
+                "sessionUpdate": "_kage/compaction",
+                "phase": "started",
+                "kept": 4,
+                "summarized": 12
+            }),
+        );
+    }
+
+    #[test]
+    fn compaction_aborted_shapes() {
+        roundtrip(
+            &SessionUpdate::Compaction(CompactionUpdate {
+                phase: CompactionPhase::Aborted,
+                kept: None,
+                summarized: None,
+                before: None,
+                after: None,
+                summary: None,
+            }),
+            serde_json::json!({
+                "sessionUpdate": "_kage/compaction",
+                "phase": "aborted"
+            }),
+        );
+    }
+
+    #[test]
+    fn compaction_update_without_a_phase_reads_complete() {
+        let note: SessionNotification = serde_json::from_value(serde_json::json!({
+            "sessionId": "s1",
+            "update": {
                 "sessionUpdate": "_kage/compaction",
                 "kept": 4,
                 "before": 1200,
                 "after": 300
-            }),
-        );
+            }
+        }))
+        .unwrap();
+        let SessionUpdate::Compaction(update) = note.update else {
+            panic!("expected a compaction update");
+        };
+        assert_eq!(update.phase, CompactionPhase::Complete);
+        assert_eq!(update.kept, Some(4));
+        assert_eq!(update.before, Some(1200));
+        assert_eq!(update.after, Some(300));
+        assert_eq!(update.summarized, None);
+        assert_eq!(update.summary, None);
     }
 
     #[test]

@@ -116,6 +116,10 @@ impl State {
 /// session it asked to open. Updates create a session entry the first
 /// time they name it, so a subagent's transcript exists before and
 /// without the client opening it.
+// The flags each answer a different question (opened by the client,
+// prompt unanswered, turn in flight, compaction in flight); a state
+// machine would not hold, since they legitimately overlap.
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Session {
     /// The id every frame about this session carries.
@@ -154,6 +158,10 @@ pub struct Session {
     pub running: bool,
     /// Whether a `_kage/turn` started and has not ended yet.
     pub in_turn: bool,
+    /// Whether the agent is summarizing older turns right now: a
+    /// `_kage/compaction_started` opened and no `_kage/compaction`
+    /// has closed it yet.
+    pub compacting: bool,
     /// The subagents announced on this session, by session id.
     pub agents: BTreeMap<String, Subagent>,
     /// The plan entries the latest `plan` update carried.
@@ -435,10 +443,18 @@ pub enum TranscriptItem {
     Compaction {
         /// Recent turns kept verbatim.
         kept: u64,
-        /// Context fill before the compaction.
-        before: u64,
-        /// Context fill after the compaction.
-        after: u64,
+        /// Context fill before the compaction, when the agent
+        /// reported it.
+        before: Option<u64>,
+        /// Context fill by the first turn after, when that turn's
+        /// usage arrived inside the same run.
+        after: Option<u64>,
+        /// Number of older turns the summary replaced, when the agent
+        /// reported it.
+        summarized: Option<u64>,
+        /// The summary text that replaced the older turns, still
+        /// framed for the model, when the agent reported it.
+        summary: Option<String>,
     },
     /// The agent's plan. Only one plan item stays in the transcript; a
     /// later plan replaces the latest one.

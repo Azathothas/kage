@@ -100,8 +100,9 @@ timeoutlen = 1000
 
 [loop]
 # compact older history once the prompt fills this fraction of the
-# model context window (0.0 to 1.0). Applies to the next session, and
-# the /settings dialog edits it too.
+# model context window (0.0 to 1.0). Compaction also fires early when
+# the remaining room can no longer hold a full reply. Applies to the
+# next session, and the /settings dialog edits it too.
 compaction_threshold = 0.8
 
 [agents]

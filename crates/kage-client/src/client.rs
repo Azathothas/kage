@@ -13,15 +13,15 @@ use std::collections::BTreeMap;
 use serde_json::Value;
 
 use kage_acp_wire::{
-    CancelNotification, ClientCapabilities, CloseSessionRequest, ConfigGetRequest, ContentBlock,
-    FsOp, FsRequest, Implementation, InitializeRequest, KageMeta, ListSessionsRequest,
-    LoadSessionRequest, McpServer, ModelsResponse, NewSessionRequest, OptionSetRequest,
-    OptionsResponse, PROTOCOL_VERSION, PermissionOptionKind, PermissionOutcome, PlanReview,
-    PromptDelivery, PromptRef, PromptRequest, PromptResponse, QuestionMeta, RequestMeta,
-    RequestPermissionRequest, RequestPermissionResult, ResumeSessionRequest, SelectedOption,
-    SessionExportResponse, SessionForkRequest, SessionForkResponse, SessionNotification,
-    SessionRenameRequest, SessionRequest, SessionUpdate, SetSessionConfigOptionRequest,
-    SwarmResumeRequest,
+    CancelNotification, ClientCapabilities, CloseSessionRequest, CompactionPhase, ConfigGetRequest,
+    ContentBlock, FsOp, FsRequest, Implementation, InitializeRequest, KageMeta,
+    ListSessionsRequest, LoadSessionRequest, McpServer, ModelsResponse, NewSessionRequest,
+    OptionSetRequest, OptionsResponse, PROTOCOL_VERSION, PermissionOptionKind, PermissionOutcome,
+    PlanReview, PromptDelivery, PromptRef, PromptRequest, PromptResponse, QuestionMeta,
+    RequestMeta, RequestPermissionRequest, RequestPermissionResult, ResumeSessionRequest,
+    SelectedOption, SessionExportResponse, SessionForkRequest, SessionForkResponse,
+    SessionNotification, SessionRenameRequest, SessionRequest, SessionUpdate,
+    SetSessionConfigOptionRequest, SwarmResumeRequest,
 };
 
 use crate::change::Change;
@@ -1219,6 +1219,7 @@ impl Client {
             session.last_stop = stop;
             if owns_run {
                 session.running = false;
+                session.compacting = false;
             }
         }
         if owns_run {
@@ -1237,7 +1238,9 @@ impl Client {
                 session_id,
                 owns_run: true,
             } => {
-                self.session_mut(&session_id).running = false;
+                let session = self.session_mut(&session_id);
+                session.running = false;
+                session.compacting = false;
                 self.flush_queue(&session_id);
             }
             Pending::SetConfigOption {
@@ -1262,6 +1265,7 @@ impl Client {
                 // connection this load replaced, so it reads idle.
                 session.running = false;
                 session.in_turn = false;
+                session.compacting = false;
                 changes.push(Change::Session { id: session_id });
             }
             _ => {}
@@ -1461,14 +1465,27 @@ fn apply_item(session: &mut Session, update: SessionUpdate) -> bool {
             });
             true
         }
-        SessionUpdate::Compaction(compaction) => {
-            session.items.push(TranscriptItem::Compaction {
-                kept: compaction.kept,
-                before: compaction.before,
-                after: compaction.after,
-            });
-            true
-        }
+        SessionUpdate::Compaction(compaction) => match compaction.phase {
+            CompactionPhase::Started => {
+                session.compacting = true;
+                true
+            }
+            CompactionPhase::Complete => {
+                session.compacting = false;
+                session.items.push(TranscriptItem::Compaction {
+                    kept: compaction.kept.unwrap_or(0),
+                    before: compaction.before,
+                    after: compaction.after,
+                    summarized: compaction.summarized,
+                    summary: compaction.summary,
+                });
+                true
+            }
+            CompactionPhase::Aborted => {
+                session.compacting = false;
+                true
+            }
+        },
         _ => false,
     }
 }
@@ -1658,6 +1675,124 @@ mod tests {
             other => panic!("expected a success answer, got {other:?}"),
         }
         assert_eq!(outgoing[0].to_value()["id"], json!("abc"));
+    }
+
+    #[test]
+    fn a_compaction_started_flags_the_session_until_the_compaction_lands() {
+        let mut client = Client::new();
+        let frame = |update: Value| {
+            Frame::parse(&json!({
+                "jsonrpc": "2.0",
+                "method": "session/update",
+                "params": {"sessionId": "s1", "update": update}
+            }))
+            .unwrap()
+        };
+        client.handle(frame(json!({
+            "sessionUpdate": "_kage/compaction",
+            "phase": "started",
+            "kept": 4,
+            "summarized": 12
+        })));
+        assert!(client.state().session("s1").unwrap().compacting);
+
+        client.handle(frame(json!({
+            "sessionUpdate": "_kage/compaction",
+            "phase": "complete",
+            "kept": 4,
+            "before": 1200,
+            "after": 300,
+            "summarized": 12,
+            "summary": "framed"
+        })));
+        let session = client.state().session("s1").unwrap();
+        assert!(!session.compacting, "the compaction closes the flag");
+        match &session.items[..] {
+            [
+                TranscriptItem::Compaction {
+                    kept,
+                    before,
+                    after,
+                    summarized,
+                    summary,
+                },
+            ] => {
+                assert_eq!(*kept, 4);
+                assert_eq!((*before, *after), (Some(1200), Some(300)));
+                assert_eq!(*summarized, Some(12));
+                assert_eq!(summary.as_deref(), Some("framed"));
+            }
+            other => panic!("expected one compaction item, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_aborted_compaction_closes_the_flag_without_a_card() {
+        let mut client = Client::new();
+        let frame = |update: Value| {
+            Frame::parse(&json!({
+                "jsonrpc": "2.0",
+                "method": "session/update",
+                "params": {"sessionId": "s1", "update": update}
+            }))
+            .unwrap()
+        };
+        client.handle(frame(json!({
+            "sessionUpdate": "_kage/compaction",
+            "phase": "started",
+            "kept": 4,
+            "summarized": 12
+        })));
+        client.handle(frame(json!({
+            "sessionUpdate": "_kage/compaction",
+            "phase": "aborted"
+        })));
+        let session = client.state().session("s1").unwrap();
+        assert!(!session.compacting);
+        assert!(session.items.is_empty(), "an abort leaves no card");
+    }
+
+    #[test]
+    fn a_compaction_without_a_phase_is_the_older_complete_shape() {
+        let mut client = Client::new();
+        client
+            .handle(
+                Frame::parse(&json!({
+                    "jsonrpc": "2.0",
+                    "method": "session/update",
+                    "params": {
+                        "sessionId": "s1",
+                        "update": {
+                            "sessionUpdate": "_kage/compaction",
+                            "kept": 4,
+                            "before": 1200,
+                            "after": 300
+                        }
+                    }
+                }))
+                .unwrap(),
+            )
+            .first()
+            .unwrap();
+        let session = client.state().session("s1").unwrap();
+        assert!(!session.compacting);
+        match &session.items[..] {
+            [
+                TranscriptItem::Compaction {
+                    kept,
+                    before,
+                    after,
+                    summarized,
+                    summary,
+                },
+            ] => {
+                assert_eq!(*kept, 4);
+                assert_eq!((*before, *after), (Some(1200), Some(300)));
+                assert_eq!(*summarized, None);
+                assert_eq!(*summary, None);
+            }
+            other => panic!("expected one compaction item, got {other:?}"),
+        }
     }
 
     #[test]
