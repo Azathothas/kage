@@ -1,9 +1,16 @@
-//! Parsing of the models.dev catalog (`https://models.dev/api.json`).
+//! Parsing of the curated catalog (`catalog.json`).
 //!
 //! Shared by `cargo xtask refresh-models`, which renders the bundled
 //! snapshot, and by `kage models refresh` and the cache loader, which
 //! read the same shape at runtime. Parsing is lenient: a model that
 //! does not parse is skipped rather than failing the whole catalog.
+//!
+//! The catalog keeps models.dev's shape. It is not models.dev's body:
+//! [`CATALOG_URL`] publishes one document built from several upstreams,
+//! because no single one describes every provider kage supports. The
+//! URL itself lives in [`kage_core::catalog_url`], where every crate that
+//! reads the catalog can reach it, and is re-exported here beside the
+//! parser that consumes it.
 
 use std::collections::BTreeMap;
 
@@ -13,20 +20,15 @@ use serde_json::Value;
 
 use super::ModelCost;
 
-/// URL of the upstream catalog.
-pub const MODELS_DEV_URL: &str = "https://models.dev/api.json";
+pub use kage_core::catalog_url::{CATALOG_URL, CATALOG_URL_ENV, LOGOS_PATH, catalog_url, logo_url};
 
-/// A models.dev provider id and the kage provider id it feeds.
+/// A catalog provider key and the kage provider id it feeds.
 #[derive(Clone, Copy, Debug)]
 pub struct ProviderMap {
-    /// Provider key in the models.dev catalog.
+    /// Provider key in the catalog.
     pub api_id: &'static str,
     /// kage provider id (the `provider` in `provider/model`).
     pub kage_id: &'static str,
-    /// Rows come only from `xtask/fixtures/manual.json`. [`prune`]
-    /// drops the provider, so a models.dev entry under the same id
-    /// never reaches the snapshot or the runtime cache.
-    pub manual: bool,
 }
 
 impl ProviderMap {
@@ -34,32 +36,19 @@ impl ProviderMap {
         Self {
             api_id: id,
             kage_id: id,
-            manual: false,
-        }
-    }
-
-    const fn manual(id: &'static str) -> Self {
-        Self {
-            api_id: id,
-            kage_id: id,
-            manual: true,
         }
     }
 }
 
-/// Provider ids kage carries `Provider` impls for. The catalog is
-/// pruned to just these; adding a provider impl means appending its id
-/// here and re-running `cargo xtask refresh-models`.
+/// Provider ids kage carries `Provider` impls for. kage reads only
+/// these from the catalog; adding a provider impl means appending its
+/// id here and re-running `cargo xtask refresh-models`.
 pub const SUPPORTED_PROVIDERS: &[ProviderMap] = &[
     ProviderMap::same("anthropic"),
     ProviderMap::same("openai"),
-    // The Responses API hits the same upstream provider; re-emit the
-    // OpenAI model list under a second kage id so the model picker
-    // offers `openai-responses:` rows alongside `openai:`.
     ProviderMap {
         api_id: "openai",
         kage_id: "openai-responses",
-        manual: false,
     },
     ProviderMap::same("zai"),
     ProviderMap::same("zai-coding-plan"),
@@ -72,31 +61,18 @@ pub const SUPPORTED_PROVIDERS: &[ProviderMap] = &[
     ProviderMap::same("openrouter"),
     ProviderMap::same("fireworks-ai"),
     ProviderMap::same("moonshotai"),
-    // models.dev renamed the `kimi-for-coding` key to regional
-    // `kimi-code-plan-*` providers; the cn flavor serves the endpoint
-    // kage's compat entry declares.
     ProviderMap {
         api_id: "kimi-code-plan-cn",
         kage_id: "kimi-for-coding",
-        manual: false,
     },
     ProviderMap::same("xiaomi"),
     ProviderMap::same("xiaomi-token-plan-ams"),
     ProviderMap::same("xiaomi-token-plan-cn"),
     ProviderMap::same("xiaomi-token-plan-sgp"),
-    // Command Code (commandcode.ai) is absent from models.dev; its
-    // snapshot rows come from the hand-maintained
-    // `xtask/fixtures/manual.json` the generator merges in. Claude
-    // models are served on the Anthropic Messages endpoint only, so
-    // they list under their own kage id.
-    ProviderMap::manual("commandcode"),
-    ProviderMap::manual("commandcode-claude"),
-    // models.dev lists Kenari's pay-as-you-go catalog. kage lists only
-    // the models its subscription plans cover, rebuilt into the manual
-    // fixture from Kenari's own endpoints, with Claude models under
-    // their own Messages-format kage id.
-    ProviderMap::manual("kenari"),
-    ProviderMap::manual("kenari-claude"),
+    ProviderMap::same("commandcode"),
+    ProviderMap::same("commandcode-claude"),
+    ProviderMap::same("kenari"),
+    ProviderMap::same("kenari-claude"),
     ProviderMap::same("opencode-go"),
     ProviderMap::same("google"),
 ];
@@ -132,7 +108,7 @@ pub struct SourceModel {
     /// Inputs the model accepts.
     pub input: Inputs,
     /// Field an OpenAI-compatible model reads its reasoning back from
-    /// during a tool loop. `None` for models.dev `interleaved: true`,
+    /// during a tool loop. `None` for a bare `interleaved: true`,
     /// which names no field.
     pub interleaved: Option<ReasoningField>,
     /// Release date (`YYYY-MM-DD`).
@@ -202,7 +178,7 @@ struct ApiCost {
     cache_write: Option<f64>,
 }
 
-/// Parse a models.dev catalog into kage's supported providers, in
+/// Parse the curated catalog into kage's supported providers, in
 /// [`SUPPORTED_PROVIDERS`] order. Providers the catalog lacks are left
 /// out, and so are models that fail to parse or lack tool calling.
 ///
@@ -222,8 +198,7 @@ pub fn parse(json: &str) -> Result<Vec<SourceProvider>, String> {
 }
 
 /// `json` cut down to the supported providers and their tool-calling
-/// models, still in the models.dev shape, for the model cache. Manual
-/// providers are dropped even when models.dev lists them.
+/// models, still in the catalog shape.
 ///
 /// # Errors
 ///
@@ -232,13 +207,16 @@ pub fn prune(json: &str) -> Result<String, String> {
     let mut root: BTreeMap<String, Value> =
         serde_json::from_str(json).map_err(|e| format!("parse catalog: {e}"))?;
     let mut kept = serde_json::Map::new();
-    for map in SUPPORTED_PROVIDERS.iter().filter(|map| !map.manual) {
+    for map in SUPPORTED_PROVIDERS {
         let Some(mut provider) = root.remove(map.api_id) else {
             continue;
         };
         if let Some(models) = provider.get_mut("models").and_then(Value::as_object_mut) {
             models.retain(|_, m| m.get("tool_call").and_then(Value::as_bool) == Some(true));
         }
+        // Several kage ids can share one catalog key (`openai` feeds
+        // both `openai` and `openai-responses`), so the key is kept
+        // once and `parse` reads it once per kage id.
         kept.insert(map.api_id.to_owned(), provider);
     }
     if kept.is_empty() {
@@ -458,12 +436,47 @@ mod tests {
         assert!(prune("not json").is_err());
     }
 
+    /// [`SAMPLE`] with `providers` merged in, so a test can add a
+    /// provider without hand-splicing braces into the literal.
+    fn with_providers(providers: &[(&str, &str)]) -> String {
+        let mut root: Value = serde_json::from_str(SAMPLE).expect("SAMPLE parses");
+        for (id, body) in providers {
+            root[id] = serde_json::from_str(body).expect("provider body parses");
+        }
+        serde_json::to_string(&root).expect("renders")
+    }
+
+    /// The providers models.dev lacks are curated by kage-models into
+    /// the published catalog, so prune must keep them.
     #[test]
-    fn prune_drops_manual_providers() {
-        let with_kenari =
-            SAMPLE.replacen('{', r#"{"kenari": {"name": "Kenari", "models": {}},"#, 1);
-        let value: Value = serde_json::from_str(&prune(&with_kenari).unwrap()).unwrap();
-        assert!(value.get("kenari").is_none());
-        assert!(value.get("anthropic").is_some());
+    fn prune_keeps_the_curated_providers_models_dev_lacks() {
+        let body = with_providers(&[
+            (
+                "kenari",
+                r#"{"name": "Kenari", "models": {"k": {"id": "k", "tool_call": true}}}"#,
+            ),
+            (
+                "commandcode",
+                r#"{"name": "Command Code", "models": {"c": {"id": "c", "tool_call": true}}}"#,
+            ),
+        ]);
+        let value: Value = serde_json::from_str(&prune(&body).unwrap()).unwrap();
+        assert_eq!(value["kenari"]["models"]["k"]["id"], "k");
+        assert_eq!(value["commandcode"]["models"]["c"]["id"], "c");
+        assert!(value.get("unrelated").is_none(), "still prunes");
+    }
+
+    /// `prune` keeps a shared catalog key once, and `parse` still
+    /// serves it to both kage ids that read it.
+    #[test]
+    fn prune_serves_both_kage_ids_that_share_one_key() {
+        let body = with_providers(&[(
+            "openai",
+            r#"{"name": "OpenAI", "models": {"g": {"id": "g", "tool_call": true}}}"#,
+        )]);
+        let providers = parse(&prune(&body).unwrap()).unwrap();
+        let ids: Vec<&str> = providers.iter().map(|p| p.id.as_str()).collect();
+        assert!(ids.contains(&"openai"), "{ids:?}");
+        assert!(ids.contains(&"openai-responses"), "{ids:?}");
     }
 }

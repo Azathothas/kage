@@ -30,7 +30,7 @@ use super::*;
 use crate::engine::SessionSpec;
 use crate::permissions::PermissionGate;
 use crate::rpc::host::Host;
-use crate::serve::assets::CONTENT_SECURITY_POLICY;
+use crate::serve::assets::content_security_policy;
 
 /// Every wait in these tests is bounded by this.
 const WAIT: Duration = Duration::from_secs(10);
@@ -728,7 +728,8 @@ fn web_bundle() -> WebBundle {
 fn assert_security_headers(reply: &str) {
     assert!(
         reply.contains(&format!(
-            "Content-Security-Policy: {CONTENT_SECURITY_POLICY}\r\n"
+            "Content-Security-Policy: {}\r\n",
+            content_security_policy()
         )),
         "CSP missing: {reply}"
     );

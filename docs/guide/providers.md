@@ -77,8 +77,9 @@ for each:
 Both read the same key: `ZAI_CODING_API_KEY`, or the key saved with
 `kage auth login zai-coding-plan`. A key saved with
 `kage auth login zhipuai-coding-plan` is used for the China plan
-instead, when there is one. Each plan lists the models models.dev
-publishes for it. `zai` is the pay-as-you-go API with its own key.
+instead, when there is one. Each plan lists the models the
+[curated catalog](#model-catalog) publishes for it. `zai` is the
+pay-as-you-go API with its own key.
 
 If only one endpoint is reachable from your network, point the other
 plan at it with a `base_url` override (see below), for example:
@@ -116,11 +117,11 @@ else lists under `commandcode`. Models are addressed as
 
 Command Code is subscription-based, so its models carry no per-token
 pricing: the footer and the agents overlay show no dollar amount for
-them. The model list ships with kage and is checked at every catalog
-refresh against Command Code's published model list (ids, names,
-context windows, wire placement) and the official `command-code` CLI
-catalog (thinking levels), so new, retired or changed models surface
-at build time.
+them. The model list is rebuilt on a schedule from Command Code's
+published model list (which models exist, their names, context
+windows and wire placement) and the official `command-code` CLI
+catalog (thinking levels), so new and retired models reach a catalog
+refresh without anything being changed by hand.
 
 Command Code retains request data by default, though most models
 already route through zero-retention upstreams without asking. To
@@ -159,7 +160,7 @@ The bundled list carries only the models Kenari's
 [subscription plans](https://kenari.id/en/docs/subscriptions) cover,
 with no per-token pricing. Which of them your plan includes depends on
 the tier. Other Kenari models still work when named directly, and are
-billed to your balance. Every catalog refresh rebuilds the list from
+billed to your balance. The list is rebuilt on a schedule from
 Kenari's plans and published model list, taking names and release
 dates from models.dev where it lists the model.
 
@@ -318,11 +319,18 @@ unchanged, and no level while thinking is automatic.
 
 ## model catalog
 
-kage ships a snapshot of the [models.dev](https://models.dev) catalog
-for its providers: model names, context and output limits, pricing,
-accepted inputs and thinking options. The model picker shows each
-model's inputs on the right. Attaching an image while the model's
-inputs leave out `image` warns, and the image is not sent.
+kage ships a snapshot of a curated catalog for its providers: model
+names, context and output limits, pricing, accepted inputs and thinking
+options. The model picker shows each model's inputs on the right.
+Attaching an image while the model's inputs leave out `image` warns,
+and the image is not sent.
+
+That catalog is built by [kage-models](https://github.com/QaidVoid/kage-models),
+which merges [models.dev](https://models.dev) with the model lists and
+subscription plans the other providers publish. models.dev alone
+cannot describe Command Code, and its Kenari entry lists the wider
+pay-as-you-go catalog rather than what the plans cover. kage reads the
+merged document and never contacts those upstreams itself.
 
 `kage models refresh` downloads the current catalog into
 `~/.cache/kage/models.json` (`$XDG_CACHE_HOME/kage`). Later runs lay
@@ -331,6 +339,12 @@ updates their metadata. It never adds a provider or changes a
 provider's endpoint or credentials. kage never refreshes on its own,
 and a missing or unreadable cache falls back to the snapshot silently.
 Delete the file to go back to the snapshot.
+
+Because the catalog is curated upstream, a refresh can bring Command
+Code and Kenari model changes too, not only the models.dev ones. Pass
+`--source` to read a catalog from somewhere else, such as a local file
+for an offline run, or set `KAGE_CATALOG_URL` to change it for every
+run.
 
 ## thinking
 

@@ -50,6 +50,9 @@ egui_virtual_list = "0.12"
 # `default-fancy` flavor keeps the fancy regex engine.
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
 kage-client = { path = "../crates/kage-client" }
+# The catalog's origin, so a provider's logo is read from the same place
+# the catalog is rather than from a URL repeated here.
+kage-core = { path = "../crates/kage-core" }
 async-channel = "2.5"
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
@@ -83,8 +86,7 @@ fontique = { version = "0.9", default-features = false, features = [
 # Plain WebSocket client, no TLS: kage serves loopback ws:// only.
 tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 # Decodes the embedded brand art for the window icon, and the favicons
-# that stand in for provider logos models.dev lacks. Native only: the
-# browser takes the favicon from the served bundle.
+# that stand in for provider logos kage-models lacks. Native only.
 image = { version = "0.25", default-features = false, features = ["png", "ico"] }
 
 # Fetches the release list and the engine binary for the update
@@ -125,6 +127,10 @@ web-sys = { version = "=0.3.106", features = [
     "Location",
     "MessageEvent",
     "Node",
+    "Request",
+    "RequestInit",
+    "RequestMode",
+    "Response",
     "Storage",
     "WebSocket",
     "Window",

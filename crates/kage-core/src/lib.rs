@@ -5,6 +5,7 @@
 pub mod agent_report;
 pub mod agents;
 pub mod cancel;
+pub mod catalog_url;
 pub mod config;
 pub mod config_edit;
 pub mod error;
@@ -31,6 +32,9 @@ pub mod trust;
 
 pub use agents::{AgentDef, AgentDefs, AgentError, AgentSource, load_agent_file, load_agents_dir};
 pub use cancel::{CancelFlag, CancelWatch};
+pub use catalog_url::{
+    CATALOG_URL, CATALOG_URL_ENV, LOGOS_PATH, catalog_origin, catalog_url, logo_url,
+};
 pub use config::{
     AgentsConfig, Config, KeybindingsConfig, PluginsConfig, ProviderConfig, UiConfig,
 };
