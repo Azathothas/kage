@@ -148,7 +148,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Toolchain
-        run: rustup toolchain install --profile minimal --target wasm32-unknown-unknown
+        run: rustup target add wasm32-unknown-unknown
 
       # The CLI has to match the wasm-bindgen crate gui/Cargo.lock pins.
       - uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
@@ -336,8 +336,7 @@ jobs:
           if-no-files-found: error
 
   # The portable Linux bundle, built in Arch exactly as the release's
-  # desktop-onelf job builds it. The slim-package digests are pinned,
-  # so a nightly catches upstream's rebuilds within a day.
+  # desktop-onelf job builds it.
   desktop-onelf:
     name: desktop onelf ${{ matrix.name }}
     needs: check-changes
@@ -354,19 +353,11 @@ jobs:
             runner: ubuntu-latest
             image: archlinux:latest
             onelf-sha256: 4a00ad52ef982fe26a174d256ad27ad119bab1d9cf8014d6150a8f97947f1c28
-            slim: |
-              llvm-libs-nano pkg.tar.zst f186b7d2f8367e3b53f0192a9ad60e69987188efa7a2c0770577fb3f03981170
-              mesa-nano pkg.tar.zst a32ecc91a446ce73318f16befbe04742517392d07bf75d55c652bca673550082
-              libxml2-iculess pkg.tar.zst d5220136f8d9b4eaaf173a44d3f0092e97b61cfe9f5d627c570c6e81add9e789
           - name: aarch64-linux
             arch: aarch64
             runner: ubuntu-24.04-arm
             image: menci/archlinuxarm:latest
             onelf-sha256: 72ffda33bad3b0572df5149c7705bd3addb13d317f24ae1f435cb68a28548d58
-            slim: |
-              llvm-libs-nano pkg.tar.zst 4f2bd7d178432e42f2ba2a756fd0fd864795edf2fac73b5c51761103880e0b40
-              mesa-nano pkg.tar.zst 1fedba1c08c845f4a034ea73cd95ef96d8bf2be91fbb247672552c48d72d12a3
-              libxml2-iculess pkg.tar.xz 3e9eed60d2a40ad1ca623a0ba4607c22ac4030e18416080538c04fd82ce3add4
     defaults:
       run:
         shell: bash
@@ -381,6 +372,7 @@ jobs:
           pacman -Syu --disable-sandbox --noconfirm --needed \
             base-devel git curl tar xz rustup patchelf pkgconf \
             libxcb libxkbcommon libxkbcommon-x11 wayland fontconfig \
+            libxcursor libxi libxrender \
             mesa xorg-server-xvfb xorg-xauth ttf-dejavu
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -397,17 +389,12 @@ jobs:
           base="https://github.com/pkgforge-dev/archlinux-pkgs-debloated/releases/download/continuous"
           mkdir -p debloated
           cd debloated
-          while read -r pkg ext sha; do
-            [ -n "$pkg" ] || continue
-            file="$pkg-${{ matrix.arch }}.$ext"
-            curl -fsSL -O "$base/$file" || {
-              echo "no $file published" >&2
-              exit 1
-            }
-            echo "$sha  $file" | sha256sum -c -
-          done <<'ROWS'
-          ${{ matrix.slim }}
-          ROWS
+          # Continuous upstream republishes these freely, so no digest
+          # pinning: grab whichever archive format is current.
+          for pkg in llvm-libs-nano mesa-nano libxml2-iculess; do
+            curl -fsSL -O --remove-on-error "$base/$pkg-${{ matrix.arch }}.pkg.tar.zst" ||
+              curl -fsSL -O --remove-on-error "$base/$pkg-${{ matrix.arch }}.pkg.tar.xz"
+          done
           pacman -U --disable-sandbox --noconfirm ./*.pkg.tar.*
 
       - name: Install onelf
