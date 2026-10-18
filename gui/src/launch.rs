@@ -282,8 +282,6 @@ pub struct Shell {
     palette: crate::ui::palette::Palette,
     /// The boot splash.
     splash: crate::ui::splash::Splash,
-    /// When the eclipse started orbiting, for the working indicator.
-    orbit: Option<web_time::Instant>,
     /// The transcript in the chat column.
     transcript: crate::ui::transcript::view::TranscriptView,
     /// The find bar over the chat column.
@@ -360,7 +358,6 @@ impl Shell {
             toasts: crate::ui::toasts::Toasts::default(),
             palette: crate::ui::palette::Palette::default(),
             splash: crate::ui::splash::Splash::Showing,
-            orbit: None,
             transcript: crate::ui::transcript::view::TranscriptView::new(),
             find: crate::ui::find::FindBar::new(),
             composer: crate::ui::composer::Composer::new(),
@@ -950,7 +947,6 @@ impl ShellApp {
         let mut palette = self.shell.palette.clone();
         let mut toasts = std::mem::take(&mut self.shell.toasts);
         let splash = self.shell.splash;
-        let orbit = self.shell.orbit;
 
         banner.show(ui, &gate);
 
@@ -1224,7 +1220,7 @@ impl ShellApp {
             self.carry_settings(events, ui.ctx());
         }
         toasts.show(ui);
-        splash.show(ui, orbit);
+        splash.show(ui);
         let _ = context;
 
         self.shell.gate_banner = banner;

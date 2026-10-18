@@ -105,11 +105,12 @@ pub(super) const ALIASES: &[Alias] = &[
         name: "kage.Component",
         doc: &[
             "A built-in slot component, painted by the host every frame.",
-            "`sessions` and `notices` paint only in `start`. `breadcrumb`",
-            "paints the agent on screen and nothing in the main view, where",
-            "`title` paints instead.",
+            "`mark`, `sessions` and `notices` paint only in `start`.",
+            "`breadcrumb` paints the agent on screen and nothing in the main",
+            "view, where `title` paints instead.",
         ],
         variants: &[
+            "mark",
             "brand",
             "breadcrumb",
             "title",

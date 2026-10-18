@@ -526,7 +526,7 @@ kage.ui.set_slot("footer", {
 local blank = { text = "" }
 kage.ui.set_slot("start", {
   lines = {
-    "brand", blank,
+    "mark", "brand", blank,
     "model", "cwd", "permission", "thinking", blank,
     "sessions", "notices",
     { text = "Tip: " .. tips[math.random(#tips)], hl = "KageMuted" },
@@ -549,6 +549,7 @@ An item is one of:
 
 | Component | Shows |
 | --- | --- |
+| `mark` | `start` only: the kage cat, drawn in half blocks seven rows tall |
 | `brand` | `kage` |
 | `breadcrumb` | in an agent view, the path to the agent and its task, then its state, time, tokens and tool count, such as `kage > explore: map exports` and `running`, `41s`, `22k tok`, `14 tools`. Nothing in the main view. |
 | `title` | the session title, once there is one. Nothing while an agent is on screen. |
@@ -578,12 +579,13 @@ Keys named in hints follow your mappings. Remapping
 remapping `QueuePrompt` changes the footer's `tab to queue`, and
 remapping `OpenAgents` changes `ctrl+t for agents`.
 
-In `start`, some components paint differently. `brand` adds the
+In `start`, some components paint differently. `mark` is the first
+line to go when the card runs out of rows. `brand` adds the
 version. `model`, `cwd`, `permission` and `thinking` become labeled
 rows (`model`, `directory`, `permissions`, `thinking`) with a change
 hint against the right edge. `permission` there summarizes the
-configured rules when no override is active. `sessions` and `notices`
-paint nothing in a row slot.
+configured rules when no override is active. `mark`, `sessions` and
+`notices` paint nothing in a row slot.
 
 An unknown component name raises.
 

@@ -158,23 +158,9 @@ a:hover {
   color: var(--accent);
 }
 
-.kage-header__prompt {
-  color: var(--accent);
-}
-
-.kage-header__caret {
-  display: inline-block;
-  width: 7px;
-  height: 14px;
-  background: var(--accent);
-  animation: blink 1.1s steps(2, start) infinite;
-  margin-left: 2px;
-}
-
-@keyframes blink {
-  to {
-    visibility: hidden;
-  }
+.kage-header__mark {
+  width: 24px;
+  height: 23px;
 }
 
 .kage-header__nav {
@@ -415,14 +401,6 @@ a:hover {
 
 .kage-hero__cmd {
   color: var(--fg-0);
-}
-
-.kage-hero__caret {
-  width: 8px;
-  height: 16px;
-  background: var(--accent);
-  display: inline-block;
-  animation: blink 1.1s steps(2, start) infinite;
 }
 
 .kage-hero__output {

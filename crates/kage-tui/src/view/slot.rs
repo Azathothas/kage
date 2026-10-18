@@ -218,6 +218,7 @@ const START_NOTICES_KEPT: usize = 2;
 /// order. `Always` lines stay.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Keep {
+    Mark,
     Tip,
     Sessions,
     ExtraNotices,
@@ -226,8 +227,8 @@ enum Keep {
 
 /// Paint the start slot bottom-aligned in `area`, the rows between the
 /// last notice block and the input. Span lines, such as the tip, wrap
-/// at the card width. Lines drop when it does not fit: the tip first,
-/// then the sessions, then notices past the first two.
+/// at the card width. Lines drop when it does not fit: the mark first,
+/// then the tip, then the sessions, then notices past the first two.
 pub(super) fn render_start(frame: &mut Frame, area: Rect, src: &Sources<'_>) {
     let spec = src.status.slots.get(SlotName::Start);
     if spec.lines.is_empty() || area.height == 0 || area.width == 0 {
@@ -241,7 +242,7 @@ pub(super) fn render_start(frame: &mut Frame, area: Rect, src: &Sources<'_>) {
         }
     };
     trim(&mut lines);
-    for drop in [Keep::Tip, Keep::Sessions, Keep::ExtraNotices] {
+    for drop in [Keep::Mark, Keep::Tip, Keep::Sessions, Keep::ExtraNotices] {
         if lines.len() <= height {
             break;
         }
@@ -278,6 +279,12 @@ fn start_lines(spec: &SlotSpec, src: &Sources<'_>, width: usize) -> Vec<(Keep, L
                     Span::styled(format!(" {}", env!("CARGO_PKG_VERSION")), styles.base),
                 ]),
             )),
+            SlotItem::Builtin("mark") => {
+                if width >= START_INDENT + super::mark::WIDTH {
+                    let mark = super::mark::lines(&theme, START_INDENT);
+                    out.extend(mark.into_iter().map(|line| (Keep::Mark, line)));
+                }
+            }
             SlotItem::Builtin(name @ ("model" | "cwd" | "permission" | "thinking")) => {
                 let (label, text, hint) = labeled(name, src);
                 out.push((
@@ -994,7 +1001,7 @@ mod tests {
         let styles = Styles::uniform(Style::default());
         let row_components = kage_plugin::slots::BUILTIN_COMPONENTS
             .iter()
-            .filter(|name| !matches!(**name, "sessions" | "notices"));
+            .filter(|name| !matches!(**name, "mark" | "sessions" | "notices"));
         for name in row_components {
             let mut out = Vec::new();
             let src = if *name == "breadcrumb" {

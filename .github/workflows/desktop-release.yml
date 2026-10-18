@@ -240,18 +240,16 @@ jobs:
           </dict>
           </plist>
           EOF
-            # The icns comes from the brand raster; the 608 px source
-            # covers every standard slot except the 1024 px @2x leg.
+            # The icns comes from the 1024 px app icon, which covers
+            # every standard slot.
             iconset="$RUNNER_TEMP/kage.iconset"
             mkdir -p "$iconset"
             for slot in 16 32 128 256 512; do
-              sips -z "$slot" "$slot" assets/brand/kage-glyph-shadow.png \
+              sips -z "$slot" "$slot" assets/brand/kage-icon.png \
                 --out "$iconset/icon_${slot}x${slot}.png" >/dev/null
               px=$((slot * 2))
-              if [ "$px" -le 608 ]; then
-                sips -z "$px" "$px" assets/brand/kage-glyph-shadow.png \
-                  --out "$iconset/icon_${slot}x${slot}@2x.png" >/dev/null
-              fi
+              sips -z "$px" "$px" assets/brand/kage-icon.png \
+                --out "$iconset/icon_${slot}x${slot}@2x.png" >/dev/null
             done
             iconutil -c icns "$iconset" -o "$app/Contents/Resources/kage.icns"
           else
@@ -400,10 +398,10 @@ jobs:
           mkdir -p AppDir/bin AppDir/.onelf/icons AppDir/.onelf/desktop \
             AppDir/share/icons ../dist
           cp target/release/kage-desktop AppDir/bin/kage-desktop
-          # Shadow stays the default icon and dawn rides under the
-          # entrypoint name; the hicolor ladder serves theme lookups.
-          cp assets/brand/kage-glyph-shadow.png AppDir/.onelf/icons/default.png
-          cp assets/brand/kage-glyph-dawn.png AppDir/.onelf/icons/kage-desktop.png
+          # The app icon serves as the default and under the entrypoint
+          # name; the hicolor ladder serves theme lookups.
+          cp assets/icons/hicolor/512x512/apps/kage.png AppDir/.onelf/icons/default.png
+          cp assets/icons/hicolor/512x512/apps/kage.png AppDir/.onelf/icons/kage-desktop.png
           cp -R assets/icons/hicolor AppDir/share/icons/hicolor
           printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=kage' \
             'Comment=Desktop client for the kage coding agent' \

@@ -237,7 +237,7 @@ line keeps the top row. An item is a built-in component name (`brand`,
 `breadcrumb`, `title`, `model`, `widgets`, `search`, `session`, `working`,
 `activity`, `context`, `tokens`, `thinking`, `permission`, `plan`, `swarm`,
 `agents`, `tasks`, `mode`,
-`hint`, `cwd`, `version`, and in `start` also `sessions` and
+`hint`, `cwd`, `version`, and in `start` also `mark`, `sessions` and
 `notices`), a span table, or a Lua component
 `{ render = fn(ctx), events?, interval?, hl? }` whose output kage
 keeps and recomputes only when a listed event fires, the interval

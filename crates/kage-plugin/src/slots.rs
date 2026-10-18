@@ -101,10 +101,12 @@ impl SlotName {
     }
 }
 
-/// Names of the built-in components the host implements. `sessions`
-/// and `notices` paint only in `start`. `breadcrumb` paints the agent on
-/// screen and nothing in the main view, where `title` paints instead.
+/// Names of the built-in components the host implements. `mark`,
+/// `sessions` and `notices` paint only in `start`. `breadcrumb` paints
+/// the agent on screen and nothing in the main view, where `title`
+/// paints instead.
 pub const BUILTIN_COMPONENTS: &[&str] = &[
+    "mark",
     "brand",
     "breadcrumb",
     "title",
@@ -246,8 +248,9 @@ static DEFAULT_SPECS: LazyLock<[Arc<SlotSpec>; SLOTS]> = LazyLock::new(|| {
     ]
 });
 
-/// The default start card: brand, the labeled rows, recent sessions,
-/// notices and a tip, with blank lines between the groups.
+/// The default start card: the mark over the brand, the labeled rows,
+/// recent sessions, notices and a tip, with blank lines between the
+/// groups.
 fn start_lines() -> Vec<SlotItem> {
     let text = |text: &str, hl: Option<&str>| {
         SlotItem::Text(ChromeSpan {
@@ -258,6 +261,7 @@ fn start_lines() -> Vec<SlotItem> {
     };
     let blank = || text("", None);
     vec![
+        SlotItem::Builtin("mark"),
         SlotItem::Builtin("brand"),
         blank(),
         SlotItem::Builtin("model"),

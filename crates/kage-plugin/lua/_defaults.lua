@@ -29,7 +29,7 @@ local tips = {
 local blank = { text = "" }
 kage.ui.set_slot("start", {
   lines = {
-    "brand", blank,
+    "mark", "brand", blank,
     "model", "cwd", "permission", "thinking", blank,
     "sessions", "notices",
     { text = "Tip: " .. tips[math.random(#tips)], hl = "KageMuted" },

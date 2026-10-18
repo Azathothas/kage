@@ -8,11 +8,8 @@
 //! carries the text and the one option the card holds for the session
 //! the send opens, which [`Store::open_with_prompt`] then rides.
 
-use crate::assets::GLYPH;
 #[cfg(not(target_arch = "wasm32"))]
-use crate::assets::{
-    GLYPH_FACE_DAWN_PNG, GLYPH_FACE_SHADOW_PNG, WELCOME_GLOW_DAWN_PNG, WELCOME_GLOW_PNG,
-};
+use crate::assets::{WELCOME_GLOW_DAWN_PNG, WELCOME_GLOW_PNG};
 use crate::icons::Icon;
 use crate::icons::PaintSnapped as _;
 use crate::store::Store;
@@ -21,14 +18,13 @@ use crate::theme::{
     Palette, R_FULL, R_LG, R_MD, WELCOME_PAD_BOTTOM_SHARE, WELCOME_PAD_TOP, WELCOME_W, family,
 };
 
-/// The wordmark glyph's size, as the design draws it.
-const GLYPH_PX: f32 = 76.0;
-/// The wordmark's hard offset shadow, glyph and name alike.
-const SHADOW_OFFSET: f32 = 6.0;
+/// The mark's height, as the design draws it.
+const MARK_H: f32 = 76.0;
+/// The name's hard offset shadow.
 const NAME_OFFSET: f32 = 4.2;
 /// The wordmark's size, as the design draws it.
 const NAME_PX: f32 = 60.0;
-/// The gap between the glyph and the name.
+/// The gap between the mark and the name.
 const WORDMARK_GAP: f32 = 16.0;
 /// How far below the wordmark the rest of the stack sits.
 const WORDMARK_MB: f32 = 30.0;
@@ -188,7 +184,7 @@ impl Welcome {
         // counting them would feed the offset back into itself and
         // settle the stack high of center.
         let content_top = stack.cursor().top();
-        wordmark(&mut stack, palette, dark);
+        wordmark(&mut stack, palette);
         stack.add_space(WORDMARK_MB);
         let pill = self.project_pill(&mut stack, store, palette);
         stack.add_space(PILL_TO_COMPOSER);
@@ -428,63 +424,24 @@ fn glow(ui: &mut egui::Ui, pane: egui::Rect, dark: bool) {
     }
 }
 
-/// The wordmark: the kanji glyph over its hard offset shadow, then the
-/// name over its own, centered in the column.
-#[cfg_attr(target_arch = "wasm32", allow(unused_variables))] // `dark` picks the face PNG
-fn wordmark(ui: &mut egui::Ui, palette: &Palette, dark: bool) {
+/// The wordmark: the nekomata mark, then the name over its hard
+/// offset shadow, centered in the column.
+fn wordmark(ui: &mut egui::Ui, palette: &Palette) {
     let font = egui::FontId::new(NAME_PX, family(FAMILY_BODY_EXTRABOLD));
     let name = ui
         .painter()
         .layout_no_wrap("kage".to_owned(), font.clone(), palette.ink_strong);
-    let total = GLYPH_PX + WORDMARK_GAP + name.size().x.ceil();
+    let mark_size = crate::ui::mark::size(MARK_H);
+    let total = mark_size.x + WORDMARK_GAP + name.size().x.ceil();
     let (rect, _) = ui.allocate_exact_size(
-        egui::vec2(ui.available_width(), GLYPH_PX),
+        egui::vec2(ui.available_width(), MARK_H),
         egui::Sense::hover(),
     );
     let left = crate::theme::snap(rect.left() + (rect.width() - total) / 2.0);
-    let glyph =
-        egui::Rect::from_min_size(egui::pos2(left, rect.top()), egui::vec2(GLYPH_PX, GLYPH_PX));
-    // The toolkit's SVG paints the path one flat color, and the file
-    // carries none, so the shadow's fill rides in a patched copy: the
-    // reference wordmark tints the same outline `accent_soft`. The uri keys
-    // the loader's cache per color, so a theme swap re-decodes, and ends
-    // in `.svg` so the SVG loader takes it.
-    let [r, g, b, a] = palette.accent_soft.to_srgba_unmultiplied();
-    let fill = format!("#{r:02x}{g:02x}{b:02x}");
-    let opacity = f32::from(a) / 255.0;
-    let shadow_uri = format!("bytes://kage-glyph-shadow-{r:02x}{g:02x}{b:02x}{a:02x}.svg");
-    let patched = str::replace(
-        str::from_utf8(GLYPH).unwrap_or(""),
-        "<path ",
-        &format!("<path fill=\"{fill}\" fill-opacity=\"{opacity}\" "),
-    );
-    egui::Image::new(egui::ImageSource::Bytes {
-        uri: shadow_uri.into(),
-        bytes: patched.into_bytes().into(),
-    })
-    .fit_to_exact_size(egui::vec2(GLYPH_PX, GLYPH_PX))
-    .paint_snapped(
-        ui,
-        glyph.translate(egui::vec2(SHADOW_OFFSET, SHADOW_OFFSET)),
-    );
-    // The painted face is raster art; the browser keeps the tinted
-    // outline alone.
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let face = png_texture(
-            ui.ctx(),
-            egui::Id::new("welcome-glyph-face").with(dark),
-            "welcome-glyph-face",
-            if dark {
-                GLYPH_FACE_SHADOW_PNG
-            } else {
-                GLYPH_FACE_DAWN_PNG
-            },
-        );
-        egui::Image::new((face.id(), egui::vec2(GLYPH_PX, GLYPH_PX))).paint_snapped(ui, glyph);
-    }
-    let name_top = glyph.center().y - name.size().y / 2.0;
-    let name_left = glyph.right() + WORDMARK_GAP;
+    let mark = egui::Rect::from_min_size(egui::pos2(left, rect.top()), mark_size);
+    crate::ui::mark::paint(ui, mark);
+    let name_top = mark.center().y - name.size().y / 2.0;
+    let name_left = mark.right() + WORDMARK_GAP;
     let painter = ui.painter();
     painter.text(
         egui::pos2(name_left + NAME_OFFSET, name_top + NAME_OFFSET),

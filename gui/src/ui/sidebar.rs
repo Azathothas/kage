@@ -113,7 +113,7 @@ pub enum RowState {
     Answer,
     /// A plan waits for review; the row badges Review.
     Review,
-    /// A turn is in flight; the row leads with the orbiting eclipse.
+    /// A turn is in flight; the row leads with the working cat.
     Running,
     /// The last turn stopped in a refusal; the row badges Failed.
     Failed,
@@ -478,7 +478,7 @@ pub fn show_rows(
     events
 }
 
-/// The brand row: the eclipse mark, the wordmark, the engine version
+/// The brand row: the nekomata mark, the wordmark, the engine version
 /// and the collapse control.
 fn brand_row(ui: &mut egui::Ui, version: Option<&str>, events: &mut Vec<SidebarEvent>) {
     let palette = Palette::active_of(ui.ctx());
@@ -486,16 +486,14 @@ fn brand_row(ui: &mut egui::Ui, version: Option<&str>, events: &mut Vec<SidebarE
         egui::vec2(ui.available_width(), BRAND_H),
         egui::Sense::hover(),
     );
-    let radius = 11.0;
-    let center = egui::pos2(rect.left() + 6.0 + radius, rect.center().y);
-    eclipse_mark(
-        ui,
-        egui::Rect::from_center_size(center, egui::vec2(2.0 * radius, 2.0 * radius)),
-        palette,
+    let mark = egui::Rect::from_min_size(
+        egui::pos2(rect.left() + 6.0, rect.center().y - 11.0),
+        crate::ui::mark::size(22.0),
     );
+    crate::ui::mark::paint(ui, mark);
     let wordmark = line_at(
         ui,
-        center.x + radius + 9.0,
+        mark.right() + 9.0,
         rect.center().y,
         "kage",
         egui::FontId::new(15.0, family(FAMILY_BODY_BOLD)),
@@ -539,40 +537,6 @@ fn line_at(
     );
     ui.painter().galley(rect.min, galley, color);
     rect
-}
-
-/// The eclipse brand mark in `rect`: the gradient disc, its 1px ring,
-/// and the backdrop-colored bite across its upper right, clipped to
-/// the disc, as the reference draws it. It renders through the SVG
-/// rasterizer, so its edges are as crisp as the reference's. The
-/// gradient runs the reference's way: across the mark's width along
-/// the 135 degree diagonal, centered.
-fn eclipse_mark(ui: &egui::Ui, rect: egui::Rect, palette: &Palette) {
-    use crate::theme::svg_color;
-    use std::hash::{Hash as _, Hasher as _};
-
-    let svg = format!(
-        concat!(
-            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"22\" height=\"22\" viewBox=\"0 0 22 22\">",
-            "<defs><linearGradient id=\"g\" gradientUnits=\"userSpaceOnUse\" x1=\"3.222\" y1=\"3.222\" x2=\"18.778\" y2=\"18.778\">",
-            "<stop offset=\"0\" {}/><stop offset=\"1\" {}/></linearGradient>",
-            "<clipPath id=\"c\"><circle cx=\"11\" cy=\"11\" r=\"11\"/></clipPath></defs>",
-            "<circle cx=\"11\" cy=\"11\" r=\"11\" fill=\"url(#g)\"/>",
-            "<circle cx=\"11\" cy=\"11\" r=\"10.5\" fill=\"none\" {}/>",
-            "<circle cx=\"16.12\" cy=\"9.25\" r=\"7.79\" {} clip-path=\"url(#c)\"/>",
-            "</svg>"
-        ),
-        svg_color("stop-color", "stop-opacity", palette.orb_1),
-        svg_color("stop-color", "stop-opacity", palette.orb_2),
-        svg_color("stroke", "stroke-opacity", palette.line_strong),
-        svg_color("fill", "fill-opacity", palette.sidebar),
-    );
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    svg.hash(&mut hasher);
-    let uri = format!("bytes://kage-mark-{:016x}.svg", hasher.finish());
-    egui::Image::from_bytes(uri, svg.into_bytes())
-        .fit_to_exact_size(rect.size())
-        .paint_snapped(ui, rect);
 }
 
 /// The New session and Search nav rows.
@@ -857,9 +821,9 @@ const PROJECT_ROW_H: f32 = 32.0;
 /// flex list shrinks the header down to its 22px plus button.
 const PROJECT_ROW_SHRUNK_H: f32 = 22.0;
 
-/// One session row: title, then the attention badge, the working
-/// eclipse or the swarm glyph, else the relative time. An unread row
-/// reads bold.
+/// One session row: title, then the attention badge, the working cat
+/// or the swarm glyph, else the relative time. An unread row reads
+/// bold.
 fn session_row(
     ui: &mut egui::Ui,
     palette: &Palette,
@@ -969,7 +933,7 @@ fn session_row(
     } else if item.state == RowState::Running {
         let at =
             egui::Rect::from_min_size(egui::pos2(right - 14.0, mid - 7.0), egui::vec2(14.0, 14.0));
-        crate::ui::eclipse::paint(ui, at, 14.0, Some(crate::clock::epoch()), palette);
+        crate::ui::mark::working(ui, at, crate::clock::epoch());
         right = at.left() - 8.0;
     } else if item.swarm {
         let at =

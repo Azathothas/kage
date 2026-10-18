@@ -1,4 +1,4 @@
-//! The boot splash: the orbiting eclipse mark, the kage wordmark and a
+//! The boot splash: the nekomata mark, the kage wordmark and a
 //! connecting line over the whole window while the first connection is
 //! made, faded out once the engine answers the handshake.
 //!
@@ -19,7 +19,7 @@ const FADE: Duration = Duration::from_millis(300);
 /// The wordmark's size, the design's 40px.
 const WORDMARK: f32 = 40.0;
 
-/// The eclipse mark's size, the design's 44px.
+/// The mark's height, the design's 44px.
 const MARK: f32 = 44.0;
 
 /// Where the boot splash stands.
@@ -54,7 +54,7 @@ impl Splash {
     /// The splash as it draws now, over the whole window, or nothing
     /// once it is gone. A fading splash asks for the next frame, so the
     /// fade runs without input.
-    pub fn show(&self, ui: &mut egui::Ui, origin: Option<Instant>) {
+    pub fn show(&self, ui: &mut egui::Ui) {
         let opacity = match self {
             Self::Showing => 1.0,
             Self::Fading(since) => {
@@ -70,7 +70,7 @@ impl Splash {
                 ui.set_opacity(opacity);
                 ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
                     ui.add_space(ui.available_height() / 2.0 - 60.0);
-                    crate::ui::eclipse::eclipse(ui, MARK, origin);
+                    crate::ui::mark::mark(ui, MARK);
                     ui.add_space(14.0);
                     ui.label(
                         egui::RichText::new("kage")

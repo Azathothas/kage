@@ -10,9 +10,8 @@ const nav = theme.value.nav ?? [];
   <header class="kage-header">
     <div class="kage-header__inner">
       <a class="kage-header__brand" href="/">
-        <span class="kage-header__prompt">$</span>
+        <img class="kage-header__mark" src="/kage-mark-shadow.svg" alt="" />
         <span class="kage-header__name">kage</span>
-        <span class="kage-header__caret" aria-hidden="true"></span>
       </a>
       <nav class="kage-header__nav">
         <a
