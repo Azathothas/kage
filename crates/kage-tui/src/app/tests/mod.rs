@@ -340,6 +340,125 @@ fn run_ended(outcome: kage_core::protocol::RunOutcome) -> kage_core::protocol::E
     kage_core::protocol::HostEvent::RunEnded { outcome }.into()
 }
 
+#[test]
+fn a_compaction_card_gains_its_token_delta_when_the_next_usage_arrives() {
+    let buffer = shared_buffer();
+    let (tx, _rx) = mpsc::channel();
+    let mut app = app_with_defaults(buffer.clone(), tx);
+    let (events_tx, events_rx) = mpsc::channel();
+    app.set_engine_events(events_rx);
+    app.set_session_usage(crate::usage::shared_session_usage());
+    let events = events_tx;
+
+    feed(
+        &mut app,
+        &events,
+        vec![
+            kage_core::LoopEvent::CompactionStarted {
+                summarized: 12,
+                kept: 4,
+            }
+            .into(),
+            kage_core::LoopEvent::Compaction {
+                kept: 4,
+                summarized: 12,
+                summary: "kept decisions".into(),
+                before: 84_000,
+            }
+            .into(),
+        ],
+    );
+    assert!(
+        last_block_text(&buffer)
+            .starts_with("Compacted history (12 messages summarized, 4 kept)\n")
+    );
+
+    feed(
+        &mut app,
+        &events,
+        vec![
+            kage_core::protocol::HostEvent::UsageUpdated {
+                usage: kage_core::protocol::Usage {
+                    context_used: 12_000,
+                    ..Default::default()
+                },
+            }
+            .into(),
+        ],
+    );
+    assert!(
+        last_block_text(&buffer).starts_with(
+            "Compacted history (12 messages summarized, 4 kept) \u{b7} 84k \u{2192} 12k tokens\n"
+        ),
+        "{}",
+        last_block_text(&buffer)
+    );
+
+    feed(
+        &mut app,
+        &events,
+        vec![
+            run_ended(kage_core::protocol::RunOutcome::Completed),
+            kage_core::protocol::HostEvent::UsageUpdated {
+                usage: kage_core::protocol::Usage {
+                    context_used: 13_000,
+                    ..Default::default()
+                },
+            }
+            .into(),
+        ],
+    );
+    assert!(!last_block_text(&buffer).contains("13k"));
+}
+
+/// A failed compaction closes the modeline's compacting indicator and
+/// leaves an error block naming the failure.
+#[test]
+fn a_failed_compaction_closes_the_compacting_indicator() {
+    let buffer = shared_buffer();
+    let (tx, _rx) = mpsc::channel();
+    let mut app = app_with_defaults(buffer.clone(), tx);
+    let (events_tx, events_rx) = mpsc::channel();
+    app.set_engine_events(events_rx);
+    app.set_session_usage(crate::usage::shared_session_usage());
+    let events = events_tx;
+
+    feed(
+        &mut app,
+        &events,
+        vec![
+            kage_core::LoopEvent::CompactionStarted {
+                summarized: 12,
+                kept: 4,
+            }
+            .into(),
+        ],
+    );
+    assert!(app.compacting.is_some(), "the indicator opens on start");
+
+    feed(
+        &mut app,
+        &events,
+        vec![
+            kage_core::LoopEvent::Error {
+                kind: kage_core::LoopError::Compaction {
+                    message: "provider error: HTTP 503".into(),
+                },
+            }
+            .into(),
+        ],
+    );
+    assert!(
+        app.compacting.is_none(),
+        "the failure must close the indicator"
+    );
+    assert!(
+        last_block_text(&buffer).contains("compaction failed: provider error: HTTP 503"),
+        "{}",
+        last_block_text(&buffer)
+    );
+}
+
 /// The pinned rows as `(depth, agent, state)`.
 fn pinned(app: &App) -> Vec<(usize, String, crate::view::AgentRowState)> {
     app.agent_rows()

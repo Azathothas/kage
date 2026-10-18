@@ -7,14 +7,14 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use kage_acp::acp::{
-    ContentBlock, ListSessionsRequest, ListSessionsResponse, McpServer, PromptRef,
-    SessionConfigOption, SessionExportResponse, SessionForkRequest, SessionForkResponse,
-    SessionInfo, SessionInfoKage, SessionInfoMeta, SessionInfoUpdate, SessionUpdate,
-    SubagentSessionCapabilities, SubagentState, SubagentSwarm, SubagentUpdate, ToolCallStatus,
-    ToolCallUpdate, TurnPhase, TurnReason, TurnUpdate,
+    CompactionPhase, CompactionUpdate, ContentBlock, ListSessionsRequest, ListSessionsResponse,
+    McpServer, PromptRef, SessionConfigOption, SessionExportResponse, SessionForkRequest,
+    SessionForkResponse, SessionInfo, SessionInfoKage, SessionInfoMeta, SessionInfoUpdate,
+    SessionUpdate, SubagentSessionCapabilities, SubagentState, SubagentSwarm, SubagentUpdate,
+    ToolCallStatus, ToolCallUpdate, TurnPhase, TurnReason, TurnUpdate,
 };
 use kage_acp::agent::{PromptContext, send_update};
-use kage_core::protocol::{AgentNode, AgentState, AgentTree, SwarmMember};
+use kage_core::protocol::{AgentNode, AgentState, AgentTree, SwarmMember, TimelineItem};
 use kage_core::sync::lock;
 use kage_core::{Content, LoopEvent, Message, MessageId, Role, SessionId, ToolCallId, ToolOutput};
 use kage_jsonrpc::RpcError;
@@ -76,7 +76,7 @@ impl super::CliAcpAgent {
             if replay_file && let Some(ctx) = ctx {
                 let replay =
                     kage_session::replay(&path).map_err(|e| RpcError::internal(e.to_string()))?;
-                for update in replay_updates(&replay.history) {
+                for update in replay_updates(&replay.timeline) {
                     ctx.update(update);
                 }
                 self.announce_restored(id, &replay, ctx);
@@ -101,7 +101,7 @@ impl super::CliAcpAgent {
         if replay_file && let Some(ctx) = ctx {
             // Nothing runs this session, so a call the file never closed
             // ended with the engine that made it.
-            for update in replay_updates(&replay.history)
+            for update in replay_updates(&replay.timeline)
                 .into_iter()
                 .chain(interrupted_calls(&replay.history))
             {
@@ -177,7 +177,7 @@ impl super::CliAcpAgent {
         if replay_file && let Some(ctx) = ctx {
             let replay =
                 kage_session::replay(path).map_err(|e| RpcError::internal(e.to_string()))?;
-            for update in replay_updates(&replay.history) {
+            for update in replay_updates(&replay.timeline) {
                 ctx.update(update);
             }
             self.announce_restored(replay.header.session, &replay, ctx);
@@ -358,18 +358,52 @@ fn restored_update(node: &AgentNode) -> SubagentUpdate {
     }
 }
 
-/// The `session/update`s that show `history` as the live bridge showed
+/// The `session/update`s that show `timeline` as the live bridge showed
 /// it: user chunks, then each assistant block and tool result mapped
-/// through [`to_update`]. Thoughts and tool calls carry the durations
-/// the file recorded, and each run that ended closes with a `_kage/turn`
-/// end saying when and how long. No `plan` update: the todo list lives
-/// in memory only, so a resumed session starts with an empty plan.
-pub(super) fn replay_updates(history: &[Message]) -> Vec<SessionUpdate> {
+/// through [`to_update`], and at each compaction a `_kage/compaction`
+/// update carrying the counts and token delta the file recorded. The
+/// timeline is the user's view, so the turns a compaction summarized
+/// are all here, with the card where the compaction ran.
+/// Thoughts and tool calls carry the durations the file recorded, and
+/// each run that ended closes with a `_kage/turn` end saying when and
+/// how long. No `plan` update: the todo list lives in memory only, so
+/// a resumed session starts with an empty plan.
+pub(super) fn replay_updates(timeline: &[TimelineItem]) -> Vec<SessionUpdate> {
     let mut seen = HashMap::new();
     let mut called = HashMap::new();
     let mut run: Option<(&Message, Option<&Message>)> = None;
     let mut updates = Vec::new();
-    for message in history {
+    for item in timeline {
+        let message = match item {
+            TimelineItem::Compaction(record) => {
+                // The card sits where the compaction ran, which for an
+                // automatic one is between the turns of a still-open
+                // run. Close the run only when its last word is a
+                // reply without calls, like the trailing check below;
+                // otherwise the run's remaining turns would split off
+                // into a phantom second run.
+                if let Some((start, Some(last))) = run
+                    && last.role == Role::Assistant
+                    && !last
+                        .content
+                        .iter()
+                        .any(|block| matches!(block, Content::ToolCall { .. }))
+                {
+                    updates.extend(run_end(start, last));
+                    run = None;
+                }
+                updates.push(SessionUpdate::Compaction(CompactionUpdate {
+                    phase: CompactionPhase::Complete,
+                    kept: Some(u64::try_from(record.kept).unwrap_or_default()),
+                    summarized: Some(u64::try_from(record.summarized).unwrap_or_default()),
+                    before: record.before,
+                    after: record.after,
+                    summary: Some(record.summary.clone()),
+                }));
+                continue;
+            }
+            TimelineItem::Message(message) => message,
+        };
         let prompt = message.role == Role::User
             && message
                 .content
@@ -737,9 +771,13 @@ pub(super) fn list_page(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use kage_acp::acp::TurnPhase;
+    use kage_core::protocol::{CompactionRecord, TimelineItem};
     use kage_core::{Content, Message, Role, ToolCallId};
 
-    use super::{SessionUpdate, interrupted_calls};
+    use super::{SessionUpdate, interrupted_calls, replay_updates};
 
     fn call(id: &str) -> Content {
         Content::ToolCall {
@@ -770,5 +808,92 @@ mod tests {
         };
         assert_eq!(update.tool_call_id, "swarm");
         assert_eq!(update.status, Some(kage_acp::acp::ToolCallStatus::Failed));
+    }
+
+    fn card() -> TimelineItem {
+        TimelineItem::Compaction(CompactionRecord {
+            summarized: 2,
+            kept: 2,
+            before: None,
+            after: None,
+            summary: "summary".to_owned(),
+        })
+    }
+
+    fn text(role: Role, text: &str) -> TimelineItem {
+        TimelineItem::Message(Arc::new(Message::new(
+            role,
+            vec![Content::Text {
+                text: text.to_owned(),
+            }],
+            None,
+        )))
+    }
+
+    /// A compaction that ran between the turns of one run must not
+    /// split it: the card leaves the run open, and the run's final
+    /// reply closes it once, after the card.
+    #[test]
+    fn a_mid_run_card_keeps_its_run_whole() {
+        let timeline = vec![
+            text(Role::User, "go"),
+            TimelineItem::Message(Arc::new(Message::new(
+                Role::Assistant,
+                vec![call("c1")],
+                None,
+            ))),
+            TimelineItem::Message(Arc::new(Message::new(
+                Role::ToolResult,
+                vec![Content::ToolResultBlock {
+                    call_id: ToolCallId::new("c1"),
+                    output: "ok".to_owned(),
+                    is_error: false,
+                }],
+                None,
+            ))),
+            card(),
+            text(Role::Assistant, "done"),
+        ];
+        let updates = replay_updates(&timeline);
+        let ends = updates
+            .iter()
+            .filter(|update| matches!(update, SessionUpdate::Turn(t) if t.phase == TurnPhase::End))
+            .count();
+        assert_eq!(ends, 1, "one run, one end: {updates:?}");
+        let card_at = updates
+            .iter()
+            .position(|update| matches!(update, SessionUpdate::Compaction(_)))
+            .unwrap();
+        let end_at = updates
+            .iter()
+            .position(
+                |update| matches!(update, SessionUpdate::Turn(t) if t.phase == TurnPhase::End),
+            )
+            .unwrap();
+        assert!(card_at < end_at, "the run ends after the card");
+    }
+
+    /// A card that follows a completed run still closes that run
+    /// before itself, as it always did.
+    #[test]
+    fn a_card_after_a_finished_run_closes_it_first() {
+        let timeline = vec![
+            text(Role::User, "go"),
+            text(Role::Assistant, "done"),
+            card(),
+            text(Role::User, "next"),
+        ];
+        let updates = replay_updates(&timeline);
+        let card_at = updates
+            .iter()
+            .position(|update| matches!(update, SessionUpdate::Compaction(_)))
+            .unwrap();
+        let end_at = updates
+            .iter()
+            .position(
+                |update| matches!(update, SessionUpdate::Turn(t) if t.phase == TurnPhase::End),
+            )
+            .unwrap();
+        assert!(end_at < card_at, "the finished run closes before the card");
     }
 }

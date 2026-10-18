@@ -1,16 +1,35 @@
 //! History compaction.
 //!
-//! When the running token budget approaches the model's context window the
-//! loop summarizes the oldest turns into one synthetic user message wrapped
-//! in `<summary>...</summary>` framing and drops the originals. The framing
-//! plus user role keeps the post-compaction history valid for providers like
-//! ZAI/GLM and Anthropic that require strict role ordering.
+//! When the running token budget approaches the model's context window
+//! (or the remaining room can no longer hold a full reply) the loop
+//! summarizes the oldest turns into one synthetic user message wrapped
+//! in `<summary>...</summary>` framing and drops the originals. The
+//! framing plus user role keeps the post-compaction history valid for
+//! providers like ZAI/GLM and Anthropic that require strict role
+//! ordering.
 //!
-//! The summarization is itself a model call: the prior turns are serialized
-//! into a plain-text transcript and sent as one user-role prompt (so the
-//! request never violates ordering rules), with a brief instruction asking
-//! for a concise narrative summary. The returned text becomes the body of
-//! the synthetic user message.
+//! A summarizer failure never corrupts the conversation: the history is
+//! left intact and the failure surfaces as
+//! [`LoopError::Compaction`](kage_core::LoopError::Compaction). An
+//! automatic compaction warns and lets the run continue; a forced or
+//! overflow-recovery one propagates the error to its caller.
+//!
+//! The synthetic message is a handoff brief: the model's summary of the
+//! work, the user's own messages from the summarized region preserved
+//! verbatim under token caps (head, elision note, tail), and - for an
+//! automatic mid-run compaction - a note to continue the work in
+//! progress. The framing constants stay the outermost wrapper so
+//! session replay and the UIs keep parsing every compaction body ever
+//! stored.
+//!
+//! The summarization is itself a model call: the prior turns are
+//! serialized into a plain-text transcript and sent as one user-role
+//! prompt (so the request never violates ordering rules), with a
+//! handoff-brief instruction as the system prompt. A summarizer call
+//! rejected for size retries with the transcript's oldest section
+//! dropped, and a turn rejected for size after a compaction is answered
+//! by compacting harder (a smaller keep window each round) before the
+//! run gives up with [`LoopError::ContextOverflow`].
 
 use std::fmt::Write as _;
 use std::sync::Arc;
@@ -23,7 +42,31 @@ use crate::{AgentContext, CompactionPrep, Hooks, LoopConfig, TokenBudget};
 /// Target number of recent turns kept verbatim. Older turns are
 /// summarized. The boundary may extend past this to keep an assistant
 /// tool-call turn together with its results.
-const KEEP_RECENT: usize = 4;
+pub(crate) const KEEP_RECENT: usize = 4;
+
+/// How many times a provider-rejected turn may be answered by
+/// compacting harder before the loop gives up with
+/// [`LoopError::ContextOverflow`]. Each round halves the keep window,
+/// so the last attempt summarizes the entire history.
+pub(crate) const MAX_OVERFLOW_COMPACTIONS: u32 = 3;
+
+/// Total attempts the summarizer makes before its overflow error
+/// propagates. Between attempts the transcript's oldest section is
+/// dropped, so a rejected summary call can still succeed smaller.
+const SUMMARIZE_ATTEMPTS: u32 = 3;
+
+/// Output tokens reserved for the model's reply: compaction also
+/// triggers when the live context plus this reserve reaches the
+/// window, so a long reply cannot overflow mid-generation.
+const OUTPUT_RESERVE: u64 = 50_000;
+
+/// Token cap for the newest preserved user messages from the
+/// summarized region.
+const PRESERVE_TAIL_TOKENS: u64 = 20_000;
+
+/// Token cap for the oldest preserved user messages, kept so the
+/// original request survives even when the middle is elided.
+const PRESERVE_HEAD_TOKENS: u64 = 2_000;
 
 pub use kage_core::message::{COMPACTION_SUMMARY_PREFIX, COMPACTION_SUMMARY_SUFFIX};
 
@@ -43,7 +86,19 @@ pub(crate) fn maybe_compact<F: FnMut(LoopEvent)>(
     if !should_compact(cx, config) {
         return Ok(false);
     }
-    run_compaction(cx, provider, cancel, hooks, emit)
+    match run_compaction(cx, provider, cancel, hooks, emit, KEEP_RECENT, true) {
+        Ok(ran) => Ok(ran),
+        // Compaction is maintenance, not the user's request: a
+        // summarizer or plugin failure must not kill the run. Name the
+        // failure and continue with the full history; when the context
+        // truly cannot fit, the run loop's overflow recovery still
+        // answers it.
+        Err(LoopError::Cancelled) => Err(LoopError::Cancelled),
+        Err(kind) => {
+            emit(LoopEvent::Error { kind });
+            Ok(false)
+        }
+    }
 }
 
 /// Force a compaction pass right now, ignoring the token-budget
@@ -58,7 +113,23 @@ pub fn force_compact<F: FnMut(LoopEvent)>(
     hooks: &mut dyn Hooks,
     emit: &mut F,
 ) -> Result<bool, LoopError> {
-    run_compaction(cx, provider, cancel, hooks, emit)
+    run_compaction(cx, provider, cancel, hooks, emit, KEEP_RECENT, false)
+}
+
+/// Compact with a keep window of `keep` recent turns. The overflow
+/// recovery path uses this to compact harder than the default: a
+/// provider that rejected the post-compaction context gets a smaller
+/// keep window each round until the history fits or nothing is left to
+/// summarize.
+pub(crate) fn compact_with_keep<F: FnMut(LoopEvent)>(
+    cx: &mut AgentContext,
+    provider: &dyn Provider,
+    cancel: &CancelFlag,
+    hooks: &mut dyn Hooks,
+    emit: &mut F,
+    keep: usize,
+) -> Result<bool, LoopError> {
+    run_compaction(cx, provider, cancel, hooks, emit, keep, false)
 }
 
 fn run_compaction<F: FnMut(LoopEvent)>(
@@ -67,8 +138,10 @@ fn run_compaction<F: FnMut(LoopEvent)>(
     cancel: &CancelFlag,
     hooks: &mut dyn Hooks,
     emit: &mut F,
+    keep: usize,
+    continuation: bool,
 ) -> Result<bool, LoopError> {
-    if cx.history.len() <= KEEP_RECENT {
+    if cx.history.len() <= keep {
         return Ok(false);
     }
 
@@ -76,10 +149,14 @@ fn run_compaction<F: FnMut(LoopEvent)>(
     // `ToolResult` whose assistant tool-call turn was summarized away:
     // strict providers reject the orphaned result. Walk the boundary
     // backwards until it sits on a non-ToolResult message, pulling the
-    // parent assistant turn into the keep window.
-    let mut split = cx.history.len() - KEEP_RECENT;
-    while split > 0 && cx.history[split].role == Role::ToolResult {
-        split -= 1;
+    // parent assistant turn into the keep window. With `keep` of zero
+    // there is no kept history to protect, so the whole history is
+    // summarized.
+    let mut split = cx.history.len() - keep;
+    if keep > 0 {
+        while split > 0 && cx.history[split].role == Role::ToolResult {
+            split -= 1;
+        }
     }
     if split == 0 && cx.history[0].role == Role::Assistant {
         // Degenerate shape: the keep window's parent is the very first
@@ -114,28 +191,44 @@ fn run_compaction<F: FnMut(LoopEvent)>(
             hook: "compact_prepare".to_owned(),
             message,
         })?;
-    let summary_text = match prep.summary_override {
-        Some(text) => text,
-        None => summarize(
+    let summary_text = if let Some(text) = prep.summary_override {
+        text
+    } else {
+        emit(LoopEvent::CompactionStarted {
+            summarized: prep.summarized,
+            kept: prep.kept,
+        });
+        summarize_with_retry(
             provider,
             &prep.model,
             std::mem::take(&mut prep.prompt),
-            std::mem::take(&mut prep.instruction),
+            &prep.instruction,
             cancel,
-        )?,
+        )
+        .map_err(wrap_compaction_error)?
     };
     // An empty summary (a provider stream that ended without text, or an
     // override of blanks) must not splice an empty frame over the
     // summarized turns, which would silently drop the conversation.
-    // Surface it as a transient provider failure and return before the
-    // splice so history stays intact.
+    // Return before the splice so history stays intact.
     if summary_text.trim().is_empty() {
-        return Err(LoopError::Provider {
-            message: "compaction summary was empty; history left intact".to_owned(),
+        return Err(LoopError::Compaction {
+            message: "the summarizer returned an empty summary".to_owned(),
         });
     }
-    // Frame the returned text in place rather than formatting a copy.
+    // Frame the returned text in place rather than formatting a copy:
+    // the user's own words from the summarized region ride below the
+    // summary, and the continuation note closes the handoff. The framing
+    // constants stay the outermost wrapper so replay parsers keep
+    // recognizing every compaction body ever stored.
     let mut summary_body = summary_text;
+    if let Some(preserved) = preserved_user_text(&cx.history[..split]) {
+        summary_body.push_str(PRESERVED_USERS_HEADER);
+        summary_body.push_str(&preserved);
+    }
+    if continuation {
+        summary_body.push_str(CONTINUATION_NOTE);
+    }
     summary_body.insert_str(0, COMPACTION_SUMMARY_PREFIX);
     summary_body.push_str(COMPACTION_SUMMARY_SUFFIX);
 
@@ -148,6 +241,7 @@ fn run_compaction<F: FnMut(LoopEvent)>(
         parent: None,
         ts: chrono::Utc::now(),
     };
+    let before = cx.budget.current_context;
     cx.history
         .splice(..split, std::iter::once(Arc::new(summary_msg)));
     // Zero only the live context snapshot: the cumulative `used_*`
@@ -163,8 +257,21 @@ fn run_compaction<F: FnMut(LoopEvent)>(
         kept,
         summarized: split,
         summary: summary_body,
+        before,
     });
     Ok(true)
+}
+
+/// Name the summarizer's failure as a compaction failure so hosts can
+/// say what broke. A cancellation is not a compaction failure and
+/// keeps its own variant.
+fn wrap_compaction_error(kind: LoopError) -> LoopError {
+    match kind {
+        LoopError::Cancelled => LoopError::Cancelled,
+        other => LoopError::Compaction {
+            message: other.to_string(),
+        },
+    }
 }
 
 fn should_compact(cx: &AgentContext, config: LoopConfig) -> bool {
@@ -188,17 +295,134 @@ fn should_compact(cx: &AgentContext, config: LoopConfig) -> bool {
     // Compare the *most recent* turn's full prompt size to the
     // window. Summing `used_input` would triple-count history
     // because each turn's `usage.input` already contains the entire
-    // prior conversation.
+    // prior conversation. The reserve guard trips before the
+    // threshold when the remaining room can no longer hold a full
+    // reply, so a long generation cannot overflow the window.
+    let reserve = OUTPUT_RESERVE.min(cx.context_window / 2);
     cx.budget.current_context >= threshold
+        || cx.budget.current_context.saturating_add(reserve) >= cx.context_window
 }
 
-/// Instruction appended to the serialized conversation when asking the
-/// model to summarize. Kept brief and prescriptive: providers like ZAI
-/// reject ambiguous formatting and we want plain text output.
-const SUMMARIZE_INSTRUCTION: &str = "Summarize the conversation above into a concise narrative. Capture decisions, outstanding \
-     questions, file paths, and any tool results that future turns will need. Plain text, no \
-     headings, no markdown, no bullet lists. Preserve any concrete identifiers verbatim \
-     (commit hashes, file paths, error codes).";
+/// Instruction sent as the summarizer request's system prompt. The
+/// summary is a handoff brief, not a narrative: the next context has no
+/// other memory, so it must carry the work's state, not the chat's
+/// history. Markdown is fine; hosts render the summary through their
+/// markdown views.
+const SUMMARIZE_INSTRUCTION: &str = "\
+You are summarizing the conversation above so work can continue in a fresh context that has no \
+other memory of it. Write a handoff brief for the next instance of yourself. Let the structure \
+serve the task; keep it concise but never drop load-bearing detail. Cover, where applicable:\n\
+- The user's request and any constraints they stated, in your own words.\n\
+- What has actually been done so far, at high fidelity: the exact commands run, the exact file \
+paths touched, and the concrete results or errors each step produced.\n\
+- Current state: what is in progress, what changed and what did not, anything uncommitted or \
+half-finished.\n\
+- Open questions, unknowns, and anything you promised the user.\n\
+- The committed forward plan: the exact next steps, so work resumes without re-deciding it.\n\n\
+Preserve identifiers verbatim: file paths, commands, commit hashes, error codes, names. Write \
+the state of the work, not a turn-by-turn retelling of the chat. The user's own messages may \
+also be preserved verbatim below the summary; do not re-transcribe them.";
+
+/// Opened below the model's summary when user messages were preserved.
+const PRESERVED_USERS_HEADER: &str =
+    "\n\n--- the user's own messages from before the compaction, preserved verbatim ---\n\n";
+
+/// Closes the synthetic message after an automatic mid-run compaction:
+/// the run resumes right after the splice, and the note tells the model
+/// where to pick the work back up.
+const CONTINUATION_NOTE: &str = "\n\nContinue the work that was in progress.";
+
+/// Rough token estimate for `text`: one token per four ASCII bytes,
+/// one token per non-ASCII char. Cheap and biased high, which is the
+/// safe direction for a cap.
+fn estimate_tokens(text: &str) -> u64 {
+    let mut ascii = 0u64;
+    let mut wide = 0u64;
+    for ch in text.chars() {
+        if (ch as u32) < 128 {
+            ascii += 1;
+        } else {
+            wide += 1;
+        }
+    }
+    ascii / 4 + wide
+}
+
+/// The user's own text from the summarized region, selected newest-first
+/// under a token cap with the oldest messages kept as a small head so
+/// the original request survives; anything between head and tail is
+/// elided behind a named note. Returns `None` when there is nothing to
+/// preserve, so the synthetic message keeps its plain summary shape.
+fn preserved_user_text(messages: &[Arc<Message>]) -> Option<String> {
+    let texts: Vec<&str> = messages
+        .iter()
+        .filter(|m| m.role == Role::User)
+        .flat_map(|m| &m.content)
+        .filter_map(|block| match block {
+            Content::Text { text }
+                if !text.trim().is_empty() && !text.starts_with(COMPACTION_SUMMARY_PREFIX) =>
+            {
+                Some(text.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+    let last = texts.len().checked_sub(1)?;
+
+    // Newest-first under the tail cap; the newest message is always
+    // included, however large, since dropping the latest instruction
+    // is the worst possible elision.
+    let mut tail_start = last;
+    let mut tail_tokens = estimate_tokens(texts[last]);
+    while tail_start > 0 {
+        let tokens = estimate_tokens(texts[tail_start - 1]);
+        if tail_tokens + tokens > PRESERVE_TAIL_TOKENS {
+            break;
+        }
+        tail_tokens += tokens;
+        tail_start -= 1;
+    }
+
+    // Oldest-first under the head cap, but only while a middle was
+    // actually elided; otherwise head and tail are the same run.
+    let mut head_end = 0;
+    if tail_start > 0 {
+        let mut head_tokens = 0;
+        while head_end < tail_start {
+            let tokens = estimate_tokens(texts[head_end]);
+            if head_tokens + tokens > PRESERVE_HEAD_TOKENS {
+                break;
+            }
+            head_tokens += tokens;
+            head_end += 1;
+        }
+    }
+
+    let mut out = String::new();
+    for text in &texts[..head_end] {
+        out.push_str("--- user message ---\n");
+        out.push_str(text);
+        out.push('\n');
+    }
+    if tail_start > head_end {
+        let elided_tokens: u64 = texts[head_end..tail_start]
+            .iter()
+            .map(|t| estimate_tokens(t))
+            .sum();
+        let _ = writeln!(
+            out,
+            "[{} earlier user message(s) elided, ~{} tokens]",
+            tail_start - head_end,
+            elided_tokens,
+        );
+    }
+    for text in &texts[tail_start..] {
+        out.push_str("--- user message ---\n");
+        out.push_str(text);
+        out.push('\n');
+    }
+    Some(out)
+}
 
 /// Serialize the to-be-summarized history into a plain-text transcript.
 ///
@@ -251,11 +475,79 @@ fn serialize_conversation(messages: &[Arc<Message>]) -> String {
     out
 }
 
+fn summarize_with_retry(
+    provider: &dyn Provider,
+    model: &str,
+    prompt: String,
+    instruction: &str,
+    cancel: &CancelFlag,
+) -> Result<String, LoopError> {
+    let mut prompt = prompt;
+    for attempt in 0..SUMMARIZE_ATTEMPTS {
+        match summarize(provider, model, prompt.clone(), instruction, cancel) {
+            Ok(text) => return Ok(text),
+            Err(err) => {
+                if attempt + 1 == SUMMARIZE_ATTEMPTS {
+                    return Err(err);
+                }
+                let overflow = matches!(&err, LoopError::Provider { message }
+                    if kage_provider::error::is_context_overflow_text(message));
+                if !overflow {
+                    return Err(err);
+                }
+                let Some(shrunk) = shrink_transcript_prompt(&prompt) else {
+                    return Err(err);
+                };
+                prompt = shrunk;
+            }
+        }
+    }
+    unreachable!("the loop returns inside every branch")
+}
+
+/// `prompt` with the oldest quarter of its transcript section dropped,
+/// cut at the next role marker so a message never splits. Returns
+/// `None` when the prompt has no conversation frame or nothing left to
+/// drop. A note names the drop so the model can say what it never saw.
+fn shrink_transcript_prompt(prompt: &str) -> Option<String> {
+    const OPEN: &str = "<conversation>\n";
+    const CLOSE: &str = "</conversation>";
+    let start = prompt.find(OPEN)? + OPEN.len();
+    let end = prompt[start..].find(CLOSE)? + start;
+    let transcript = &prompt[start..end];
+    let mut quarter = transcript.len() / 4;
+    if quarter == 0 {
+        return None;
+    }
+    // The quarter may land inside a multi-byte character; back it up
+    // before slicing, or the search below would panic.
+    while !transcript.is_char_boundary(quarter) {
+        quarter -= 1;
+    }
+    let cut = transcript[quarter..]
+        .find("\n=== ")
+        .map_or(quarter, |at| quarter + at + 1);
+    let mut cut = cut;
+    while !transcript.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    let rest = transcript[cut..].trim_start_matches('\n');
+    if rest.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "<conversation>\n[the oldest part of the transcript was dropped to fit the request]\n\n{rest}</conversation>{}",
+        &prompt[end..],
+    ))
+}
+
+/// One summarizer model call: the framed transcript as the single user
+/// message, the instruction as the system prompt.
 fn summarize(
     provider: &dyn Provider,
     model: &str,
     prompt: String,
-    instruction: String,
+    instruction: &str,
     cancel: &CancelFlag,
 ) -> Result<String, LoopError> {
     let payload = vec![Arc::new(Message::new(
@@ -264,7 +556,7 @@ fn summarize(
         None,
     ))];
     let mut req = StreamRequest::new(model, payload);
-    req.system = Some(instruction);
+    req.system = Some(instruction.to_owned());
     let stream = provider
         .stream(req, cancel)
         .map_err(|e| LoopError::Provider {
@@ -453,6 +745,83 @@ mod tests {
         assert_eq!(cx.budget.current_context, 0);
     }
 
+    /// The started signal precedes the completion event and names the
+    /// split the summarizer will read, so UIs can show "compacting"
+    /// while the summarizer model call runs.
+    #[test]
+    fn compaction_started_precedes_the_compaction_event() {
+        let provider = MockProvider::replaying(vec![
+            Ok(ProviderEvent::TextDelta {
+                delta: "summary".into(),
+            }),
+            Ok(ProviderEvent::MessageEnd {
+                stop_reason: StopReason::EndTurn,
+                usage: TokenUsage::default(),
+            }),
+        ]);
+        let cancel = CancelFlag::new();
+        let mut hooks = NoopHooks;
+        let cfg = LoopConfig {
+            compaction_threshold: 0.5,
+            ..LoopConfig::default()
+        };
+        let mut cx = loaded_context(150_000, 10);
+        cx.context_window = 200_000;
+
+        let mut events = Vec::new();
+        maybe_compact(&mut cx, cfg, &provider, &cancel, &mut hooks, &mut |ev| {
+            events.push(ev);
+        })
+        .unwrap();
+        let started = events
+            .iter()
+            .position(|e| matches!(e, LoopEvent::CompactionStarted { .. }))
+            .expect("compaction must announce itself");
+        let done = events
+            .iter()
+            .position(|e| matches!(e, LoopEvent::Compaction { .. }))
+            .expect("compaction must complete");
+        assert!(started < done, "started must precede the completion");
+        assert_eq!(
+            events[started],
+            LoopEvent::CompactionStarted {
+                summarized: 10 - KEEP_RECENT,
+                kept: KEEP_RECENT,
+            }
+        );
+    }
+
+    /// A plugin that hands over the summary skips the summarizer model,
+    /// so there is no wait to announce: no started event may fire.
+    #[test]
+    fn summary_override_emits_no_compaction_started() {
+        struct OverrideHooks;
+        impl Hooks for OverrideHooks {
+            fn prepare_compaction(&mut self, prep: &mut CompactionPrep) -> Result<(), String> {
+                prep.summary_override = Some("handwritten".to_owned());
+                Ok(())
+            }
+        }
+        let provider = MockProvider::replaying(vec![]);
+        let cancel = CancelFlag::new();
+        let mut hooks = OverrideHooks;
+        let mut cx = loaded_context(150_000, 10);
+        cx.context_window = 200_000;
+
+        let mut events = Vec::new();
+        let ran = force_compact(&mut cx, &provider, &cancel, &mut hooks, &mut |ev| {
+            events.push(ev);
+        })
+        .unwrap();
+        assert!(ran);
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, LoopEvent::CompactionStarted { .. })),
+            "override path must not announce a start: {events:?}"
+        );
+    }
+
     /// Compaction zeroes only the live context snapshot; the cumulative
     /// `used_*` counters survive so modeline cost totals do not reset.
     #[test]
@@ -625,9 +994,10 @@ mod tests {
 
     /// A summarizer stream that ends with zero text must abort before the
     /// splice so the summarized conversation is never replaced by an
-    /// empty frame.
+    /// empty frame, and the automatic path reports the failure instead
+    /// of failing the run.
     #[test]
-    fn empty_summary_from_provider_aborts_before_the_splice() {
+    fn empty_summary_warns_and_leaves_history_intact() {
         let provider = MockProvider::replaying(vec![Ok(ProviderEvent::MessageEnd {
             stop_reason: StopReason::EndTurn,
             usage: TokenUsage::default(),
@@ -642,10 +1012,11 @@ mod tests {
         cx.context_window = 200_000;
 
         let mut events = Vec::new();
-        let res = maybe_compact(&mut cx, cfg, &provider, &cancel, &mut hooks, &mut |ev| {
+        let ran = maybe_compact(&mut cx, cfg, &provider, &cancel, &mut hooks, &mut |ev| {
             events.push(ev);
-        });
-        assert!(matches!(res, Err(LoopError::Provider { .. })));
+        })
+        .unwrap();
+        assert!(!ran, "an empty summary must not compact");
         assert_eq!(cx.history.len(), 10, "history must stay intact");
         assert!(
             matches!(&cx.history[0].content[0], Content::Text { text } if text == "turn 0"),
@@ -656,6 +1027,24 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, LoopEvent::Compaction { .. }))
         );
+        // The failure is named after the started signal, so UIs can
+        // close the compacting indicator with a reason.
+        let started = events
+            .iter()
+            .position(|e| matches!(e, LoopEvent::CompactionStarted { .. }))
+            .expect("the compaction announced itself");
+        let failed = events
+            .iter()
+            .position(|e| {
+                matches!(
+                    e,
+                    LoopEvent::Error {
+                        kind: LoopError::Compaction { .. }
+                    }
+                )
+            })
+            .expect("the failure must be surfaced");
+        assert!(started < failed);
     }
 
     /// A whitespace-only `summary_override` hits the same guard as an
@@ -676,7 +1065,7 @@ mod tests {
         cx.context_window = 200_000;
 
         let res = force_compact(&mut cx, &provider, &cancel, &mut hooks, &mut |_| {});
-        assert!(matches!(res, Err(LoopError::Provider { .. })));
+        assert!(matches!(res, Err(LoopError::Compaction { .. })));
         assert_eq!(cx.history.len(), 10, "history must stay intact");
     }
 
@@ -713,11 +1102,17 @@ mod tests {
         );
     }
 
+    /// An automatic compaction whose summarizer fails warns and leaves
+    /// the run standing; a forced one, which the user asked for,
+    /// returns the compaction failure to its caller. Both leave the
+    /// history intact.
     #[test]
-    fn summary_provider_failure_propagates() {
-        let provider = MockProvider::replaying(vec![Err(kage_provider::ProviderError::Auth(
-            "no key".into(),
-        ))]);
+    fn a_failed_auto_compaction_warns_and_a_forced_one_fails() {
+        let script = || {
+            MockProvider::replaying(vec![Err(kage_provider::ProviderError::Auth(
+                "no key".into(),
+            ))])
+        };
         let cancel = CancelFlag::new();
         let mut hooks = NoopHooks;
         let cfg = LoopConfig {
@@ -727,17 +1122,49 @@ mod tests {
         let mut cx = loaded_context(150_000, 10);
         cx.context_window = 200_000;
 
+        let mut events = Vec::new();
+        let ran = maybe_compact(&mut cx, cfg, &script(), &cancel, &mut hooks, &mut |ev| {
+            events.push(ev);
+        })
+        .unwrap();
+        assert!(!ran, "the run continues with the full history");
+        assert_eq!(cx.history.len(), 10, "history must stay intact");
+        assert!(matches!(&cx.history[0].content[0], Content::Text { text } if text == "turn 0"));
+        assert!(events.iter().any(|e| matches!(
+            e,
+            LoopEvent::Error { kind: LoopError::Compaction { message } }
+                if message.contains("authentication failed")
+        )));
+
+        let res = force_compact(&mut cx, &script(), &cancel, &mut hooks, &mut |_| {});
+        match res {
+            Err(LoopError::Compaction { message }) => {
+                assert!(message.contains("authentication failed"), "{message}");
+            }
+            other => panic!("expected Compaction, got {other:?}"),
+        }
+        assert_eq!(cx.history.len(), 10, "history must stay intact");
+    }
+
+    /// Cancelling during the summarizer ends the compaction with
+    /// `Cancelled`, which the automatic path propagates so the run
+    /// still ends cancelled.
+    #[test]
+    fn a_cancelled_summarizer_propagates_cancelled() {
+        let provider = MockProvider::replaying(summary_script());
+        let cancel = CancelFlag::new();
+        cancel.cancel();
+        let mut hooks = NoopHooks;
+        let cfg = LoopConfig {
+            compaction_threshold: 0.5,
+            ..LoopConfig::default()
+        };
+        let mut cx = loaded_context(150_000, 10);
+        cx.context_window = 200_000;
+
         let res = maybe_compact(&mut cx, cfg, &provider, &cancel, &mut hooks, &mut |_| {});
-        assert!(matches!(res, Err(LoopError::Provider { .. })));
-        assert_eq!(
-            cx.history.len(),
-            10,
-            "a failed summary must leave the history intact"
-        );
-        assert!(
-            matches!(&cx.history[0].content[0], Content::Text { text } if text == "turn 0"),
-            "a failed summary must not replace the oldest turn"
-        );
+        assert!(matches!(res, Err(LoopError::Cancelled)));
+        assert_eq!(cx.history.len(), 10, "history must stay intact");
     }
 
     #[test]
@@ -843,5 +1270,257 @@ mod tests {
         assert!(out.contains("=== assistant ==="));
         assert!(out.contains("hello"));
         assert!(out.contains("hi back"));
+    }
+
+    fn overflow_rejection() -> kage_provider::ProviderError {
+        kage_provider::ProviderError::Http {
+            status: 400,
+            body: "prompt is too long: 300000 tokens > 200000 maximum".into(),
+        }
+    }
+
+    fn summary_script() -> Vec<Result<ProviderEvent, kage_provider::ProviderError>> {
+        vec![
+            Ok(ProviderEvent::TextDelta {
+                delta: "the handoff".into(),
+            }),
+            Ok(ProviderEvent::MessageEnd {
+                stop_reason: StopReason::EndTurn,
+                usage: TokenUsage::default(),
+            }),
+        ]
+    }
+
+    /// The reserve guard: with a threshold the fill never reaches, a
+    /// remaining room too small for a full reply still compacts.
+    #[test]
+    fn reserve_headroom_triggers_compaction_below_the_threshold() {
+        let provider = MockProvider::replaying(summary_script());
+        let cancel = CancelFlag::new();
+        let mut hooks = NoopHooks;
+        let cfg = LoopConfig {
+            compaction_threshold: 1.0,
+            ..LoopConfig::default()
+        };
+        let mut cx = loaded_context(60_000, 10);
+        cx.context_window = 100_000;
+
+        let ran = maybe_compact(&mut cx, cfg, &provider, &cancel, &mut hooks, &mut |_| {}).unwrap();
+        assert!(
+            ran,
+            "60k of a 100k window must compact: no room for a reply"
+        );
+    }
+
+    #[test]
+    fn auto_compaction_preserves_user_messages_and_appends_the_continuation_note() {
+        let provider = MockProvider::replaying(summary_script());
+        let cancel = CancelFlag::new();
+        let mut hooks = NoopHooks;
+        let cfg = LoopConfig {
+            compaction_threshold: 0.5,
+            ..LoopConfig::default()
+        };
+        let mut cx = loaded_context(150_000, 10);
+        cx.context_window = 200_000;
+
+        let ran = maybe_compact(&mut cx, cfg, &provider, &cancel, &mut hooks, &mut |_| {}).unwrap();
+        assert!(ran);
+        match &cx.history[0].content[0] {
+            Content::Text { text } => {
+                assert!(text.contains(PRESERVED_USERS_HEADER), "{text}");
+                assert!(text.contains("--- user message ---\nturn 0"), "{text}");
+                assert!(text.contains("--- user message ---\nturn 4"), "{text}");
+                assert!(
+                    !text.contains("turn 6"),
+                    "kept-window users are not duplicated into the card: {text}"
+                );
+                assert!(text.ends_with("Continue the work that was in progress.\n</summary>"));
+            }
+            other => panic!("expected Text, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn forced_compaction_appends_no_continuation_note() {
+        let provider = MockProvider::replaying(summary_script());
+        let cancel = CancelFlag::new();
+        let mut hooks = NoopHooks;
+        let mut cx = loaded_context(150_000, 10);
+        cx.context_window = 200_000;
+
+        let ran = force_compact(&mut cx, &provider, &cancel, &mut hooks, &mut |_| {}).unwrap();
+        assert!(ran);
+        match &cx.history[0].content[0] {
+            Content::Text { text } => {
+                assert!(!text.contains("Continue the work"), "{text}");
+            }
+            other => panic!("expected Text, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_region_without_user_text_gains_no_preserved_section() {
+        let provider = MockProvider::replaying(summary_script());
+        let cancel = CancelFlag::new();
+        let mut hooks = NoopHooks;
+        let cfg = LoopConfig {
+            compaction_threshold: 0.5,
+            ..LoopConfig::default()
+        };
+        let mut cx = AgentContext::new("mock:m", "");
+        cx.budget = TokenBudget {
+            used_input: 150_000,
+            current_context: 150_000,
+            ..Default::default()
+        };
+        cx.context_window = 200_000;
+        // Summarized region is assistant-only; users sit in the keep
+        // window and must not be duplicated.
+        for i in 0..6 {
+            cx.history
+                .push(Arc::new(assistant_msg(&format!("reply {i}"))));
+        }
+        cx.history.push(Arc::new(user_msg("turn 6")));
+        cx.history.push(Arc::new(assistant_msg("reply 7")));
+        cx.history.push(Arc::new(user_msg("turn 8")));
+        cx.history.push(Arc::new(assistant_msg("reply 9")));
+
+        let ran = maybe_compact(&mut cx, cfg, &provider, &cancel, &mut hooks, &mut |_| {}).unwrap();
+        assert!(ran);
+        match &cx.history[0].content[0] {
+            Content::Text { text } => {
+                assert!(!text.contains(PRESERVED_USERS_HEADER), "{text}");
+                assert!(text.ends_with("</summary>"));
+            }
+            other => panic!("expected Text, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn preserved_user_selection_elides_a_large_middle() {
+        let mut msgs: Vec<Arc<Message>> = vec![Arc::new(user_msg("first request"))];
+        for i in 1..=24 {
+            msgs.push(Arc::new(user_msg(&format!(
+                "BULK{i}Z {}",
+                "x".repeat(4_000)
+            ))));
+        }
+        msgs.push(Arc::new(user_msg("final ask")));
+
+        let preserved = preserved_user_text(&msgs).expect("users exist");
+        assert!(preserved.starts_with("--- user message ---\nfirst request\n"));
+        assert!(
+            preserved.contains("--- user message ---\nBULK1Z "),
+            "{preserved}"
+        );
+        assert!(
+            !preserved.contains("BULK2Z"),
+            "an elided middle message must be absent: {preserved}"
+        );
+        assert!(preserved.contains("earlier user message(s) elided"));
+        assert!(preserved.contains("final ask"));
+    }
+
+    #[test]
+    fn preserved_user_selection_skips_prior_summaries_and_blanks() {
+        let msgs: Vec<Arc<Message>> = vec![
+            Arc::new(Message::new(
+                Role::User,
+                vec![Content::Text {
+                    text: format!("{COMPACTION_SUMMARY_PREFIX}old</summary>"),
+                }],
+                None,
+            )),
+            Arc::new(user_msg("   ")),
+            Arc::new(user_msg("the real one")),
+        ];
+        let preserved = preserved_user_text(&msgs).expect("one text survives");
+        assert_eq!(preserved, "--- user message ---\nthe real one\n");
+    }
+
+    /// A summarizer call the provider rejects for size shrinks the
+    /// transcript at a role boundary and retries, so a history whose
+    /// summarized region alone overflows can still be compacted.
+    #[test]
+    fn summarizer_overflow_shrinks_the_transcript_and_retries() {
+        let provider =
+            MockProvider::sequence(vec![vec![Err(overflow_rejection())], summary_script()]);
+        let cancel = CancelFlag::new();
+        let mut hooks = NoopHooks;
+        let mut cx = loaded_context(150_000, 40);
+        cx.context_window = 200_000;
+
+        let ran = force_compact(&mut cx, &provider, &cancel, &mut hooks, &mut |_| {}).unwrap();
+        assert!(ran);
+        let reqs = provider.requests();
+        assert_eq!(reqs.len(), 2, "one overflow, one retry");
+        let prompt_of = |req: &kage_provider::StreamRequest| match &req.messages[0].content[0] {
+            Content::Text { text } => text.clone(),
+            other => panic!("expected Text, got {other:?}"),
+        };
+        let (first, second) = (prompt_of(&reqs[0]), prompt_of(&reqs[1]));
+        assert!(
+            second.len() < first.len(),
+            "the retry must send less: {} vs {}",
+            second.len(),
+            first.len()
+        );
+        assert!(
+            second.contains("[the oldest part of the transcript was dropped to fit the request]")
+        );
+        assert!(second.contains("</conversation>"), "the frame must survive");
+    }
+
+    /// A quarter that lands inside a multi-byte character must back up
+    /// to a boundary before slicing, or the shrink would panic on a
+    /// non-ASCII transcript.
+    #[test]
+    fn shrink_cuts_at_a_character_boundary_for_non_ascii_transcripts() {
+        let body = "\u{65e5}".repeat(2_000);
+        let prompt = format!(
+            "<conversation>\n=== user ===\n{body}\n=== user ===\ntail\n</conversation>INSTRUCTION"
+        );
+        let shrunk = shrink_transcript_prompt(&prompt).expect("something to drop");
+        assert!(
+            shrunk.contains("[the oldest part of the transcript was dropped"),
+            "{shrunk}"
+        );
+        assert!(shrunk.contains("tail"), "{shrunk}");
+        assert!(
+            !shrunk.contains('\u{65e5}'),
+            "the dropped section must be gone: {shrunk}"
+        );
+        assert!(shrunk.ends_with("INSTRUCTION"), "{shrunk}");
+    }
+
+    #[test]
+    fn summarizer_gives_up_after_three_overflow_attempts() {
+        let provider = MockProvider::sequence(vec![vec![Err(overflow_rejection())]; 3]);
+        let cancel = CancelFlag::new();
+        let mut hooks = NoopHooks;
+        let mut cx = loaded_context(150_000, 40);
+        cx.context_window = 200_000;
+
+        let res = force_compact(&mut cx, &provider, &cancel, &mut hooks, &mut |_| {});
+        assert!(matches!(res, Err(LoopError::Compaction { .. })));
+        assert_eq!(cx.history.len(), 40, "history must stay intact");
+        assert_eq!(provider.call_count(), 3, "bounded attempts");
+    }
+
+    /// A non-overflow provider failure must not trigger a shrink.
+    #[test]
+    fn summarizer_auth_failure_propagates_without_a_retry() {
+        let provider = MockProvider::replaying(vec![Err(kage_provider::ProviderError::Auth(
+            "no key".into(),
+        ))]);
+        let cancel = CancelFlag::new();
+        let mut hooks = NoopHooks;
+        let mut cx = loaded_context(150_000, 40);
+        cx.context_window = 200_000;
+
+        let res = force_compact(&mut cx, &provider, &cancel, &mut hooks, &mut |_| {});
+        assert!(matches!(res, Err(LoopError::Compaction { .. })));
+        assert_eq!(provider.call_count(), 1);
     }
 }

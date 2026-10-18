@@ -909,28 +909,7 @@ fn set_os_clipboard(text: String) {
 /// static transcript text with no layout pass to measure against.
 const USAGE_BAR_WIDTH: usize = 20;
 
-/// Compact token count in Kimi's style: `999`, `188k`, `650.2M`.
-/// Millions keep one decimal trimmed of a trailing `.0`; thousands
-/// round to whole `k`. Integer math throughout: token counts never
-/// touch `f64`.
-fn compact_tokens(n: u64) -> String {
-    const MILLION: u64 = 1_000_000;
-    const HUNDRED_THOUSAND: u64 = 100_000;
-    const THOUSAND: u64 = 1_000;
-    if n >= MILLION {
-        let tenths = (n + HUNDRED_THOUSAND / 2) / HUNDRED_THOUSAND;
-        let (whole, frac) = (tenths / 10, tenths % 10);
-        if frac == 0 {
-            format!("{whole}M")
-        } else {
-            format!("{whole}.{frac}M")
-        }
-    } else if n >= THOUSAND {
-        format!("{}k", (n + THOUSAND / 2) / THOUSAND)
-    } else {
-        format!("{n}")
-    }
-}
+use crate::usage::compact_tokens;
 
 /// Cells of [`usage_bar`] that fit `used` of `total`, rounded to the
 /// nearest cell and clamped to the width. Integer math: token counts

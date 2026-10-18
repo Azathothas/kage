@@ -179,7 +179,11 @@ mod tests {
             None,
         ))];
         let mut buf = Buffer::new();
-        crate::populate_from_history(&mut buf, &history, &std::collections::HashMap::new(), None);
+        let timeline: Vec<kage_core::protocol::TimelineItem> = history
+            .iter()
+            .map(|m| kage_core::protocol::TimelineItem::Message(std::sync::Arc::clone(m)))
+            .collect();
+        crate::populate_from_history(&mut buf, &timeline, &std::collections::HashMap::new());
         assert_eq!(rows_at(&buf, 0), ["Thought for 11s"]);
         assert_eq!(rows_at(&buf, 1), ["Thought"]);
     }

@@ -60,6 +60,7 @@ fn header_always_carries_explicit_version() {
         kept: 4,
         summarized: 8,
         summary: "[summary of 8 turns]\nthings happened".into(),
+        before: Some(120_000),
     }))
     .unwrap();
     drop(w);

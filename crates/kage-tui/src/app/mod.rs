@@ -981,6 +981,15 @@ pub struct App {
     /// When the run in flight started, from the working flag's
     /// transition. `None` while idle.
     run_started: Option<Instant>,
+    /// The main session's compaction in flight: the turn counts its
+    /// `CompactionStarted` named, until the matching `Compaction` or
+    /// the run's end. `None` while no compaction runs.
+    compacting: Option<(usize, usize)>,
+    /// `before` tokens of the compaction card just pushed, waiting for
+    /// the next usage update to name the post-compaction fill. Cleared
+    /// at the run's end or a session switch, which leave the card
+    /// without a delta.
+    pending_compaction_before: Option<u64>,
     /// The task `/swarm <task>` submitted as a one-shot swarm: the
     /// mode turns itself off when that run ends. Cleared by an
     /// explicit `on`/`off` or a session switch.

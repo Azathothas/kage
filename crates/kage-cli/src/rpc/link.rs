@@ -218,8 +218,7 @@ fn snapshot(host: &Host, root: SessionId, path: &Path) -> Result<Vec<Envelope>, 
     let changed = HostEvent::SessionChanged {
         path: path.to_path_buf(),
         title: replay.title,
-        messages: replay.history.into_iter().map(Arc::new).collect(),
-        compaction: replay.compaction,
+        timeline: replay.timeline,
         compacted_agents: replay.compacted_agents.into_iter().map(Arc::new).collect(),
     };
     let mut out = vec![Envelope {

@@ -375,7 +375,16 @@ impl App {
     /// for its live agents, or just working. A running `swarm` call
     /// reports batch progress instead of a plain tool label.
     fn current_work(&self, buffer: &crate::Buffer) -> String {
-        use crate::view::tool_view::{ToolPhase, describe};
+        use crate::view::tool_view::{ToolPhase, describe, plural};
+        if self.focus.is_none()
+            && let Some((summarized, _)) = self.compacting
+        {
+            return format!(
+                "Compacting {} {}",
+                summarized,
+                plural(summarized, "turn", "turns")
+            );
+        }
         for block in buffer.blocks().iter().rev() {
             match block.as_ref() {
                 crate::Block::User { .. } => break,

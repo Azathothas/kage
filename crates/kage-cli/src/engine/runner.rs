@@ -311,7 +311,16 @@ impl Run {
                         notice(&bus, session, "compact: not enough history yet".to_owned());
                         Ok(())
                     }
-                    other => other.map(|_| ()),
+                    Ok(true) => Ok(()),
+                    // The user asked for this compaction, so unlike the
+                    // automatic path the failure must be visible: the
+                    // error event renders in every transcript, and the
+                    // run outcome carries it for reports.
+                    Err(LoopError::Cancelled) => Err(LoopError::Cancelled),
+                    Err(kind) => {
+                        emit(LoopEvent::Error { kind: kind.clone() });
+                        Err(kind)
+                    }
                 }
             }
         };

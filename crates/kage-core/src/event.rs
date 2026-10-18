@@ -222,6 +222,15 @@ pub enum LoopError {
         /// Human-readable detail.
         message: String,
     },
+    /// A history compaction failed: the summarizer call did not
+    /// produce a summary. The conversation is untouched, so hosts can
+    /// keep going with the full history; whether the run continues is
+    /// the caller's policy, not this variant's.
+    #[error("compaction failed: {message}")]
+    Compaction {
+        /// Human-readable detail, naming the underlying failure.
+        message: String,
+    },
     /// The loop was cancelled via its cancellation token.
     #[error("cancelled")]
     Cancelled,
@@ -381,6 +390,25 @@ pub enum LoopEvent {
         summarized: usize,
         /// Text of the synthetic message that replaced the summarized turns.
         summary: String,
+        /// Context fill in use right before the compaction spliced the
+        /// summary in, from the live budget. The fill after the
+        /// compaction is unknown here: it lands with the next turn's
+        /// real usage. Absent in event streams from older versions.
+        #[serde(default)]
+        before: u64,
+    },
+    /// History compaction began summarizing: the loop is about to call
+    /// the summarizer model, which can take a while. Transient, like
+    /// [`LoopEvent::ProviderRetry`], so UIs can show "compacting"
+    /// instead of a generic working state; the matching
+    /// [`LoopEvent::Compaction`] closes it. Not emitted when a plugin
+    /// hands over the summary, because that path never waits on a
+    /// model.
+    CompactionStarted {
+        /// Number of older turns the summarizer will read.
+        summarized: usize,
+        /// Number of recent turns that will stay verbatim.
+        kept: usize,
     },
     /// A transient provider failure that the loop is about to retry.
     /// Surfaced to the user as a non-persisted notice so the host can

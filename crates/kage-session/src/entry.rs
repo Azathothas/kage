@@ -203,6 +203,13 @@ pub struct Compaction {
     pub summarized: usize,
     /// Synthetic summary text inserted in place of the summarized turns.
     pub summary: String,
+    /// Context tokens in use right before the loop spliced the summary
+    /// in. Optional and defaulted so old sessions still parse; the
+    /// other half of a compaction card's token delta. The post-turn
+    /// fill is not stored: replay reads it from the first usage
+    /// recorded after this entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before: Option<u64>,
 }
 
 /// User-supplied label/bookmark anchored to a specific entry.
@@ -343,10 +350,29 @@ mod tests {
             kept: 4,
             summarized: 12,
             summary: "[summary of 12 earlier turns]\nuser asked about X.".into(),
+            before: Some(160_000),
         });
         let line = serde_json::to_string(&entry).unwrap();
         let back: SessionEntry = serde_json::from_str(&line).unwrap();
         assert_eq!(entry, back);
+    }
+
+    /// A compaction written before the `before` count existed parses
+    /// with it as `None`.
+    #[test]
+    fn compaction_without_before_reads_none() {
+        let line = format!(
+            "{{\"type\":\"compaction\",\"id\":\"{}\",\"ts\":\"2026-01-01T00:00:00Z\",\"kept\":2,\"summarized\":4,\"summary\":\"s\"}}",
+            ulid::Ulid::generate()
+        );
+        let back: SessionEntry = serde_json::from_str(&line).unwrap();
+        match back {
+            SessionEntry::Compaction(c) => {
+                assert_eq!(c.before, None);
+                assert_eq!(c.kept, 2);
+            }
+            other => panic!("expected compaction, got {other:?}"),
+        }
     }
 
     #[test]

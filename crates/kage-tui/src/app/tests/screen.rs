@@ -290,8 +290,7 @@ fn start_sessions_are_listed_on_session_changes_only() {
             kage_core::protocol::HostEvent::SessionChanged {
                 path: "/tmp/s.jsonl".into(),
                 title: None,
-                messages: Vec::new(),
-                compaction: None,
+                timeline: Vec::new(),
                 compacted_agents: Vec::new(),
             },
         ))
@@ -501,6 +500,26 @@ fn the_working_row_cuts_the_command_before_its_time_and_key() {
         "{label}"
     );
     assert_eq!(label.len(), 78, "{label}");
+}
+
+#[test]
+fn a_running_compaction_names_the_turns_it_is_summarizing() {
+    let buffer = shared_buffer();
+    lock(&buffer).push_user("hello");
+    let (tx, _rx) = mpsc::channel();
+    let mut app = app_with_defaults(buffer.clone(), tx);
+    app.set_editor_modeless(true);
+    app.run_started = Instant::now().checked_sub(Duration::from_secs(2));
+    app.compacting = Some((12, 4));
+    let secs = app.run_started.unwrap().elapsed().as_secs();
+    let label = app.activity_label(&lock(&buffer), 80).unwrap();
+    assert!(
+        label.starts_with(&format!("Compacting 12 turns ({secs}s")),
+        "{label}"
+    );
+    app.compacting = Some((1, 4));
+    let label = app.activity_label(&lock(&buffer), 80).unwrap();
+    assert!(label.starts_with("Compacting 1 turn ("), "{label}");
 }
 
 #[test]

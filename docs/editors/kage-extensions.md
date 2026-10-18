@@ -49,7 +49,7 @@ value but `false`) turns on `subagent_update` and child sessions.
 | --- | --- | --- |
 | `_kage/turn` | `phase` (`start`, `end`), `reason?` (`tool_calls`, `no_tool_calls`), `at?`, `tookMs?` | One provider round trip of the running prompt. A loaded session's history closes each run that ended with an `end` carrying when it ended (`at`, Unix seconds) and how long it took. |
 | `_kage/notice` | `tone` (`info`, `warn`, `error`, `success`), `text` | A message for the user that is not part of the conversation, such as `goal met: ...`. |
-| `_kage/compaction` | `kept`, `before`, `after` | Older turns were summarized: turns kept verbatim and context tokens before and after. |
+| `_kage/compaction` | `phase` (`started`, `complete`, `aborted`), `kept?`, `before?`, `after?`, `summarized?`, `summary?` | The compaction lifecycle in one update. `started`: the agent began summarizing, naming the turns the summarizer will read (`summarized`) and how many stay verbatim (`kept`). `complete`: older turns were summarized, with context tokens `before` and `after`, the turns the summary replaced and the framed `summary` text; `after` is absent when no turn reported usage after the compaction. `aborted`: the summarizer failed; history is intact and the run continues, with the reason as an error notice. An update without a `phase` is an older engine's `complete`. |
 | `_kage/mcp_status` | `name`, `status` (`connected`, `starting`, `needs_auth`, or `{ failed: { error } }`) | One MCP server's reachability changed. |
 
 A loaded session's history also carries the durations the engine

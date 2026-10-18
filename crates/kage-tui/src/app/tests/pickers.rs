@@ -629,8 +629,7 @@ fn the_session_picker_and_tree_mark_the_session_on_screen() {
             kage_core::protocol::HostEvent::SessionChanged {
                 path: format!("/tmp/{current}.jsonl").into(),
                 title: None,
-                messages: Vec::new(),
-                compaction: None,
+                timeline: Vec::new(),
                 compacted_agents: Vec::new(),
             }
             .into(),

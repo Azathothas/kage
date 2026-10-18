@@ -870,7 +870,7 @@ impl CliAcpAgent {
         let file_ids: HashSet<MessageId> = replay.history.iter().map(|m| m.id).collect();
         let snap = lock(&self.host.live).snapshot(id);
         if replay_file && let Some(ctx) = ctx {
-            for update in super::sessions::replay_updates(&replay.history) {
+            for update in super::sessions::replay_updates(&replay.timeline) {
                 ctx.update(update);
             }
             self.announce_restored(id, &replay, ctx);

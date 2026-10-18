@@ -803,6 +803,7 @@ mod tests {
             queue: Vec::new(),
             running: false,
             in_turn: false,
+            compacting: false,
             agents: Default::default(),
             plan: None,
             last_stop: None,

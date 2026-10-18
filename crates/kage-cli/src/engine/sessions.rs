@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chrono::Utc;
-use kage_core::protocol::{CompactionCounts, HostEvent, NoticeLevel, PastPrompt};
+use kage_core::protocol::{HostEvent, NoticeLevel, PastPrompt};
 use kage_core::{Content, Role, SessionId};
 use kage_session::{BranchEntry, EntryId, SessionEntry, SessionTree, SessionWriter};
 
@@ -150,6 +150,30 @@ pub(super) fn short_id(id: SessionId) -> String {
     id.to_string().chars().take(8).collect()
 }
 
+/// The markdown section for one compaction card: the counts, then the
+/// summary body without its machine framing.
+fn write_compaction_markdown(md: &mut String, record: &kage_core::protocol::CompactionRecord) {
+    use std::fmt::Write as _;
+    let _ = writeln!(md, "## Compacted history");
+    let _ = writeln!(md);
+    let _ = writeln!(
+        md,
+        "{}/{} turns summarized, summary follows.",
+        record.summarized,
+        record.summarized + record.kept,
+    );
+    let _ = writeln!(md);
+    let body = record
+        .summary
+        .strip_prefix(kage_core::message::COMPACTION_SUMMARY_PREFIX)
+        .unwrap_or(&record.summary);
+    let body = body
+        .strip_suffix(kage_core::message::COMPACTION_SUMMARY_SUFFIX)
+        .unwrap_or(body);
+    let _ = writeln!(md, "{}", body.trim());
+    let _ = writeln!(md);
+}
+
 /// Render a replayed session as a Markdown transcript. Plain text and
 /// fenced code only, no HTML, so the file stays greppable and
 /// ASCII-clean.
@@ -163,7 +187,14 @@ pub(crate) fn render_session_markdown(replay: &kage_session::ReplayResult) -> St
     let _ = writeln!(md, "- created: {}", replay.header.ts.to_rfc3339());
     let _ = writeln!(md, "- cwd: `{}`", replay.header.cwd.display());
     let _ = writeln!(md);
-    for msg in &replay.history {
+    for item in &replay.timeline {
+        let msg = match item {
+            kage_core::protocol::TimelineItem::Compaction(record) => {
+                write_compaction_markdown(&mut md, record);
+                continue;
+            }
+            kage_core::protocol::TimelineItem::Message(message) => message,
+        };
         let role = match msg.role {
             Role::User => "User",
             Role::Assistant => "Assistant",
@@ -391,7 +422,7 @@ impl super::Dispatcher {
             cx,
             recorder,
             None,
-            None,
+            Vec::new(),
             Vec::new(),
             format!("new session: {}", short_id(new_id)),
         );
@@ -472,7 +503,7 @@ impl super::Dispatcher {
             cx,
             recorder,
             replay.title,
-            replay.compaction,
+            replay.timeline,
             replay.compacted_agents.into_iter().map(Arc::new).collect(),
             message,
         );
@@ -516,7 +547,10 @@ impl super::Dispatcher {
             cx,
             recorder,
             stored.as_ref().and_then(|s| s.title.clone()),
-            stored.as_ref().and_then(|s| s.compaction),
+            stored
+                .as_ref()
+                .map(|s| s.timeline.clone())
+                .unwrap_or_default(),
             stored
                 .map(|s| s.compacted_agents.into_iter().map(Arc::new).collect())
                 .unwrap_or_default(),
@@ -617,7 +651,7 @@ impl super::Dispatcher {
             self.error(id, format!("{what}: the session is not recorded"));
             return;
         };
-        let (messages, state, usage, title, compaction, compacted_agents, fallback) = {
+        let (state, usage, title, timeline, compacted_agents, fallback) = {
             let Some(session) = self.sessions.get_mut(&id) else {
                 return;
             };
@@ -681,7 +715,6 @@ impl super::Dispatcher {
             kage_core::sync::lock(&session.inbox).clear();
             session.gate.reset_session();
             session.state.permission_mode = None;
-            let messages = cx.history.clone();
             session.idle = Some(super::Idle {
                 cx,
                 recorder: idle.recorder,
@@ -690,21 +723,13 @@ impl super::Dispatcher {
             let state = session.state.clone();
             let usage = session.usage;
             let title = replay.title;
-            let compaction = replay.compaction;
+            let timeline = replay.timeline;
             let compacted_agents = replay
                 .compacted_agents
                 .into_iter()
                 .map(Arc::new)
                 .collect::<Vec<_>>();
-            (
-                messages,
-                state,
-                usage,
-                title,
-                compaction,
-                compacted_agents,
-                fallback,
-            )
+            (state, usage, title, timeline, compacted_agents, fallback)
         };
         // The agents of this session forked from a history the rewind
         // rewrote.
@@ -730,8 +755,7 @@ impl super::Dispatcher {
             HostEvent::SessionChanged {
                 path,
                 title,
-                messages,
-                compaction,
+                timeline,
                 compacted_agents,
             },
         );
@@ -832,7 +856,7 @@ impl super::Dispatcher {
         cx: kage_loop::AgentContext,
         recorder: super::Recorder,
         title: Option<String>,
-        compaction: Option<CompactionCounts>,
+        timeline: Vec<kage_core::protocol::TimelineItem>,
         compacted_agents: Vec<Arc<kage_core::Message>>,
         message: String,
     ) {
@@ -841,7 +865,6 @@ impl super::Dispatcher {
         self.swarm_requeues.remove(&old);
         self.bus.forget(old);
         self.report_closed(old);
-        let messages = cx.history.clone();
         session.usage = super::usage_of(&cx);
         session.state.thinking = cx.thinking_level;
         super::fit_to_model(&mut session.state, &self.registry);
@@ -887,8 +910,7 @@ impl super::Dispatcher {
             HostEvent::SessionChanged {
                 path,
                 title,
-                messages,
-                compaction,
+                timeline,
                 compacted_agents,
             },
         );

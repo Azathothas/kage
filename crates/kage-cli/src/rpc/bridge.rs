@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use kage_acp::acp::{
-    AvailableCommandsUpdate, CompactionUpdate, ConfigOptionUpdate, ContentBlock, Cost,
-    CurrentModeUpdate, DiffContent, KageMeta, McpStatusUpdate, MessageChunk, NoticeTone,
+    AvailableCommandsUpdate, CompactionPhase, CompactionUpdate, ConfigOptionUpdate, ContentBlock,
+    Cost, CurrentModeUpdate, DiffContent, KageMeta, McpStatusUpdate, MessageChunk, NoticeTone,
     NoticeUpdate, Plan, QuestionChoice, QuestionPrompt, SessionConfigSelectOption,
     SessionInfoUpdate, SessionUpdate, SubagentSessionCapabilities, SubagentState, SubagentSwarm,
     SubagentUpdate, SubagentUsage, SwarmMeta, ToolCall, ToolCallContent, ToolCallMeta,
@@ -36,6 +36,20 @@ use super::mcp::prompt_commands;
 use super::options::{Settings, config_options};
 use super::{Held, Ids, PromptEnd, ShownBySession, Waiters};
 use crate::engine::Commander;
+
+/// A compaction whose post-compaction usage has not arrived yet: the
+/// counts and summary the loop reported, and the fill before it, so
+/// `_kage/compaction` can name the savings once the fill is known.
+pub(super) struct PendingCompaction {
+    /// Recent turns kept verbatim.
+    kept: u64,
+    /// Older turns the summary replaced.
+    summarized: u64,
+    /// The summary text the loop spliced into the history.
+    summary: Option<String>,
+    /// Context fill before the compaction, from the last usage report.
+    before: u64,
+}
 
 /// Updates buffered for one unannounced client session before later
 /// ones are dropped. A client that opens a session but never announces
@@ -87,9 +101,15 @@ pub(super) struct Bridge {
     /// tree, which a client without the subagents capability sees in
     /// the session's own cost.
     pub(super) pruned_cost: HashMap<SessionId, f64>,
-    /// Compactions waiting for the post-compaction usage: the turn
-    /// count kept and the fill before the compaction.
-    pub(super) compacting: HashMap<SessionId, (u64, u64)>,
+    /// Compactions this connection announced but has not closed: the
+    /// counts and summary the loop reported, and the fill before it,
+    /// so `_kage/compaction` can name the savings once the fill is
+    /// known.
+    pub(super) compacting: HashMap<SessionId, PendingCompaction>,
+    /// Sessions whose compaction began (`phase: started`) but has not
+    /// completed, so a run that ends in the middle still closes the
+    /// update with `phase: aborted`.
+    pub(super) compacting_started: HashSet<SessionId>,
     /// Streaming children the engine requeued after a rate limit, so
     /// the `RunEnded` that precedes their next run does not end them.
     pub(super) paused: HashSet<SessionId>,
@@ -333,12 +353,15 @@ impl Bridge {
     /// The tail of an ended run: withdraw its asks, drop the per-run
     /// state, and settle the prompt end. Shared by the client path and
     /// by sessions whose id mapping is already gone, so a prompt that
-    /// outlives its `session/close` still gets its answer.
+    /// outlives its `session/close` still gets its answer. Callers
+    /// with a client close an open compaction first, through
+    /// [`Self::finish_compaction`].
     fn run_ended(&mut self, session: SessionId, outcome: &RunOutcome) {
         self.end_asks(session);
         self.seen.remove(&session);
         self.names.remove(&session);
         self.compacting.remove(&session);
+        self.compacting_started.remove(&session);
         let stop = self.stops.remove(&session);
         let end = PromptEnd {
             outcome: outcome.clone(),
@@ -348,40 +371,29 @@ impl Bridge {
         self.settle(session);
     }
 
+    /// Closes a compaction the run is ending with: one that completed
+    /// reads `complete` with the last known fill standing in for the
+    /// after-value no turn ever reported, and one still summarizing
+    /// reads `aborted`, so the client's compacting state never sticks.
+    fn finish_compaction(&mut self, session: SessionId, client_id: &str) {
+        if let Some(pending) = self.compacting.remove(&session) {
+            let update = SessionUpdate::Compaction(CompactionUpdate {
+                phase: CompactionPhase::Complete,
+                kept: Some(pending.kept),
+                summarized: Some(pending.summarized),
+                before: Some(pending.before),
+                after: None,
+                summary: pending.summary,
+            });
+            self.send(session, client_id, update);
+        } else if self.compacting_started.remove(&session) {
+            self.send(session, client_id, compaction_aborted());
+        }
+    }
+
     fn handle_client(&mut self, session: SessionId, client_id: String, event: &Event) {
         match event {
-            Event::Loop(event) => {
-                if let LoopEvent::MessageEnd {
-                    stop_reason, usage, ..
-                } = event
-                {
-                    self.stops.insert(session, *stop_reason);
-                    let fill = usage.input + usage.output + usage.cache_read + usage.cache_write;
-                    self.observe_turn_end(session, &client_id, fill);
-                }
-                if let LoopEvent::Compaction { kept, .. } = event {
-                    self.observe_compaction(session, *kept);
-                }
-                if let LoopEvent::MessageAppended { message } = event {
-                    self.echo(session, &client_id, message);
-                }
-                if let LoopEvent::ToolCallStart { id, name, .. } = event {
-                    self.names
-                        .entry(session)
-                        .or_default()
-                        .insert(id.to_string(), name.clone());
-                }
-                let seen = self.seen.entry(session).or_default();
-                if let Some(update) = to_update(seen, event) {
-                    self.send(session, &client_id, update);
-                }
-                if let LoopEvent::ToolCallEnd { id, output } = event
-                    && self.call_name(session, id) == Some("todo_list")
-                    && let Some(plan) = todo_plan(output)
-                {
-                    self.send(session, &client_id, plan);
-                }
-            }
+            Event::Loop(event) => self.handle_loop_event(session, &client_id, event),
             Event::Host(HostEvent::PermissionRequested {
                 request_id,
                 tool_call_id,
@@ -431,9 +443,75 @@ impl Bridge {
                 self.mcp_servers(session, &client_id, servers);
             }
             Event::Host(HostEvent::RunEnded { outcome }) => {
+                self.finish_compaction(session, &client_id);
                 self.run_ended(session, outcome);
             }
             Event::Host(_) => {}
+        }
+    }
+
+    /// Fold one engine loop event into what the client sees: turn-end
+    /// usage pairing, compaction phase updates, message echo, tool-name
+    /// learning, the translated update stream, and the todo plan card.
+    fn handle_loop_event(&mut self, session: SessionId, client_id: &str, event: &LoopEvent) {
+        if let LoopEvent::MessageEnd {
+            stop_reason, usage, ..
+        } = event
+        {
+            self.stops.insert(session, *stop_reason);
+            let fill = usage.input + usage.output + usage.cache_read + usage.cache_write;
+            self.observe_turn_end(session, client_id, fill);
+        }
+        if let LoopEvent::Compaction {
+            kept,
+            summarized,
+            summary,
+            before,
+        } = event
+        {
+            self.observe_compaction(session, client_id, *kept, *summarized, *before, summary);
+        }
+        if let LoopEvent::CompactionStarted { summarized, kept } = event {
+            self.compacting_started.insert(session);
+            let update = SessionUpdate::Compaction(CompactionUpdate {
+                phase: CompactionPhase::Started,
+                kept: Some(u64::try_from(*kept).unwrap_or_default()),
+                summarized: Some(u64::try_from(*summarized).unwrap_or_default()),
+                before: None,
+                after: None,
+                summary: None,
+            });
+            self.send(session, client_id, update);
+        }
+        if let LoopEvent::Error {
+            kind: LoopError::Compaction { .. },
+        } = event
+        {
+            // The summarizer failed: close the phase now so the
+            // client's compacting state does not stick for the rest of
+            // the run, which continues.
+            if self.compacting_started.remove(&session) {
+                self.send(session, client_id, compaction_aborted());
+            }
+        }
+        if let LoopEvent::MessageAppended { message } = event {
+            self.echo(session, client_id, message);
+        }
+        if let LoopEvent::ToolCallStart { id, name, .. } = event {
+            self.names
+                .entry(session)
+                .or_default()
+                .insert(id.to_string(), name.clone());
+        }
+        let seen = self.seen.entry(session).or_default();
+        if let Some(update) = to_update(seen, event) {
+            self.send(session, client_id, update);
+        }
+        if let LoopEvent::ToolCallEnd { id, output } = event
+            && self.call_name(session, id) == Some("todo_list")
+            && let Some(plan) = todo_plan(output)
+        {
+            self.send(session, client_id, plan);
         }
     }
 
@@ -510,21 +588,56 @@ impl Bridge {
     }
 
     /// Remembers a compaction until the post-compaction usage arrives.
-    fn observe_compaction(&mut self, session: SessionId, kept: usize) {
-        let before = self.fills.get(&session).copied().unwrap_or_default();
-        let kept = u64::try_from(kept).unwrap_or_default();
-        self.compacting.insert(session, (kept, before));
+    /// `before` comes from the loop event: the fill the budget saw
+    /// right before it spliced the summary in. A compaction still
+    /// waiting for usage, which overflow recovery can produce by
+    /// compacting twice with no turn in between, is delivered first
+    /// without an `after`, so its card is never overwritten.
+    fn observe_compaction(
+        &mut self,
+        session: SessionId,
+        client_id: &str,
+        kept: usize,
+        summarized: usize,
+        before: u64,
+        summary: &str,
+    ) {
+        self.compacting_started.remove(&session);
+        if let Some(pending) = self.compacting.remove(&session) {
+            self.send(
+                session,
+                client_id,
+                SessionUpdate::Compaction(CompactionUpdate {
+                    phase: CompactionPhase::Complete,
+                    kept: Some(pending.kept),
+                    summarized: Some(pending.summarized),
+                    before: Some(pending.before),
+                    after: None,
+                    summary: pending.summary,
+                }),
+            );
+        }
+        let pending = PendingCompaction {
+            kept: u64::try_from(kept).unwrap_or_default(),
+            summarized: u64::try_from(summarized).unwrap_or_default(),
+            summary: Some(summary.to_owned()),
+            before,
+        };
+        self.compacting.insert(session, pending);
     }
 
     /// Records the fill a finished turn reported and answers a pending
     /// compaction with it.
     fn observe_turn_end(&mut self, session: SessionId, client_id: &str, fill: u64) {
         self.fills.insert(session, fill);
-        if let Some((kept, before)) = self.compacting.remove(&session) {
+        if let Some(pending) = self.compacting.remove(&session) {
             let update = SessionUpdate::Compaction(CompactionUpdate {
-                kept,
-                before,
-                after: fill,
+                phase: CompactionPhase::Complete,
+                kept: Some(pending.kept),
+                summarized: Some(pending.summarized),
+                before: Some(pending.before),
+                after: Some(fill),
+                summary: pending.summary,
             });
             self.send(session, client_id, update);
         }
@@ -1168,6 +1281,19 @@ pub(super) fn to_update(
         LoopEvent::Error { kind } => Some(notice_update(NoticeLevel::Error, kind.to_string())),
         _ => None,
     }
+}
+
+/// The `aborted` phase update that closes a compaction whose
+/// summarizer failed.
+fn compaction_aborted() -> SessionUpdate {
+    SessionUpdate::Compaction(CompactionUpdate {
+        phase: CompactionPhase::Aborted,
+        kept: None,
+        summarized: None,
+        before: None,
+        after: None,
+        summary: None,
+    })
 }
 
 /// The update a streamed tool call input sends: `tool_call` on the

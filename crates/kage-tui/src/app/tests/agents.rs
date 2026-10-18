@@ -511,8 +511,7 @@ fn the_main_session_change_forgets_its_agents() {
             kage_core::protocol::HostEvent::SessionChanged {
                 path: std::path::PathBuf::from("/tmp/s.jsonl"),
                 title: None,
-                messages: Vec::new(),
-                compaction: None,
+                timeline: Vec::new(),
                 compacted_agents: Vec::new(),
             }
             .into(),
@@ -905,8 +904,7 @@ fn the_main_session_change_while_focused_returns_to_the_main_view() {
             kage_core::protocol::HostEvent::SessionChanged {
                 path: std::path::PathBuf::from("/tmp/s.jsonl"),
                 title: None,
-                messages: Vec::new(),
-                compaction: None,
+                timeline: Vec::new(),
                 compacted_agents: Vec::new(),
             }
             .into(),
@@ -1506,8 +1504,10 @@ fn resumed_app() -> (
             kage_core::protocol::HostEvent::SessionChanged {
                 path: std::path::PathBuf::from("/tmp/s.jsonl"),
                 title: None,
-                messages: vec![std::sync::Arc::new(call), std::sync::Arc::new(result)],
-                compaction: None,
+                timeline: vec![
+                    kage_core::protocol::TimelineItem::Message(std::sync::Arc::new(call)),
+                    kage_core::protocol::TimelineItem::Message(std::sync::Arc::new(result)),
+                ],
                 compacted_agents: Vec::new(),
             }
             .into(),
@@ -1600,11 +1600,14 @@ fn a_resume_lists_agents_at_every_depth_with_their_recorded_stats() {
             kage_core::protocol::HostEvent::SessionChanged {
                 path: std::path::PathBuf::from("/tmp/s.jsonl"),
                 title: None,
-                messages: vec![
-                    std::sync::Arc::new(call("a1", "map src")),
-                    std::sync::Arc::new(result("a1", child)),
+                timeline: vec![
+                    kage_core::protocol::TimelineItem::Message(std::sync::Arc::new(call(
+                        "a1", "map src",
+                    ))),
+                    kage_core::protocol::TimelineItem::Message(std::sync::Arc::new(result(
+                        "a1", child,
+                    ))),
                 ],
-                compaction: None,
                 compacted_agents: Vec::new(),
             }
             .into(),
@@ -1670,11 +1673,18 @@ fn a_resume_lists_the_agents_its_compactions_summarized() {
             kage_core::protocol::HostEvent::SessionChanged {
                 path: std::path::PathBuf::from("/tmp/s.jsonl"),
                 title: None,
-                messages: vec![summary],
-                compaction: Some(kage_core::protocol::CompactionCounts {
-                    summarized: 2,
-                    kept: 0,
-                }),
+                timeline: vec![
+                    kage_core::protocol::TimelineItem::Message(std::sync::Arc::clone(&summary)),
+                    kage_core::protocol::TimelineItem::Compaction(
+                        kage_core::protocol::CompactionRecord {
+                            summarized: 2,
+                            kept: 0,
+                            before: None,
+                            after: None,
+                            summary: "summary".into(),
+                        },
+                    ),
+                ],
                 compacted_agents: vec![call("a1", "map src"), result("a1", child)],
             }
             .into(),

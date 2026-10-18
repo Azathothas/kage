@@ -131,10 +131,10 @@ fn a_link_attaching_mid_turn_sees_the_flight_once_and_its_answer_wins() {
     let mut link = LinkClient::attach(&h.host, h.id).unwrap();
     let call_1 = |envelope: &Envelope| matches!(&envelope.event, Event::Loop(LoopEvent::ToolCallStart { id, .. }) if id.0 == "call_1");
     let mut seen = link.until(call_1);
-    let Some(HostEvent::SessionChanged { messages, .. }) = host_event(&seen[0]) else {
+    let Some(HostEvent::SessionChanged { timeline, .. }) = host_event(&seen[0]) else {
         panic!("the link opened with {:?}", seen[0]);
     };
-    assert_eq!(messages.len(), 1, "the recorded prompt");
+    assert_eq!(timeline.len(), 1, "the recorded prompt");
     assert!(seen.iter().any(|envelope| matches!(
         host_event(envelope),
         Some(HostEvent::StateChanged { state }) if state.working

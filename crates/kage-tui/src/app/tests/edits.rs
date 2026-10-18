@@ -124,16 +124,15 @@ fn a_resumed_session_shows_line_diffs_and_no_diff_for_a_failed_edit() {
             ),
         ]
     };
-    let messages = turn("c1", "let y = 2;", false)
+    let messages: Vec<kage_core::protocol::TimelineItem> = turn("c1", "let y = 2;", false)
         .into_iter()
         .chain(turn("c2", "let q = 9;", true))
-        .map(std::sync::Arc::new)
+        .map(|m| kage_core::protocol::TimelineItem::Message(std::sync::Arc::new(m)))
         .collect();
     let changed = kage_core::protocol::HostEvent::SessionChanged {
         path: dir.path().join("s.jsonl"),
         title: None,
-        messages,
-        compaction: None,
+        timeline: messages,
         compacted_agents: Vec::new(),
     };
     feed(&mut app, &events, vec![changed.into()]);

@@ -23,7 +23,7 @@ use kage_core::{CancelFlag, Content, LoopError, LoopEvent, Message, MessageId, R
 use kage_provider::{Provider, ProviderError, StreamRequest};
 use kage_tools::ToolRegistry;
 
-use crate::compact::maybe_compact;
+use crate::compact::{KEEP_RECENT, MAX_OVERFLOW_COMPACTIONS, compact_with_keep, maybe_compact};
 use crate::dispatch::{dispatch_tool_calls, dispatch_tool_calls_parallel, unrun_results};
 use crate::doom::DoomTracker;
 use crate::stream::{TurnFailure, TurnResult, collect_turn};
@@ -132,21 +132,18 @@ where
                 return Err(kind);
             }
 
-            let mut req = build_request(cx, tools, provider);
-            if let Err(message) = hooks.transform_provider_request(&mut req) {
-                let kind = LoopError::HookFailed {
-                    hook: "transform_provider_request".to_owned(),
-                    message,
-                };
-                emit(LoopEvent::Error { kind: kind.clone() });
-                return Err(kind);
-            }
-            let parent = cx.history.last().map(|m| m.id);
             // Auto-retry a transiently-failed turn. The conversation
-            // context is unchanged across attempts - no assistant
-            // message is appended on failure - so re-issuing the
-            // identical request is a clean re-request, not a resume
+            // context is unchanged across ordinary attempts - no
+            // assistant message is appended on failure - so re-issuing
+            // the identical request is a clean re-request, not a resume
             // (SSE has no resume token).
+            //
+            // A context-overflow rejection is the one failure that
+            // changes context between attempts: the loop compacts
+            // harder (a smaller keep window each round, at most
+            // `MAX_OVERFLOW_COMPACTIONS` rounds) and rebuilds the
+            // request from the shrunk history. That is why the request
+            // is constructed inside the attempt loop.
             //
             // Event contract for `LoopEvent::ProviderRetry`: every
             // delta streamed since the last `MessageEnd` belonged to a
@@ -160,11 +157,22 @@ where
             // from scratch; no deltas are replayed.
             let turn = {
                 let mut attempt: u32 = 0;
+                let mut overflow_round: u32 = 0;
                 loop {
                     if cancel.is_cancelled() {
                         return finish_cancelled(&mut emit);
                     }
-                    match stream_one_attempt(provider, req.clone(), parent, cancel, &mut emit) {
+                    let mut req = build_request(cx, tools, provider);
+                    if let Err(message) = hooks.transform_provider_request(&mut req) {
+                        let kind = LoopError::HookFailed {
+                            hook: "transform_provider_request".to_owned(),
+                            message,
+                        };
+                        emit(LoopEvent::Error { kind: kind.clone() });
+                        return Err(kind);
+                    }
+                    let parent = cx.history.last().map(|m| m.id);
+                    match stream_one_attempt(provider, req, parent, cancel, &mut emit) {
                         Ok(t) => break t,
                         Err(TurnFailure::Fatal(kind)) => {
                             emit(LoopEvent::Error { kind: kind.clone() });
@@ -174,6 +182,32 @@ where
                             return finish_cancelled(&mut emit);
                         }
                         Err(TurnFailure::Provider(e)) => {
+                            let overflow = e.is_context_overflow();
+                            // Recovery compaction honors the user's
+                            // `compaction_threshold: 0` (compaction
+                            // off): with it off, the overflow error
+                            // surfaces instead of rewriting history.
+                            if overflow
+                                && config.compaction_threshold > 0.0
+                                && overflow_round < MAX_OVERFLOW_COMPACTIONS
+                            {
+                                overflow_round += 1;
+                                match compact_with_keep(
+                                    cx,
+                                    provider,
+                                    cancel,
+                                    hooks,
+                                    &mut emit,
+                                    KEEP_RECENT >> overflow_round,
+                                ) {
+                                    Ok(true) => continue,
+                                    Ok(false) => {}
+                                    Err(kind) => {
+                                        emit(LoopEvent::Error { kind: kind.clone() });
+                                        return Err(kind);
+                                    }
+                                }
+                            }
                             let exhausted = attempt >= config.max_provider_retries;
                             if exhausted || !e.is_transient() {
                                 let kind = match e {
@@ -193,6 +227,7 @@ where
                                             retry_after_secs: None,
                                         }
                                     }
+                                    _other if overflow => LoopError::ContextOverflow,
                                     other => LoopError::Provider {
                                         message: other.to_string(),
                                     },

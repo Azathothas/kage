@@ -106,6 +106,20 @@ impl App {
                     self.pending_delivered(None);
                 }
                 crate::events::apply_loop_event(&mut lock(&self.root_buffer), &event);
+                match &event {
+                    LoopEvent::CompactionStarted { summarized, kept } => {
+                        self.compacting = Some((*summarized, *kept));
+                    }
+                    LoopEvent::Compaction { before, .. } => {
+                        self.compacting = None;
+                        self.pending_compaction_before = Some(*before);
+                    }
+                    // An error while the indicator is up is the
+                    // compaction failing: close it so the modeline
+                    // does not claim a compaction that is over.
+                    LoopEvent::Error { .. } => self.compacting = None,
+                    _ => {}
+                }
                 if let LoopEvent::ToolCallEnd { id, .. } = &event {
                     self.card_ended(main, id);
                     self.annotate_edits(&self.root_buffer);
@@ -235,6 +249,9 @@ impl App {
                     usage.context_window = totals.context_window;
                     usage.total_cost = totals.cost;
                 }
+                if let Some(before) = self.pending_compaction_before.take() {
+                    self.pair_compaction_tokens(before, totals.context_used);
+                }
             }
             HostEvent::Notice {
                 level,
@@ -243,11 +260,10 @@ impl App {
             } => self.toast(level, text),
             HostEvent::Notice { level, text, .. } => push_notice(&self.root_buffer, level, text),
             HostEvent::SessionChanged {
-                messages,
-                compaction,
+                timeline,
                 compacted_agents,
                 ..
-            } => self.session_changed(&messages, &compacted_agents, compaction),
+            } => self.session_changed(&timeline, &compacted_agents),
             HostEvent::ShellOutput { command, tail } => {
                 show_running_shell(&self.root_buffer, &command, &tail);
             }
@@ -283,6 +299,8 @@ impl App {
             HostEvent::RunStarted => self.run_started = Some(Instant::now()),
             HostEvent::RunEnded { .. } => {
                 self.run_started = None;
+                self.compacting = None;
+                self.pending_compaction_before = None;
                 self.end_run(self.active_session.unwrap_or_default());
                 self.end_swarm_oneshot();
             }
@@ -295,6 +313,21 @@ impl App {
             | HostEvent::AgentSpawned { .. }
             | HostEvent::AgentPaused { .. } => {}
         }
+    }
+
+    /// Fold the post-compaction fill into the newest bare compaction
+    /// card. A zero fill carries no usable post-compaction size, so the
+    /// pairing waits for the next usage update instead.
+    fn pair_compaction_tokens(&mut self, before: u64, context_used: u64) {
+        if context_used == 0 {
+            self.pending_compaction_before = Some(before);
+            return;
+        }
+        crate::events::amend_compaction_with_usage(
+            &mut lock(&self.root_buffer),
+            before,
+            context_used,
+        );
     }
 
     /// Apply an envelope of an agent under the main session to that
@@ -504,7 +537,11 @@ impl App {
             {
                 let mut buf = lock(&buffer);
                 let durations = crate::events::tool_durations(&messages);
-                crate::events::populate_from_history(&mut buf, &messages, &durations, None);
+                let timeline: Vec<kage_core::protocol::TimelineItem> = messages
+                    .iter()
+                    .map(|message| kage_core::protocol::TimelineItem::Message(Arc::clone(message)))
+                    .collect();
+                crate::events::populate_from_history(&mut buf, &timeline, &durations);
                 buf.trim_scrollback();
             }
             self.annotate_edits(&buffer);
@@ -837,9 +874,8 @@ impl App {
     /// agents, and forget the views of the one it left.
     fn session_changed(
         &mut self,
-        messages: &[std::sync::Arc<kage_core::Message>],
+        timeline: &[kage_core::protocol::TimelineItem],
         compacted_agents: &[std::sync::Arc<kage_core::Message>],
-        compaction: Option<kage_core::protocol::CompactionCounts>,
     ) {
         // The common resume keeps the main view focused, so
         // `set_focus`'s same-view early return would skip these
@@ -856,16 +892,24 @@ impl App {
         self.agents.clear();
         self.agent_buffers.clear();
         self.swarm_oneshot = None;
+        self.pending_compaction_before = None;
+        let messages: Vec<std::sync::Arc<kage_core::Message>> = timeline
+            .iter()
+            .filter_map(|item| match item {
+                kage_core::protocol::TimelineItem::Message(message) => Some(Arc::clone(message)),
+                kage_core::protocol::TimelineItem::Compaction(_) => None,
+            })
+            .collect();
         self.restore_agents(
             self.active_session.unwrap_or_default(),
             compacted_agents,
-            messages,
+            &messages,
         );
-        let durations = crate::events::tool_durations(messages);
+        let durations = crate::events::tool_durations(&messages);
         {
             let mut buf = lock(&self.root_buffer);
             buf.clear();
-            crate::events::populate_from_history(&mut buf, messages, &durations, compaction);
+            crate::events::populate_from_history(&mut buf, timeline, &durations);
         }
         self.annotate_edits(&self.root_buffer);
         self.on_session_changed();
