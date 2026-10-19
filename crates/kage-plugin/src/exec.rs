@@ -43,6 +43,11 @@ const POLL_INTERVAL: Duration = Duration::from_millis(25);
 /// result's `truncated` flag is set.
 const EXEC_OUTPUT_MAX: u64 = 1024 * 1024;
 
+/// Largest accepted `timeout_secs`. A value near `Instant`'s range
+/// would overflow `Instant::now() + timeout`; anything past a month
+/// is a spec mistake, not a wait.
+const MAX_EXEC_TIMEOUT_SECS: u64 = 30 * 24 * 60 * 60;
+
 /// Read one pipe up to [`EXEC_OUTPUT_MAX`], reporting whether more
 /// output was dropped.
 fn drain(pipe: impl Read) -> (Vec<u8>, bool) {
@@ -89,6 +94,11 @@ pub(crate) fn register(registry: &CapabilityRegistry, workdir: PathBuf) {
                         return Err(mlua::Error::external(
                             "kage.exec: `timeout_secs` must be at least 1",
                         ));
+                    }
+                    if timeout_secs.is_some_and(|s| s > MAX_EXEC_TIMEOUT_SECS) {
+                        return Err(mlua::Error::external(format!(
+                            "kage.exec: `timeout_secs` must be at most {MAX_EXEC_TIMEOUT_SECS}"
+                        )));
                     }
                     let timeout = timeout_secs.map_or(DEFAULT_EXEC_TIMEOUT, |s| {
                         Duration::from_secs(s).max(Duration::from_secs(1))
@@ -246,6 +256,19 @@ mod tests {
         let rt = rt_with_exec();
         let res = rt.eval_plugin("p", "kage.request_capabilities({'exec'}); kage.exec({})");
         assert!(res.is_err(), "missing cmd must raise, got {res:?}");
+    }
+
+    #[test]
+    fn exec_rejects_an_oversized_timeout() {
+        let rt = rt_with_exec();
+        let err = rt
+            .eval_plugin(
+                "p",
+                "kage.request_capabilities({'exec'}); \
+                 kage.exec({ cmd = 'true', timeout_secs = math.maxinteger })",
+            )
+            .unwrap_err();
+        assert!(err.to_string().contains("timeout_secs"), "{err}");
     }
 
     #[test]
