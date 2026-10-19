@@ -393,6 +393,19 @@ where
         loop {
             let mut line = String::new();
             let n = match reader.by_ref().take(MAX_LINE + 1).read_line(&mut line) {
+                // A line that is not valid UTF-8 can never parse, so
+                // it gets the over-cap treatment: report once, then
+                // drop the connection. Clean EOF and genuine I/O
+                // errors stay silent.
+                Err(e) if e.kind() == std::io::ErrorKind::InvalidData => {
+                    let _ = reply_error(
+                        &reader_peer,
+                        &serde_json::Value::Null,
+                        -32700,
+                        "line is not valid UTF-8",
+                    );
+                    break;
+                }
                 Ok(0) | Err(_) => break,
                 Ok(n) => n,
             };
@@ -517,15 +530,16 @@ fn route_line(
 /// dropped: the spec forbids replying to a response.
 fn route_response(pending: &Pending, id: i64, obj: &serde_json::Map<String, serde_json::Value>) {
     if let Some(tx) = lock(pending).remove(&id) {
-        let outcome = obj.get("error").map_or_else(
-            || {
-                Ok(obj
-                    .get("result")
-                    .cloned()
-                    .unwrap_or(serde_json::Value::Null))
-            },
-            |err| Err(RpcError::from_value(err)),
-        );
+        let outcome = match (obj.get("error"), obj.get("result")) {
+            (Some(err), _) => Err(RpcError::from_value(err)),
+            (None, Some(result)) => Ok(result.clone()),
+            // A memberless response must not reach the caller as a
+            // successful null: the spec wants exactly one of the two.
+            (None, None) => Err(RpcError::new(
+                -32600,
+                "invalid response: expected result or error",
+            )),
+        };
         let _ = tx.send(outcome);
     }
 }
@@ -806,6 +820,53 @@ mod tests {
             Err(mpsc::RecvTimeoutError::Disconnected) => {}
             other => panic!("expected disconnect, got {other:?}"),
         }
+    }
+
+    /// A line the parser can never accept gets the over-cap
+    /// treatment: one `-32700` reply, then the connection ends, so
+    /// the peer sees the reason instead of a bare close.
+    #[test]
+    fn a_non_utf8_line_replies_32700_and_ends_the_stream() {
+        let (in_r, mut in_w) = std::io::pipe().unwrap();
+        let (out_r, out_w) = std::io::pipe().unwrap();
+        let (_peer, inbound, _h) = connect(BufReader::new(in_r), out_w);
+        in_w.write_all(b"{\"jsonrpc\":\"2.0\",\xff\n").unwrap();
+        let mut reply = String::new();
+        BufReader::new(out_r).read_line(&mut reply).unwrap();
+        assert!(reply.contains("-32700"), "{reply}");
+        assert!(reply.contains("UTF-8"), "{reply}");
+        match inbound.recv_timeout(Duration::from_secs(5)) {
+            Err(mpsc::RecvTimeoutError::Disconnected) => {}
+            other => panic!("expected disconnect, got {other:?}"),
+        }
+    }
+
+    /// A response object carrying neither member must reach the
+    /// waiting caller as an error, not as a successful `null`.
+    #[test]
+    fn a_response_with_neither_result_nor_error_is_an_error() {
+        let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        lock(&pending).insert(7, tx);
+        let obj: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(r#"{"jsonrpc":"2.0","id":7}"#).unwrap();
+        route_response(&pending, 7, &obj);
+        let err = rx.recv().unwrap().unwrap_err();
+        assert_eq!(err.code, -32600);
+        assert!(err.message.contains("result or error"), "{err}");
+    }
+
+    /// The control for the test above: a legitimate `{"result": null}`
+    /// still succeeds, so the fix does not turn nulls into errors.
+    #[test]
+    fn an_explicit_null_result_still_succeeds() {
+        let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        lock(&pending).insert(7, tx);
+        let obj: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(r#"{"jsonrpc":"2.0","id":7,"result":null}"#).unwrap();
+        route_response(&pending, 7, &obj);
+        assert_eq!(rx.recv().unwrap().unwrap(), serde_json::Value::Null);
     }
 
     /// A near-cap inbound line must survive: the reader must not
