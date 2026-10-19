@@ -2880,7 +2880,10 @@ pub fn run() {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("kage client")
+            .with_title("kage")
+            // Matches the `kage.desktop` entry the release ships, so a
+            // Wayland shell groups the window under its launcher.
+            .with_app_id("kage")
             .with_inner_size([1100.0, 760.0])
             .with_min_inner_size([960.0, 640.0])
             // The runtime icon applies on X11 only; the other
@@ -2891,7 +2894,7 @@ pub fn run() {
     #[cfg(target_os = "linux")]
     let appearance = crate::appearance::watch();
     eframe::run_native(
-        "kage client",
+        "kage",
         options,
         Box::new(move |cc| {
             let theme = prefs.theme.clone();

@@ -684,7 +684,7 @@ const PAGE: &str = concat!(
     "<html lang=\"en\">\n",
     "<head>\n",
     "<meta charset=\"utf-8\">\n",
-    "<title>kage client</title>\n",
+    "<title>kage</title>\n",
     "</head>\n",
     "<body>\n",
     "<script type=\"module\" src=\"./boot.js\"></script>\n",

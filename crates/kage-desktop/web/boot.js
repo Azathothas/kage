@@ -101,7 +101,7 @@ async function boot() {
 
 function failure(error) {
   const pre = document.createElement("pre");
-  pre.textContent = "kage client failed to load: " + error;
+  pre.textContent = "kage failed to load: " + error;
   pre.style.color = "#f2727f";
   pre.style.padding = "2em";
   pre.style.whiteSpace = "pre-wrap";
@@ -114,7 +114,7 @@ function connectionForm() {
   const form = document.createElement("form");
 
   const title = document.createElement("h1");
-  title.textContent = "kage client";
+  title.textContent = "kage";
   form.append(title);
 
   const hint = document.createElement("p");
