@@ -168,8 +168,7 @@ fn override_command_shadows_builtin_and_dispatches_first() {
 fn the_plugin_session_list_carries_the_session_id_not_the_title() {
     let (mut app, _rx, _events) = app_with_events();
     app.set_session_lister(Box::new(|_| {
-        vec![PickItem::simple("/tmp/sessions/abc123.jsonl")
-            .with_label("My Session Title")]
+        vec![PickItem::simple("/tmp/sessions/abc123.jsonl").with_label("My Session Title")]
     }));
     let list = kage_plugin::sessions::shared_session_list();
     app.set_plugin_session_list(list.clone());

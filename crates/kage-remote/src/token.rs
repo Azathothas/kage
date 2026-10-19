@@ -193,7 +193,11 @@ mod tests {
         let before = fs::read(&path).unwrap();
         let err = Token::load_or_create(&path).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::InvalidData, "{err}");
-        assert_eq!(fs::read(&path).unwrap(), before, "the file must be untouched");
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            before,
+            "the file must be untouched"
+        );
     }
 
     #[test]

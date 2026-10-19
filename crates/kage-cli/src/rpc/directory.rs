@@ -271,7 +271,8 @@ mod tests {
     use super::{FRESH_FOR, FetchCache, MAX_CACHED, fetch_url, parse, vet};
 
     #[test]
-    fn a_directory_lists_its_tool_calling_models() {        let json = r#"{
+    fn a_directory_lists_its_tool_calling_models() {
+        let json = r#"{
             "lab": {
                 "id": "lab", "name": "Lab", "api": "https://lab/v1", "env": ["LAB_KEY"],
                 "npm": "@ai-sdk/openai-compatible",
