@@ -2,10 +2,10 @@
 //!
 //! Lists the four directories kage resolves (config, data, state,
 //! cache), then walks a fixed checklist (config, credentials, auth
-//! file permissions, state-dir writability, providers, plugins, mcp)
-//! and prints one row per item with status + body. The closing
-//! verdict names the checks that ran. Exit code is `0` when every
-//! check is OK or WARN; `1` if any check FAILs.
+//! file permissions, state-dir writability, providers, default model,
+//! plugins, mcp) and prints one row per item with status + body. The
+//! closing verdict names the checks that ran. Exit code is `0` when
+//! every check is OK or WARN; `1` if any check FAILs.
 
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -120,6 +120,7 @@ fn collect_checks() -> Vec<Check> {
     checks.push(check_auth_mode());
     checks.push(check_state_dir());
     checks.push(check_providers());
+    checks.push(check_model());
     checks.push(check_plugins(&workdir));
     checks.push(check_mcp(&workdir));
     checks
@@ -520,6 +521,79 @@ fn providers_check(config: &Config, store: &AuthStore) -> Check {
     }
 }
 
+/// The `model` row: whether starting `kage` without `-m` would pick a
+/// model. Builds the provider registry and asks
+/// [`crate::default_model`] for the answer, so the row reports the
+/// outcome a launch would have rather than a second opinion about
+/// credentials.
+fn check_model() -> Check {
+    match crate::build_provider_registry() {
+        Ok(registry) => {
+            let configured = crate::configured_default_model();
+            let last = crate::state::State::load().last_model;
+            model_check(&registry, configured.as_deref(), last.as_deref())
+        }
+        Err(err) => Check {
+            name: "model",
+            status: Status::Warn,
+            body: format!("provider registry unresolved: {err} (skipped)"),
+            hint: None,
+        },
+    }
+}
+
+/// The `model` row against an explicit registry, naming which of the
+/// three sources [`crate::default_model`] took the model from.
+/// `configured` is `[provider] default_model` and `last` the model of
+/// the previous run.
+fn model_check(
+    registry: &kage_provider::ProviderRegistry,
+    configured: Option<&str>,
+    last: Option<&str>,
+) -> Check {
+    if !crate::has_usable_provider(registry) {
+        // The `providers` row already reports this, and the fix belongs
+        // there rather than in a row about models.
+        return Check {
+            name: "model",
+            status: Status::Ok,
+            body: "no provider to pick a model from (skipped)".into(),
+            hint: None,
+        };
+    }
+    let model = crate::default_model(registry);
+    if model.is_empty() {
+        return Check {
+            name: "model",
+            status: Status::Fail,
+            body: "no model would be picked, so `kage` would refuse to start".into(),
+            hint: Some(format!(
+                "set [provider] default_model or pass -m provider/model. \
+                 Usable providers: {}",
+                usable_provider_ids(registry)
+            )),
+        };
+    }
+    let source = match (configured, last) {
+        (Some(configured), _) if configured == model => "from [provider] default_model",
+        (_, Some(last)) if last == model => "from the last run",
+        _ => "from provider preference",
+    };
+    Check {
+        name: "model",
+        status: Status::Ok,
+        body: format!("{model} {source}"),
+        hint: None,
+    }
+}
+
+/// The non-`acp` provider ids in `registry`, for the failure hint.
+fn usable_provider_ids(registry: &kage_provider::ProviderRegistry) -> String {
+    let mut ids: Vec<&str> = registry.ids().filter(|id| *id != "acp").collect();
+    ids.sort_unstable();
+    ids.join(", ")
+}
+
 fn check_plugins(workdir: &Path) -> Check {
     let dir = match crate::plugins_dir() {
         Ok(p) => p,
@@ -746,6 +820,91 @@ mod tests {
         let check = providers_check(&config, &AuthStore::empty());
         assert_eq!(check.status, Status::Ok, "{}", check.body);
         assert!(check.body.contains("fake"), "{}", check.body);
+    }
+
+    /// A provider under `id` declaring `models`. A real provider
+    /// whose id is not in the catalog and which declares nothing yields
+    /// no model at all, which is what made `kage` refuse to start while
+    /// the `providers` row reported the credential as ready.
+    fn registry_with(id: &str, models: &[&str]) -> kage_provider::ProviderRegistry {
+        #[derive(Debug)]
+        struct Declaring {
+            meta: kage_provider::ProviderMetadata,
+            models: Vec<kage_provider::ProviderModel>,
+        }
+        impl kage_provider::Provider for Declaring {
+            fn metadata(&self) -> &kage_provider::ProviderMetadata {
+                &self.meta
+            }
+            fn stream(
+                &self,
+                _req: kage_provider::StreamRequest,
+                _cancel: &kage_core::CancelFlag,
+            ) -> Result<kage_provider::EventStream, kage_provider::ProviderError> {
+                Ok(Box::new(std::iter::empty()))
+            }
+            fn models(&self) -> Vec<kage_provider::ProviderModel> {
+                self.models.clone()
+            }
+        }
+        let provider = Declaring {
+            meta: kage_provider::ProviderMetadata {
+                id: id.to_owned(),
+                display_name: id.to_owned(),
+                supports_caching: false,
+                supports_thinking: false,
+                supports_tool_use: true,
+            },
+            models: models
+                .iter()
+                .map(|m| kage_provider::ProviderModel {
+                    id: (*m).to_owned(),
+                    name: (*m).to_owned(),
+                    ..kage_provider::ProviderModel::default()
+                })
+                .collect(),
+        };
+        kage_provider::ProviderRegistry::new().with(Arc::new(provider))
+    }
+
+    #[test]
+    fn model_check_fails_when_a_ready_provider_yields_no_model() {
+        let check = model_check(&registry_with("no-such-catalog-provider", &[]), None, None);
+        assert_eq!(check.status, Status::Fail, "{}", check.body);
+        assert!(check.body.contains("refuse to start"), "{}", check.body);
+        let hint = check.hint.unwrap();
+        assert!(hint.contains("[provider] default_model"), "{hint}");
+        assert!(
+            hint.contains("no-such-catalog-provider"),
+            "the hint must name what is usable: {hint}"
+        );
+    }
+
+    #[test]
+    fn model_check_passes_and_names_the_model_it_would_use() {
+        let check = model_check(&registry_with("groq", &["qwen3"]), None, None);
+        assert_eq!(check.status, Status::Ok, "{}", check.body);
+        assert_eq!(check.body, "groq/qwen3 from provider preference");
+    }
+
+    #[test]
+    fn model_check_names_where_the_model_came_from() {
+        let registry = registry_with("groq", &["qwen3"]);
+        let configured = model_check(&registry, Some("groq/qwen3"), None);
+        assert!(
+            configured.body.contains("from [provider] default_model"),
+            "{}",
+            configured.body
+        );
+        let last = model_check(&registry, None, Some("groq/qwen3"));
+        assert!(last.body.contains("from the last run"), "{}", last.body);
+    }
+
+    #[test]
+    fn model_check_is_skipped_without_a_usable_provider() {
+        let check = model_check(&kage_provider::ProviderRegistry::new(), None, None);
+        assert_eq!(check.status, Status::Ok, "{}", check.body);
+        assert!(check.body.contains("skipped"), "{}", check.body);
     }
 
     fn check(name: &'static str, status: Status) -> Check {
