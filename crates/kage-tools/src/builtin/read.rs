@@ -1,7 +1,7 @@
 //! `read` tool: read a file from the workspace, optionally limited to a line range.
 
 use std::fmt::Write;
-use std::io::Read;
+use std::io::{BufRead, BufReader};
 use std::path::Path;
 
 use kage_core::{Risk, ToolOutput};
@@ -21,6 +21,7 @@ struct ReadInput {
     path: String,
     /// Optional 1-indexed start line (inclusive). Line numbers are
     /// 1-based and 0 is rejected; sliced lines fold `\r\n` to `\n`.
+    /// A start past the file's last line is an error.
     #[serde(default)]
     start_line: Option<u64>,
     /// Optional 1-indexed end line (inclusive). 0 is rejected.
@@ -39,7 +40,8 @@ impl Tool for ReadTool {
 
     fn description(&self) -> &'static str {
         "Read a file. Optional `start_line` and `end_line` limit \
-         the returned range (1-indexed, inclusive). Files larger than 2MB are truncated."
+         the returned range (1-indexed, inclusive). The returned range \
+         is capped at 2MB; a capped read says so."
     }
 
     fn schema(&self) -> serde_json::Value {
@@ -63,64 +65,227 @@ impl Tool for ReadTool {
             ));
         }
 
-        // Cap the read itself, not just the output: a multi-gigabyte file
-        // must not be slurped into memory before truncation.
         let file = std::fs::File::open(&path).map_err(ToolError::io_at("read", &path))?;
         let total_bytes = file
             .metadata()
             .map_err(ToolError::io_at("read", &path))?
             .len();
-        let mut head = Vec::new();
-        file.take(MAX_BYTES as u64)
-            .read_to_end(&mut head)
-            .map_err(ToolError::io_at("read", &path))?;
-        let truncated = total_bytes > MAX_BYTES as u64;
-        let text = String::from_utf8(head).map_err(|_| {
-            ToolError::InvalidInput(format!(
-                "{} is not valid UTF-8 and is likely a binary file",
-                input.path
-            ))
-        })?;
-
-        let sliced = slice_lines(&text, input.start_line, input.end_line);
-
-        let mut output = sliced.into_owned();
-        if truncated {
-            let _ = write!(
-                output,
-                "\n\n[... truncated: file is {total_bytes} bytes, showed first {MAX_BYTES} ...]"
-            );
-        }
+        // Slice before capping: lines are streamed, so memory stays
+        // bounded by the cap rather than by the file, and a range past
+        // the byte cap still returns its lines.
+        let text = slice_file(&file, &path, &input, total_bytes)?;
 
         Ok(ToolOutput {
             is_error: false,
-            text: output,
+            text,
             structured: None,
             terminate: false,
         })
     }
 }
 
-fn slice_lines(text: &str, start: Option<u64>, end: Option<u64>) -> std::borrow::Cow<'_, str> {
-    if start.is_none() && end.is_none() {
-        return std::borrow::Cow::Borrowed(text);
+/// Stream the line range out of the file behind `input`, appending the
+/// truncation footer when the [`MAX_BYTES`] cap cuts the range. Lines
+/// before `start_line` are scanned in place and dropped, and a line is
+/// gathered only up to the remaining budget, so memory stays bounded
+/// by the cap, not by the file.
+fn slice_file(
+    file: &std::fs::File,
+    path: &Path,
+    input: &ReadInput,
+    total_bytes: u64,
+) -> Result<String, ToolError> {
+    let skip = input
+        .start_line
+        .map_or(0, |n| usize::try_from(n - 1).unwrap_or(usize::MAX));
+    let mut reader = BufReader::new(file);
+
+    if let Some((whole, partial)) = skip_lines(&mut reader, path, skip)? {
+        let total_lines = whole + usize::from(partial > 0);
+        let start = input.start_line.unwrap();
+        return Err(ToolError::InvalidInput(format!(
+            "{} has {total_lines} lines ({total_bytes} bytes); line {start} is past the end of the file",
+            input.path
+        )));
     }
-    let lines: Vec<&str> = text.lines().collect();
-    let total = lines.len();
-    let start_idx = start
-        .map_or(0, |n| {
-            usize::try_from(n.saturating_sub(1)).unwrap_or(usize::MAX)
-        })
-        .min(total);
-    let end_idx = end
-        .map_or(total, |n| usize::try_from(n).unwrap_or(usize::MAX))
-        .min(total);
-    let end_idx = end_idx.max(start_idx);
-    let mut out = lines[start_idx..end_idx].join("\n");
-    if end_idx == total && text.ends_with('\n') {
-        out.push('\n');
+
+    let mut raw: Vec<u8> = Vec::new();
+    let mut lines: Vec<String> = Vec::new();
+    let mut shown = 0usize;
+    let mut cut = false;
+    let mut line_no = skip;
+    let mut reached_eof = false;
+    let mut last_ended_newline = false;
+    while !cut {
+        if let Some(end) = input.end_line
+            && (line_no as u64) >= end
+        {
+            break;
+        }
+        let budget = MAX_BYTES - shown;
+        if budget == 0 {
+            // Nothing may be shown past the cap, but the footer is
+            // honest only when something is actually left.
+            cut = !reader
+                .fill_buf()
+                .map_err(ToolError::io_at("read", path))?
+                .is_empty();
+            if !cut {
+                reached_eof = true;
+            }
+            break;
+        }
+        if gather_line(&mut reader, path, &mut raw, budget + 1)? == Gather::Eof {
+            reached_eof = true;
+        }
+        if raw.is_empty() {
+            break;
+        }
+        line_no += 1;
+        last_ended_newline = raw.last() == Some(&b'\n');
+        if raw.ends_with(b"\r\n") {
+            raw.truncate(raw.len() - 2);
+        } else if last_ended_newline {
+            raw.pop();
+        }
+        let line = std::str::from_utf8(&raw).map_err(|_| {
+            ToolError::InvalidInput(format!(
+                "{} is not valid UTF-8 and is likely a binary file",
+                input.path
+            ))
+        })?;
+        if line.len() > budget {
+            let mut at = budget;
+            while !line.is_char_boundary(at) {
+                at -= 1;
+            }
+            shown += at;
+            lines.push(line[..at].to_owned());
+            cut = true;
+            break;
+        }
+        shown += line.len();
+        lines.push(line.to_owned());
     }
-    std::borrow::Cow::Owned(out)
+    // The past-the-end error needs a genuine EOF: an inverted range
+    // (end before start) stops early without one and stays an empty
+    // success, as it always has.
+    if let Some(start) = input.start_line
+        && reached_eof
+        && (line_no as u64) < start
+    {
+        return Err(ToolError::InvalidInput(format!(
+            "{} has {line_no} lines ({total_bytes} bytes); line {start} is past the end of the file",
+            input.path
+        )));
+    }
+    let mut text = lines.join("\n");
+    if !cut && reached_eof && last_ended_newline {
+        text.push('\n');
+    }
+    if cut {
+        let _ = write!(
+            text,
+            "\n\n[... truncated: showed {shown} bytes of this range; the file is {total_bytes} bytes ...]"
+        );
+    }
+    Ok(text)
+}
+
+/// Scan `skip` lines out of `reader` without keeping them. Returns
+/// `Some((whole, partial))` when the file ended first, so the caller
+/// can name the real line count: `whole` complete lines plus a
+/// trailing line with no newline.
+fn skip_lines<R: BufRead>(
+    reader: &mut R,
+    path: &Path,
+    skip: usize,
+) -> Result<Option<(usize, usize)>, ToolError> {
+    let mut skip_left = skip;
+    let mut whole = 0usize;
+    let mut partial = 0usize;
+    while skip_left > 0 {
+        // A chunk without a newline is a partial line, not a whole
+        // one: lines span refills, so only a newline ends a line here.
+        let step = {
+            let available = reader.fill_buf().map_err(ToolError::io_at("read", path))?;
+            if available.is_empty() {
+                None
+            } else if let Some(i) = available.iter().position(|&b| b == b'\n') {
+                whole += 1;
+                partial = 0;
+                Some((i + 1, true))
+            } else {
+                partial += available.len();
+                Some((available.len(), false))
+            }
+        };
+        match step {
+            Some((consumed, found_newline)) => {
+                reader.consume(consumed);
+                if found_newline {
+                    skip_left -= 1;
+                }
+            }
+            None => return Ok(Some((whole, partial))),
+        }
+    }
+    Ok(None)
+}
+
+/// How [`gather_line`]'s line ended.
+#[derive(Debug, PartialEq, Eq)]
+enum Gather {
+    /// A newline was read into the buffer.
+    Newline,
+    /// The cap was reached with no newline in sight.
+    Capped,
+    /// The file ended. The buffer holds a trailing line without a
+    /// newline, or nothing at all.
+    Eof,
+}
+
+/// Read one line out of `reader` into `raw`, which is cleared first
+/// and never extended past `cap` bytes, so a newline-free line cannot
+/// balloon the buffer.
+fn gather_line<R: BufRead>(
+    reader: &mut R,
+    path: &Path,
+    raw: &mut Vec<u8>,
+    cap: usize,
+) -> Result<Gather, ToolError> {
+    raw.clear();
+    raw.reserve(cap.min(4096));
+    loop {
+        let step = {
+            let available = reader.fill_buf().map_err(ToolError::io_at("read", path))?;
+            if available.is_empty() {
+                None
+            } else {
+                let room = cap - raw.len();
+                let window = &available[..room.min(available.len())];
+                if let Some(i) = window.iter().position(|&b| b == b'\n') {
+                    raw.extend_from_slice(&window[..=i]);
+                    Some((i + 1, true))
+                } else {
+                    raw.extend_from_slice(window);
+                    Some((window.len(), false))
+                }
+            }
+        };
+        match step {
+            Some((consumed, found_newline)) => {
+                reader.consume(consumed);
+                if found_newline {
+                    return Ok(Gather::Newline);
+                }
+            }
+            None => return Ok(Gather::Eof),
+        }
+        if raw.len() >= cap {
+            return Ok(Gather::Capped);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -176,6 +341,42 @@ mod tests {
         let out = run(&ReadTool, dir.path(), serde_json::json!({"path":"big.txt"})).unwrap();
         assert!(out.text.contains("truncated"));
         assert!(out.text.len() > MAX_BYTES);
+        // The cut lands exactly at the cap, so the buffer the tool
+        // holds stays bounded by it.
+        let body = out.text.split("\n\n[... truncated").next().unwrap();
+        assert_eq!(body.len(), MAX_BYTES);
+    }
+
+    /// A file whose size is exactly the cap is fully shown and says
+    /// nothing about truncation.
+    #[test]
+    fn an_exact_cap_total_file_reads_without_a_false_footer() {
+        let dir = tempfile::tempdir().unwrap();
+        let big = "a\n".repeat(MAX_BYTES / 2);
+        assert_eq!(big.len(), MAX_BYTES);
+        fs::write(dir.path().join("big.txt"), &big).unwrap();
+        let out = run(&ReadTool, dir.path(), serde_json::json!({"path":"big.txt"})).unwrap();
+        assert_eq!(out.text, big);
+        assert!(!out.text.contains("truncated"), "{}", &out.text[..100]);
+    }
+
+    /// `end_line` before `start_line` has always been an empty
+    /// success; it must not turn into a false line-count error.
+    #[test]
+    fn an_inverted_range_is_an_empty_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut body = String::new();
+        for n in 1..=1000 {
+            let _ = writeln!(body, "L{n}");
+        }
+        fs::write(dir.path().join("f.txt"), &body).unwrap();
+        let out = run(
+            &ReadTool,
+            dir.path(),
+            serde_json::json!({"path":"f.txt","start_line":50,"end_line":10}),
+        )
+        .unwrap();
+        assert_eq!(out.text, "");
     }
 
     #[test]
@@ -321,5 +522,117 @@ mod tests {
         // The canonical key still works: the alias is additive.
         let out = run(&ReadTool, dir.path(), serde_json::json!({"path":"a.txt"})).unwrap();
         assert_eq!(out.text, "hello");
+    }
+
+    /// ~2.1MB, 10,000 lines, each tagged with its 1-based number.
+    fn big_numbered_file(dir: &Path) -> u64 {
+        let filler = "x".repeat(199);
+        let mut body = String::new();
+        for n in 1..=10_000u64 {
+            let _ = writeln!(body, "L{n:06} {filler}");
+        }
+        fs::write(dir.join("big.txt"), &body).unwrap();
+        10_000
+    }
+
+    #[test]
+    fn read_past_the_byte_cap_returns_the_requested_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let last = big_numbered_file(dir.path());
+        let out = run(
+            &ReadTool,
+            dir.path(),
+            serde_json::json!({"path":"big.txt","start_line":last,"end_line":last}),
+        )
+        .unwrap();
+        assert!(
+            out.text.starts_with("L010000 "),
+            "wanted the requested line, got: {}",
+            &out.text[..60.min(out.text.len())]
+        );
+    }
+
+    /// A requested line that straddles the reader's refill boundary
+    /// must still land exactly: 40 lines of 208 bytes cross the
+    /// default 8192-byte chunk edge mid-line.
+    #[test]
+    fn a_line_spanning_a_reader_refill_is_still_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let filler = "x".repeat(199);
+        let mut body = String::new();
+        for n in 1..=41usize {
+            let _ = writeln!(body, "L{n:06} {filler}");
+        }
+        fs::write(dir.path().join("f.txt"), &body).unwrap();
+        let out = run(
+            &ReadTool,
+            dir.path(),
+            serde_json::json!({"path":"f.txt","start_line":41,"end_line":41}),
+        )
+        .unwrap();
+        assert_eq!(out.text.lines().count(), 1, "{}", &out.text[..80]);
+        assert!(
+            out.text.starts_with("L000041 "),
+            "wanted line 41, got: {}",
+            &out.text[..60.min(out.text.len())]
+        );
+    }
+
+    #[test]
+    fn read_distinguishes_past_the_cap_from_past_the_end() {
+        let dir = tempfile::tempdir().unwrap();
+        let last = big_numbered_file(dir.path());
+        let existing = run(
+            &ReadTool,
+            dir.path(),
+            serde_json::json!({"path":"big.txt","start_line":last,"end_line":last}),
+        );
+        let absent = run(
+            &ReadTool,
+            dir.path(),
+            serde_json::json!({"path":"big.txt","start_line":last + 1_000_000,"end_line":last + 1_000_000}),
+        );
+        assert!(existing.is_ok(), "an existing line past the cap must read");
+        let err = absent.unwrap_err();
+        assert!(matches!(err, ToolError::InvalidInput(_)), "{err:?}");
+        assert!(err.to_string().contains("past the end"), "{err}");
+        assert!(err.to_string().contains("10000 lines"), "{err}");
+    }
+
+    #[test]
+    fn read_does_not_claim_truncation_for_an_in_range_slice() {
+        let dir = tempfile::tempdir().unwrap();
+        big_numbered_file(dir.path());
+        let out = run(
+            &ReadTool,
+            dir.path(),
+            serde_json::json!({"path":"big.txt","start_line":1,"end_line":5}),
+        )
+        .unwrap();
+        assert_eq!(out.text.lines().count(), 5, "{}", out.text);
+        assert!(out.text.starts_with("L000001 "), "{}", out.text);
+        assert!(!out.text.contains("truncated"), "{}", out.text);
+    }
+
+    #[test]
+    fn read_past_the_end_of_the_file_is_an_error_naming_the_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let last = big_numbered_file(dir.path());
+        let err = run(
+            &ReadTool,
+            dir.path(),
+            serde_json::json!({"path":"big.txt","start_line":last,"end_line":last + 500}),
+        )
+        .unwrap();
+        assert!(err.text.starts_with("L010000 "), "{}", err.text);
+        // An `end_line` past EOF still clamps; only a `start_line` past
+        // EOF is an error.
+        let err = run(
+            &ReadTool,
+            dir.path(),
+            serde_json::json!({"path":"big.txt","start_line":last + 1}),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("past the end"), "{err}");
     }
 }
