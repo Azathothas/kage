@@ -114,6 +114,10 @@ version_group = "kage"
 [[package]]
 name = "kage-desktop"
 version_group = "kage"
+# Never created, as tagging is off. The default name would match the
+# `kage-desktop-v*` tags of the old separate desktop releases, which
+# release-plz then mistakes for releases of this crate.
+git_tag_name = "kage-desktop-crate-v{{ version }}"
 
 [[package]]
 name = "xtask"
