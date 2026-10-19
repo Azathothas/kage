@@ -165,6 +165,26 @@ fn override_command_shadows_builtin_and_dispatches_first() {
 }
 
 #[test]
+fn the_plugin_session_list_carries_the_session_id_not_the_title() {
+    let (mut app, _rx, _events) = app_with_events();
+    app.set_session_lister(Box::new(|_| {
+        vec![PickItem::simple("/tmp/sessions/abc123.jsonl")
+            .with_label("My Session Title")]
+    }));
+    let list = kage_plugin::sessions::shared_session_list();
+    app.set_plugin_session_list(list.clone());
+
+    app.refresh_plugin_session_list_if_stale();
+    let entries = lock(&list);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(
+        entries[0]["id"], "abc123",
+        "the id must be the session file's stem, switchable via find_by_prefix"
+    );
+    assert_eq!(entries[0]["value"], "/tmp/sessions/abc123.jsonl");
+}
+
+#[test]
 fn the_plugin_session_list_refreshes_only_when_sessions_change() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     let (mut app, _rx, events) = app_with_events();

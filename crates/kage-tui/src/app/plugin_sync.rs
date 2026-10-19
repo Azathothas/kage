@@ -255,8 +255,15 @@ impl App {
         let entries: Vec<serde_json::Value> = items
             .into_iter()
             .map(|p| {
+                // `label` is the picker's display title; the id a
+                // plugin can feed back into `kage.session.switch` is
+                // the session file's stem.
+                let id = std::path::Path::new(&p.value)
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .unwrap_or(p.label.as_str());
                 serde_json::json!({
-                    "id": p.label,
+                    "id": id,
                     "value": p.value,
                 })
             })
