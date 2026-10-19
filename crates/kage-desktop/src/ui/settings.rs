@@ -1934,9 +1934,6 @@ fn about(
     let protocol = state
         .protocol_version
         .map_or_else(|| "unknown".to_owned(), |v| format!("ACP v{v}"));
-    let build = option_env!("KAGE_BUILD_SHA")
-        .map(|sha| format!(" ({})", &sha[..sha.len().min(7)]))
-        .unwrap_or_default();
     ui.add_space(8.0);
     // The mark beside the name over the versions, centered on each
     // other as the reference's row lays them.
@@ -1946,10 +1943,7 @@ fn about(
         palette.ink_strong,
     );
     let versions = ui.painter().layout_no_wrap(
-        format!(
-            "desktop {}{build} \u{b7} {engine}",
-            env!("CARGO_PKG_VERSION")
-        ),
+        format!("desktop {} \u{b7} {engine}", env!("KAGE_VERSION")),
         egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
         palette.muted,
     );
@@ -2034,9 +2028,17 @@ fn updates(
         };
         let desktop_line = match prefs.latest_nightly.as_ref() {
             Some(build) if option_env!("KAGE_BUILD_SHA").is_some_and(|sha| sha == build.commit) => {
-                format!("desktop {desktop}; on the {} nightly", build.date)
+                format!(
+                    "desktop {}; on the {} nightly",
+                    env!("KAGE_VERSION"),
+                    build.date
+                )
             }
-            Some(build) => format!("desktop {desktop}; nightly {} available", build.date),
+            Some(build) => format!(
+                "desktop {}; nightly {} available",
+                env!("KAGE_VERSION"),
+                build.date
+            ),
             None => "desktop: no nightly seen yet".to_owned(),
         };
         (engine_line, desktop_line)

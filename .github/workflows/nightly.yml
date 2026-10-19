@@ -84,9 +84,10 @@ jobs:
         env:
           # Static musl binaries that run on any Linux.
           RUSTFLAGS: ${{ matrix.cross && '-C target-feature=+crt-static' || '' }}
-          # Marks a nightly: `kage serve --fetch-web` reads the nightly
-          # web bundle for it.
+          # `kage --version` reads `nightly (<commit>)`, and
+          # `kage serve --fetch-web` takes the nightly web bundle.
           KAGE_BUILD_SHA: ${{ github.sha }}
+          KAGE_CHANNEL: nightly
         run: |
           tool=cargo
           if [ "${{ matrix.cross }}" = "true" ]; then tool=cross; fi
@@ -155,6 +156,9 @@ jobs:
     defaults:
       run:
         working-directory: crates/kage-desktop
+    env:
+      KAGE_BUILD_SHA: ${{ github.sha }}
+      KAGE_CHANNEL: nightly
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -234,6 +238,7 @@ jobs:
         working-directory: crates/kage-desktop
     env:
       KAGE_BUILD_SHA: ${{ github.sha }}
+      KAGE_CHANNEL: nightly
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -395,6 +400,7 @@ jobs:
     env:
       ONELF_VERSION: 0.4.1
       KAGE_BUILD_SHA: ${{ github.sha }}
+      KAGE_CHANNEL: nightly
     steps:
       - name: Install Arch packages
         working-directory: /

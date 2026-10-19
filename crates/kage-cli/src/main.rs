@@ -74,7 +74,7 @@ pub(crate) const DEFAULT_SYSTEM: &str = "You are kage, a helpful coding agent.";
 #[derive(Parser, Debug)]
 #[command(
     name = "kage",
-    version,
+    version = env!("KAGE_VERSION"),
     about = "A minimal, extensible coding agent in your terminal",
     long_about = None
 )]

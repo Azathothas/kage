@@ -64,7 +64,10 @@ pub fn probe(program: &str) -> Result<String, String> {
         .strip_prefix("kage ")
         .ok_or_else(|| format!("{program} is not kage"))?
         .to_owned();
-    if crate::gate::is_below(&version, MINIMUM_KAGE_VERSION) {
+    // A release prints its commit after the version, and a nightly
+    // names itself instead of a version; a nightly is never too old.
+    let number = version.split_whitespace().next().unwrap_or_default();
+    if number != "nightly" && crate::gate::is_below(number, MINIMUM_KAGE_VERSION) {
         return Err(format!(
             "That kage is {version}; this app needs {MINIMUM_KAGE_VERSION} or newer."
         ));
@@ -421,6 +424,24 @@ mod tests {
         view.path = stub.to_string_lossy().into_owned();
         assert_eq!(view.use_path(), Some(SetupEvent::Use(view.path.clone())));
         assert_eq!(view.error(), None);
+        let _ = std::fs::remove_file(&stub);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn release_and_nightly_version_lines_pass_the_probe() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let stub = std::env::temp_dir().join(format!("kage-probe-lines-{}", std::process::id()));
+        for (line, accepted) in [
+            ("kage 9.9.9 (0123abc)", true),
+            ("kage nightly (0123abc)", true),
+            ("kage 0.0.1 (0123abc)", false),
+        ] {
+            std::fs::write(&stub, format!("#!/bin/sh\necho '{line}'\n")).unwrap();
+            std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let answer = probe(&stub.to_string_lossy());
+            assert_eq!(answer.is_ok(), accepted, "{line}: {answer:?}");
+        }
         let _ = std::fs::remove_file(&stub);
     }
 }

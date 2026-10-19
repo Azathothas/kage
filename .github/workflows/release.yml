@@ -65,6 +65,9 @@ jobs:
           # Static musl binaries that run on any Linux.
           RUSTFLAGS: ${{ matrix.cross && '-C target-feature=+crt-static' || '' }}
         run: |
+          # `kage --version` names the commit; Cross.toml passes it into
+          # the cross container.
+          export KAGE_BUILD_SHA="$(git rev-parse HEAD)"
           tool=cargo
           if [ "${{ matrix.cross }}" = "true" ]; then tool=cross; fi
           "$tool" build --release --locked -p kage-cli --target "${{ matrix.target }}"
@@ -165,6 +168,7 @@ jobs:
       # has no entry on wasm32; the cdylib is the whole bundle.
       - name: Build
         run: |
+          export KAGE_BUILD_SHA="$(git rev-parse HEAD)"
           cargo build --release --locked --target wasm32-unknown-unknown \
             -p kage-desktop --no-default-features
           wasm-bindgen --out-dir web --target web \
@@ -257,7 +261,9 @@ jobs:
             libxkbcommon-x11-dev libwayland-dev libxcb1-dev
 
       - name: Build
-        run: cargo build --release --locked -p kage-desktop --target "${{ matrix.target }}"
+        run: |
+          export KAGE_BUILD_SHA="$(git rev-parse HEAD)"
+          cargo build --release --locked -p kage-desktop --target "${{ matrix.target }}"
 
       - name: Package
         run: |
@@ -438,8 +444,12 @@ jobs:
       - name: Toolchain
         run: rustup toolchain install
 
+      # git refuses to run in the container, where the checkout is
+      # owned by another uid, unless told the directory is safe.
       - name: Build
-        run: cargo build --release --locked -p kage-desktop
+        run: |
+          export KAGE_BUILD_SHA="$(git -c safe.directory='*' rev-parse HEAD)"
+          cargo build --release --locked -p kage-desktop
 
       # The graphics stack is most of the bundle and LLVM over half of it.
       # These builds drop what a bundled renderer never reaches for and
