@@ -286,28 +286,6 @@ pub(crate) fn lookup_key_with_env(
     store.access_token(provider).map(str::to_owned)
 }
 
-/// Order in which `default_model` falls back when there is no saved
-/// last-used model: most-popular providers first.
-const DEFAULT_MODEL_PRIORITY: &[&str] = &[
-    "anthropic",
-    "openai",
-    "zai-coding-plan",
-    "zhipuai-coding-plan",
-    "zai",
-    "google",
-    "deepseek",
-    "groq",
-    "mistral",
-    "cerebras",
-    "xai",
-    "openrouter",
-    "fireworks-ai",
-    "moonshotai",
-    "kimi-for-coding",
-    "commandcode",
-    "kenari",
-];
-
 /// Printed when no provider other than `acp` is registered and the
 /// requested model does not resolve.
 pub(crate) const NO_CREDENTIALS_MESSAGE: &str = "kage: no provider credentials found. \
@@ -345,33 +323,52 @@ pub(crate) fn default_model(registry: &ProviderRegistry) -> String {
     fallback_model(registry)
 }
 
-/// Walk [`DEFAULT_MODEL_PRIORITY`], taking each registered provider's
-/// first declared model, else the catalog's preferred model for it, then
-/// take the first declared model of the first non-`acp` provider (by id)
-/// that declares any. Returns an empty string when neither yields a
-/// model.
+/// The model to default `provider` to: its first declared model, else
+/// the catalog's preferred model for its id. `None` when the provider
+/// declares nothing and the catalog does not list it.
+fn provider_default_model(provider: &dyn kage_provider::Provider) -> Option<String> {
+    let id = &provider.metadata().id;
+    provider
+        .models()
+        .into_iter()
+        .next()
+        .map(|m| m.id)
+        .or_else(|| kage_provider::catalog::preferred_model(id).map(|m| m.id.to_owned()))
+}
+
+/// Every registered provider except `acp`, most preferred first:
+/// [`SUPPORTED_PROVIDERS`] order, then any custom or plugin provider by
+/// id.
+fn ordered_provider_ids(registry: &ProviderRegistry) -> Vec<&str> {
+    let mut ordered: Vec<&str> = kage_provider::catalog::source::SUPPORTED_PROVIDERS
+        .iter()
+        .map(|map| map.kage_id)
+        .filter(|id| *id != "acp" && registry.get(id).is_some())
+        .collect();
+    let mut rest: Vec<&str> = registry
+        .ids()
+        .filter(|id| {
+            *id != "acp"
+                && !kage_provider::catalog::source::SUPPORTED_PROVIDERS
+                    .iter()
+                    .any(|map| map.kage_id == *id)
+        })
+        .collect();
+    rest.sort_unstable();
+    ordered.extend(rest);
+    ordered
+}
+
+/// The model to fall back on when nothing is configured: the first
+/// provider in [`ordered_provider_ids`] that has one. Empty when none
+/// does.
 fn fallback_model(registry: &ProviderRegistry) -> String {
-    for candidate in DEFAULT_MODEL_PRIORITY {
-        let Some(provider) = registry.get(candidate) else {
-            continue;
-        };
-        let model = provider
-            .models()
-            .into_iter()
-            .next()
-            .map(|m| m.id)
-            .or_else(|| {
-                kage_provider::catalog::preferred_model(candidate).map(|m| m.id.to_owned())
-            });
-        if let Some(model) = model {
-            return kage_core::qualify_model(candidate, &model);
-        }
-    }
-    let mut ids: Vec<&str> = registry.ids().filter(|id| *id != "acp").collect();
-    ids.sort_unstable();
-    for id in ids {
-        if let Some(model) = registry.get(id).and_then(|p| p.models().into_iter().next()) {
-            return kage_core::qualify_model(id, &model.id);
+    for id in ordered_provider_ids(registry) {
+        if let Some(model) = registry
+            .get(id)
+            .and_then(|p| provider_default_model(p.as_ref()))
+        {
+            return kage_core::qualify_model(id, &model);
         }
     }
     String::new()
@@ -407,6 +404,8 @@ fn config_sets_default_model(path: &std::path::Path) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
 
     #[test]
@@ -816,6 +815,87 @@ mod tests {
     fn fallback_model_is_empty_without_models() {
         let registry = ProviderRegistry::new().with(stub("acp", &["agent"]));
         assert_eq!(fallback_model(&registry), "");
+    }
+
+    /// A registry holding only `ids`, built the way
+    /// [`register_compat_providers`] builds them, so the catalog is the
+    /// only source of models.
+    fn compat_registry(ids: &[&str]) -> ProviderRegistry {
+        let mut registry = ProviderRegistry::new();
+        for id in ids {
+            let entry = compat::COMPAT_PROVIDERS
+                .iter()
+                .find(|e| e.id == *id)
+                .unwrap_or_else(|| panic!("{id} is a compat provider"));
+            registry.register(entry.build("k", BTreeMap::new()));
+        }
+        registry.register(stub("acp", &["agent"]));
+        registry
+    }
+
+    /// Every shipped compat provider must resolve a default model from
+    /// its catalog entry alone.
+    #[test]
+    fn every_compat_provider_resolves_a_default_model() {
+        for entry in compat::COMPAT_PROVIDERS {
+            let id = entry.id;
+            let model = fallback_model(&compat_registry(&[id]));
+            let prefix = kage_core::split_model(&model).map(|(p, _)| p.to_owned());
+            assert_eq!(
+                prefix.as_deref(),
+                Some(id),
+                "{id}: fallback_model returned {model:?}"
+            );
+            assert!(!model.is_empty(), "{id} resolved to an empty model");
+        }
+    }
+
+    /// The builtins are not compat entries but resolve the same way.
+    #[test]
+    fn every_builtin_resolves_a_default_model() {
+        for id in ["anthropic", "openai", "openai-responses", "google"] {
+            let registry = ProviderRegistry::new().with(stub(id, &[]));
+            assert!(
+                fallback_model(&registry).starts_with(&format!("{id}/")),
+                "{id} resolved to {:?}",
+                fallback_model(&registry)
+            );
+        }
+    }
+
+    /// Ranking comes from the catalog order, not the alphabet: `groq`
+    /// precedes `xiaomi` there.
+    #[test]
+    fn providers_follow_the_catalog_order() {
+        let registry = compat_registry(&["xiaomi", "groq"]);
+        assert!(fallback_model(&registry).starts_with("groq/"));
+    }
+
+    /// `openai-responses` shares `openai`'s credential, so a user with
+    /// one key must land on `openai`, not the Responses API.
+    #[test]
+    fn openai_wins_over_openai_responses_on_the_same_credential() {
+        let registry = ProviderRegistry::new()
+            .with(stub("openai-responses", &[]))
+            .with(stub("openai", &[]));
+        assert!(fallback_model(&registry).starts_with("openai/"));
+    }
+
+    /// The Z.AI coding plans outrank the pay-as-you-go `zai` endpoint.
+    /// Both answer to one `ZAI_CODING_API_KEY`, and only the plans bill
+    /// as a subscription.
+    #[test]
+    fn the_coding_plans_outrank_plain_zai() {
+        let registry = compat_registry(&["zai", "zai-coding-plan"]);
+        assert!(fallback_model(&registry).starts_with("zai-coding-plan/"));
+    }
+
+    /// `google` outranks the compat providers it is billed alongside.
+    #[test]
+    fn google_outranks_the_providers_it_used_to_be_listed_after() {
+        let mut registry = compat_registry(&["deepseek", "groq", "xai"]);
+        registry.register(stub("google", &[]));
+        assert!(fallback_model(&registry).starts_with("google/"));
     }
 
     #[test]

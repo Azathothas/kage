@@ -43,6 +43,10 @@ impl ProviderMap {
 /// Provider ids kage carries `Provider` impls for. kage reads only
 /// these from the catalog; adding a provider impl means appending its
 /// id here and re-running `cargo xtask refresh-models`.
+///
+/// Most preferred first: this is the order kage falls back through when
+/// picking a default model and the user holds keys for more than one
+/// provider.
 pub const SUPPORTED_PROVIDERS: &[ProviderMap] = &[
     ProviderMap::same("anthropic"),
     ProviderMap::same("openai"),
@@ -50,9 +54,10 @@ pub const SUPPORTED_PROVIDERS: &[ProviderMap] = &[
         api_id: "openai",
         kage_id: "openai-responses",
     },
-    ProviderMap::same("zai"),
+    ProviderMap::same("google"),
     ProviderMap::same("zai-coding-plan"),
     ProviderMap::same("zhipuai-coding-plan"),
+    ProviderMap::same("zai"),
     ProviderMap::same("deepseek"),
     ProviderMap::same("groq"),
     ProviderMap::same("mistral"),
@@ -74,7 +79,6 @@ pub const SUPPORTED_PROVIDERS: &[ProviderMap] = &[
     ProviderMap::same("kenari"),
     ProviderMap::same("kenari-claude"),
     ProviderMap::same("opencode-go"),
-    ProviderMap::same("google"),
 ];
 
 /// One provider read from the catalog, under its kage id.
