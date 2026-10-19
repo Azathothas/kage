@@ -1,4 +1,90 @@
 # Changelog
+## [0.4.0](https://github.com/QaidVoid/kage/compare/v0.3.0...v0.4.0) - 2026-10-19
+
+### Features
+
+- *(catalog)* Read the catalog and provider logos from kage-models ([#149](https://github.com/QaidVoid/kage/pull/149)) - ([6fdb863](https://github.com/QaidVoid/kage/commit/6fdb863d0132bd46c07301a07dd574980d616c3b))
+- *(cli)* Have kage doctor report the default model - ([949d3e5](https://github.com/QaidVoid/kage/commit/949d3e50b70a270ca22adac7649d552ef4d668ba))
+- *(cli)* Models fetch maps metadata and takes a models URL - ([2175f06](https://github.com/QaidVoid/kage/commit/2175f06b5e8d48c9da3079b20ffee8da4463d51a))
+- *(client)* Local mutators emit Change records - ([3d5c224](https://github.com/QaidVoid/kage/commit/3d5c2244ce45f84d4804b4046eaa9793801871d9))
+- *(client)* Fork, export and compact sessions - ([680640e](https://github.com/QaidVoid/kage/commit/680640ec7e8a6ed28a2d1e2754400292dcbd5b4a))
+- *(client)* Keep each child's call and resume swarm members - ([2e88801](https://github.com/QaidVoid/kage/commit/2e88801f0382153613df6ae80f708d3201ad0f4e))
+- *(client)* Show option changes at once and undo a refused one - ([123d3f8](https://github.com/QaidVoid/kage/commit/123d3f80df69d64a195b53d5f5969b451dfdbf01))
+- *(client)* Record own prompts and keep swarm, plan and parent facts - ([30e38cc](https://github.com/QaidVoid/kage/commit/30e38cc94bae1b68ca78e8aa320fcfb80de07e93))
+- *(client)* Add the sans-io kage-client crate - ([32bfb39](https://github.com/QaidVoid/kage/commit/32bfb39d6210dffca380b6fec71cb1ca87409921))
+- *(compaction)* Phase updates, token pairing and handoff briefs ([#178](https://github.com/QaidVoid/kage/pull/178)) - ([5d63f21](https://github.com/QaidVoid/kage/commit/5d63f21aec0c74526634bbd6cd4853ede9225f1e))
+- *(gui)* Move the desktop client from GPUI to egui ([#42](https://github.com/QaidVoid/kage/pull/42)) - ([2d106be](https://github.com/QaidVoid/kage/commit/2d106be3ef04273b5786a9632d4460724e7659e8))
+- *(gui)* Show background agents and their reports - ([3c560ca](https://github.com/QaidVoid/kage/commit/3c560ca954e6cd534da91ffb332de4dd6f95562a))
+- *(gui)* Enable plugins and grant capabilities - ([4eff436](https://github.com/QaidVoid/kage/commit/4eff43600a44a86a263b616621752123ccbe351e))
+- *(gui)* Measure rows and time runs like the prototype - ([98f741d](https://github.com/QaidVoid/kage/commit/98f741dbc316b4b329fc9c6edf7d2422864d3a59))
+- *(gui)* Approvals end to end with decision records - ([9e120d3](https://github.com/QaidVoid/kage/commit/9e120d32079dee2507d64c6de5a60645d1f1670b))
+- *(gui)* Composer with drafts, modes, menus and fuel gauge - ([c6c02c7](https://github.com/QaidVoid/kage/commit/c6c02c7c27ddb00068312c852937884b2071c42d))
+- *(provider)* Add Kenari subscription models ([#43](https://github.com/QaidVoid/kage/pull/43)) - ([46f3b6f](https://github.com/QaidVoid/kage/commit/46f3b6fbc460161444e5aa6f712522d030240f37))
+- *(providers)* Add OpenCode Zen and Go - ([645e8ab](https://github.com/QaidVoid/kage/commit/645e8abf9c176233dab6624d7794fdc7bd4c73b3))
+- *(rpc)* List the model catalog for clients - ([e8852d3](https://github.com/QaidVoid/kage/commit/e8852d3ac594163e941729ba25a92fd04e5d2904))
+- *(rpc)* List and set engine options over _kage/options - ([1fe3673](https://github.com/QaidVoid/kage/commit/1fe36733526445400d6a648eda178942074842d3))
+- *(rpc)* Rename sessions over _kage/session/rename - ([4cfd990](https://github.com/QaidVoid/kage/commit/4cfd990d1f939cce84a9a6bf32df4d165aa6a36c))
+- *(tools)* Rename bash to shell with a configurable program - ([6f35801](https://github.com/QaidVoid/kage/commit/6f358011d0b5a4b7c20001aa7e02e98d1e04b06f))
+- *(tui)* Add a rewind picker opened by double-esc - ([050ce70](https://github.com/QaidVoid/kage/commit/050ce70aa52c288bb89bd42ae0cc0ef7045372e3))
+- *(tui)* Bundle kage themes and follow the terminal background - ([a76b2d2](https://github.com/QaidVoid/kage/commit/a76b2d2cf18b380163871d4dbf22c4413bc4c5b4))
+- *(undo)* Branch the session in place for undo and rewind - ([f8df989](https://github.com/QaidVoid/kage/commit/f8df98929f642866932d507b75afac0978e60964))
+- *(undo)* Add /undo to drop the last exchange - ([0e2ee25](https://github.com/QaidVoid/kage/commit/0e2ee259fa0216ab0a6b9cdb5d421a25fec5d839))
+- Release desktop and web with kage at one version ([#182](https://github.com/QaidVoid/kage/pull/182)) - ([82e1231](https://github.com/QaidVoid/kage/commit/82e1231f8d336ada394952bc430f66f6b4e1065e))
+- Nekomata brand mark across the GUI, docs and TUI ([#181](https://github.com/QaidVoid/kage/pull/181)) - ([32903c5](https://github.com/QaidVoid/kage/commit/32903c5fba00bd7d15e22ab4e29b3887d06c4a23))
+- List user themes and let clients set the system picks - ([453d406](https://github.com/QaidVoid/kage/commit/453d406d00dc170d0e5c9bade750189bcce1a641))
+- Browse folders on the engine's machine in Open folder - ([cc2bf35](https://github.com/QaidVoid/kage/commit/cc2bf35ca772c6a330d4e1b1ca7e69fcd9784c3e))
+- Show engine notes and delegation calls as their own rows - ([868cf15](https://github.com/QaidVoid/kage/commit/868cf1536241900600f525bf86be37b1158abb40))
+- Let the model ask the user questions - ([33afcb2](https://github.com/QaidVoid/kage/commit/33afcb27c5ea5728743323cb0c9633c2a47faffe))
+- Probe MCP and ACP, read provider directories, install plugins - ([43ada1f](https://github.com/QaidVoid/kage/commit/43ada1f9904d33446a0b2be5151efa56628c91f9))
+- Test providers and save keys through the engine - ([8f4f881](https://github.com/QaidVoid/kage/commit/8f4f881ee92b8eef8b1372bf1cc4383d1ac9d783))
+- Write config sections through _kage/config/set - ([a122efb](https://github.com/QaidVoid/kage/commit/a122efbf701f53379108c6a8ebbd38194d608948))
+- Offer a new session's options before one opens - ([c3ed0d1](https://github.com/QaidVoid/kage/commit/c3ed0d183480b496a804f08ace9f5c205aebe304))
+- Replay recorded thought, tool and run times - ([4b2f489](https://github.com/QaidVoid/kage/commit/4b2f489d2006ccf5b73e87f2e55bc7b90db9208f))
+- Report subagent usage and model to clients - ([7cd8638](https://github.com/QaidVoid/kage/commit/7cd86386933e0b7d2121f272e42c1327c1ac2cb7))
+- Add a swarm tool that spawns one child agent per item - ([289378d](https://github.com/QaidVoid/kage/commit/289378df2dd2cfa2d91a9480fe0ac72e7df69559))
+
+### Bug Fixes
+
+- *(cli)* Resolve default model from catalog for every provider - ([6cb1e4e](https://github.com/QaidVoid/kage/commit/6cb1e4e0cc4a379510fe2937043b1cb71eae00a3))
+- *(client)* Restore the replaced transcript when a load fails - ([13c297e](https://github.com/QaidVoid/kage/commit/13c297e1c94ba6cf1e3b9ffc4d5a55977046e6d9))
+- *(goal)* Send the goal to the agent and keep checking it - ([8cfa063](https://github.com/QaidVoid/kage/commit/8cfa063cda4bb7287536f75d1488b7eb9b341137))
+- *(gui)* Absorb RequestId enum from kage-client - ([f0e7464](https://github.com/QaidVoid/kage/commit/f0e74645afa315988c42f0998895adac30a10502))
+- *(gui)* Show a compaction summary as a folded markdown card - ([0e2bf7d](https://github.com/QaidVoid/kage/commit/0e2bf7de2d5935b2e2d4948221f93deb4be963b8))
+- *(paths)* Shared unquote_and_trim helper across every entry point - ([88c9d4e](https://github.com/QaidVoid/kage/commit/88c9d4eb390294b00630dd5ef82eb80c92800330))
+- *(rpc)* Session config, ignored files, swarm meta once - ([e6f19f8](https://github.com/QaidVoid/kage/commit/e6f19f8ce3626a6e3feafa5dee3836e0c87d8473))
+- *(steering)* Steer image prompts at the next turn boundary - ([cf65910](https://github.com/QaidVoid/kage/commit/cf6591020b964fda0901db79c0480dcbe432625f))
+- *(tui)* Guard slash completion slice when cursor is 0 ([#179](https://github.com/QaidVoid/kage/pull/179)) - ([402c16e](https://github.com/QaidVoid/kage/commit/402c16e481885ff0a3f7ae5f0da5db6c6e46c85a))
+- Wave 3 correctness across loop, providers, mcp, tui, gui, rpc - ([2260738](https://github.com/QaidVoid/kage/commit/2260738af5b6818407a9ce4aa45cf45e0908c8fb))
+
+### Refactor
+
+- *(plugins)* Scope rewind.lua to file checkpoints - ([b7fac19](https://github.com/QaidVoid/kage/commit/b7fac19d172225b663d9ef32ec56e526049de015))
+- *(provider)* Remove the opencode zen provider - ([f28ed0a](https://github.com/QaidVoid/kage/commit/f28ed0ad955c106a442e799e7f348043778692dc))
+
+### Documentation
+
+- Describe the release downloads and the desktop client - ([397502c](https://github.com/QaidVoid/kage/commit/397502ce2e87f2a8b4b2716e9017457d1da84351))
+- Refresh the tagline and the home page features - ([fcffbfe](https://github.com/QaidVoid/kage/commit/fcffbfe20beae7bbf76ee444e2134425d7686cbe))
+- Refresh the README and its credits - ([9ee4d03](https://github.com/QaidVoid/kage/commit/9ee4d03165f60989578092d748d9befeaffee8b0))
+- Rewrite the README - ([43d2060](https://github.com/QaidVoid/kage/commit/43d2060f02948a252ce6627940502348299a86e8))
+
+### Styling
+
+- Format the compaction summary parser - ([308c009](https://github.com/QaidVoid/kage/commit/308c009ba45fe93c01d796da19b873e50c314d12))
+
+### Testing
+
+- *(client)* Replay a mid-turn failure from a fixture - ([66e4fae](https://github.com/QaidVoid/kage/commit/66e4fae87264f47889c05bd1694e2bbfbaba5c83))
+- Close the crate test-audit holes with exact, failure-path asserts - ([c769efe](https://github.com/QaidVoid/kage/commit/c769efe41476a097afec88913b95566ebd578302))
+
+### Miscellaneous Tasks
+
+- Release the desktop and web client on their own track - ([6633758](https://github.com/QaidVoid/kage/commit/6633758aebfdafdcd7b55eb5bce611e1b7896a18))
+- Release kage for Windows - ([7e81f12](https://github.com/QaidVoid/kage/commit/7e81f1203671c3e4ddd48c55c0d8c74ef7bc3175))
+- Remove the unmaintained nix flake - ([7a6dcd5](https://github.com/QaidVoid/kage/commit/7a6dcd52e620c096c6d43da91a46dbc7af4cdde3))
+- Raise the declared MSRV to 1.88 - ([574a18a](https://github.com/QaidVoid/kage/commit/574a18a79924df6560b31a5f22571f75ee301f8a))
+- Add cargo manifest metadata and committable README - ([2fa439a](https://github.com/QaidVoid/kage/commit/2fa439a56482c01e3f46668408ddc23c3eb84acb))
+
 ## [0.3.0](https://github.com/QaidVoid/kage/compare/v0.2.2...v0.3.0) - 2026-10-10
 
 ### Features

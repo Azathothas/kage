@@ -70,12 +70,12 @@ use crate::plugins::setup_runtime;
 /// The system prompt role when `--system` is not given.
 pub(crate) const DEFAULT_SYSTEM: &str = "You are kage, a helpful coding agent.";
 
-/// kage: a minimal, extensible coding agent.
+/// kage: a fast, hackable coding agent.
 #[derive(Parser, Debug)]
 #[command(
     name = "kage",
     version = env!("KAGE_VERSION"),
-    about = "A minimal, extensible coding agent in your terminal",
+    about = "A fast, hackable coding agent for your terminal, editor and browser",
     long_about = None
 )]
 struct Cli {
