@@ -9,7 +9,7 @@
 # still fails.
 #
 # UPDATE_SNAPSHOTS workflow: run `UPDATE_SNAPSHOTS=1 cargo test -p
-# kage-desktop --test parity_rig` from gui/, review the new PNGs in
+# kage-desktop --test parity_rig`, review the new PNGs in
 # tests/snapshots/ with `git diff`, and commit them together with the
 # change that moved them. Never update a baseline to make a failing
 # test pass without reading the diff: the parity rig exists so a

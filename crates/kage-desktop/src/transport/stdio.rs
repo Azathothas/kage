@@ -29,14 +29,34 @@ pub struct Config {
 }
 
 impl Config {
-    /// The default engine launch: `kage rpc`.
+    /// The default engine launch: `kage rpc` of [`engine_program`].
     #[must_use]
-    pub fn engine() -> Self {
+    pub fn engine(saved: Option<&str>) -> Self {
         Self {
-            program: "kage".to_owned(),
+            program: engine_program(saved),
             args: vec!["rpc".to_owned()],
         }
     }
+}
+
+/// The engine to run when no `--rpc-bin` names one: the `kage` shipped
+/// beside this executable, which is the release's own, else the binary
+/// the setup screen saved, else `kage` from the `PATH`.
+#[must_use]
+pub fn engine_program(saved: Option<&str>) -> String {
+    bundled_engine()
+        .map(|path| path.display().to_string())
+        .or_else(|| saved.map(str::to_owned))
+        .unwrap_or_else(|| "kage".to_owned())
+}
+
+/// The `kage` beside this executable: in the release archive's folder,
+/// in `Kage.app/Contents/MacOS`, or in the onelf bundle's `bin/`.
+#[must_use]
+pub fn bundled_engine() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let engine = exe.with_file_name(format!("kage{}", std::env::consts::EXE_SUFFIX));
+    is_executable(&engine).then_some(engine)
 }
 
 /// Everything the threads and the handle share.

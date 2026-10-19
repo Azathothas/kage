@@ -103,7 +103,7 @@ fn opened(harness: &mut Harness<'static, Rig>) {
     for _ in 0..4 {
         harness.step();
     }
-    let fixture = include_str!("../../crates/kage-client/tests/fixtures/subagents.jsonl");
+    let fixture = include_str!("../../kage-client/tests/fixtures/subagents.jsonl");
     for line in fixture.lines().take(2) {
         push(
             harness,

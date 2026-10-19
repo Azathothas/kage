@@ -1,16 +1,17 @@
 //! Update discovery for the engine and this client.
 //!
-//! GitHub's releases list is the one source both checks read: engine
-//! releases carry `v<semver>` tags, desktop releases
-//! `kage-desktop-v<semver>`, and the rolling nightly is the `nightly`
-//! tag, whose commit comes from the tag ref. The parse half is pure,
+//! GitHub's releases list is the one source the check reads: a
+//! `v<semver>` release carries the engine, this client with that
+//! engine beside it, and the web client, all at one version. The
+//! rolling nightly is the `nightly` tag, whose commit comes from the
+//! tag ref. The parse half is pure,
 //! so tests run without a network; the fetch and install half exists
 //! only on native targets, and every entry point degrades to a no-op
 //! or a report on the web build.
 
-/// The releases list the checks read, newest first. `per_page` spans
-/// both families, so a burst of desktop releases cannot hide the
-/// newest engine tag.
+/// The releases list the check reads, newest first. `per_page` reaches
+/// past the nightly and any `kage-desktop-v*` release left from when
+/// the client shipped on its own, which the parse skips.
 #[cfg(not(target_arch = "wasm32"))]
 const RELEASES_API: &str = "https://api.github.com/repos/QaidVoid/kage/releases?per_page=50";
 
@@ -57,21 +58,18 @@ pub struct NightlyRelease {
     pub date: String,
 }
 
-/// The newest release of each family the feed names.
+/// The newest releases the feed names.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Feed {
-    /// The newest engine release, the first parsable `v*` tag.
-    pub cli: Option<Release>,
-    /// The newest desktop release, the first parsable
-    /// `kage-desktop-v*` tag.
-    pub desktop: Option<Release>,
+    /// The newest release, the first parsable `v*` tag.
+    pub latest: Option<Release>,
     /// The `nightly` rolling release, when it is on the list.
     pub nightly: Option<NightlyRelease>,
 }
 
-/// Reads the releases list. Within each family the first parsable tag
-/// wins, which is GitHub's newest; prerelease suffixes do not parse
-/// and are skipped so a broken comparison never reaches the interface.
+/// Reads the releases list. The first parsable `v*` tag wins, which is
+/// GitHub's newest; prerelease suffixes do not parse and are skipped
+/// so a broken comparison never reaches the interface.
 #[must_use]
 pub fn parse_feed(text: &str) -> Feed {
     let mut feed = Feed::default();
@@ -85,15 +83,7 @@ pub fn parse_feed(text: &str) -> Feed {
         let Some(tag) = release.get("tag_name").and_then(|tag| tag.as_str()) else {
             continue;
         };
-        if let Some(version) = tag.strip_prefix("kage-desktop-v")
-            && feed.desktop.is_none()
-            && parses(version)
-        {
-            feed.desktop = Some(Release {
-                tag: tag.to_owned(),
-                version: version.to_owned(),
-            });
-        } else if tag == "nightly" && feed.nightly.is_none() {
+        if tag == "nightly" && feed.nightly.is_none() {
             feed.nightly = release
                 .get("published_at")
                 .and_then(|at| at.as_str())
@@ -102,10 +92,10 @@ pub fn parse_feed(text: &str) -> Feed {
                     date: at[..10].to_owned(),
                 });
         } else if let Some(version) = tag.strip_prefix('v')
-            && feed.cli.is_none()
+            && feed.latest.is_none()
             && parses(version)
         {
-            feed.cli = Some(Release {
+            feed.latest = Some(Release {
                 tag: tag.to_owned(),
                 version: version.to_owned(),
             });
@@ -129,45 +119,34 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
 
 /// What the last check saw as out of date, as one summary line for
 /// the toast and the settings badge, or `None` when nothing is
-/// behind. The stable channel compares parsed semvers; the nightly
-/// channel compares this client's build commit against the nightly's,
-/// since an engine's nightly identity is not its version. A version
-/// that does not parse, such as a dev build, never counts as behind.
+/// behind. The stable channel compares parsed semvers: a client
+/// behind the release names the release, whose install brings its
+/// engine too, and an engine run from elsewhere is named on its own.
+/// The nightly channel compares this client's build commit against
+/// the nightly's, since an engine's nightly identity is not its
+/// version. A version that does not parse, such as a dev build, never
+/// counts as behind.
 #[must_use]
 pub fn pending_update(prefs: &crate::prefs::Prefs, engine: Option<&str>) -> Option<String> {
-    let mut parts: Vec<String> = Vec::new();
-    match prefs.channel {
+    let behind = match prefs.channel {
         crate::prefs::Channel::Nightly => {
-            if let Some(build) = &prefs.latest_nightly
-                && let Some(sha) = option_env!("KAGE_BUILD_SHA")
-                && sha != build.commit
-            {
-                parts.push(format!("desktop nightly {}", build.date));
-            }
+            let build = prefs.latest_nightly.as_ref()?;
+            let sha = option_env!("KAGE_BUILD_SHA")?;
+            (sha != build.commit).then(|| format!("desktop nightly {}", build.date))
         }
         crate::prefs::Channel::Latest => {
+            let latest = prefs.latest_version.as_deref()?;
             let desktop = env!("CARGO_PKG_VERSION");
-            if let Some(latest) = &prefs.latest_desktop_version
-                && parses(desktop)
-                && is_newer(latest, desktop)
-            {
-                parts.push(format!("desktop {latest}"));
-            }
-            if let Some(latest) = &prefs.latest_cli_version
-                && let Some(now) = engine
-                && parses(now)
-                && is_newer(latest, now)
-            {
-                parts.push(format!("engine {latest}"));
+            if parses(desktop) && is_newer(latest, desktop) {
+                Some(format!("kage {latest}"))
+            } else {
+                engine
+                    .filter(|now| parses(now) && is_newer(latest, now))
+                    .map(|_| format!("engine {latest}"))
             }
         }
-    }
-    match parts.as_slice() {
-        [] => None,
-        [one] => Some(format!("{one} is available")),
-        [first, second] => Some(format!("{first} and {second} are available")),
-        [others @ .., last] => Some(format!("{} and {last} are available", others.join(", "))),
-    }
+    }?;
+    Some(format!("{behind} is available"))
 }
 
 /// The engine release archive built for `os` and `arch`, named the
@@ -192,7 +171,7 @@ pub fn cli_asset() -> Option<&'static str> {
 }
 
 /// The desktop release archive built for `os` and `arch`, named the
-/// way the desktop release workflow uploads it. `onelf` picks the
+/// way the release workflow uploads it. `onelf` picks the
 /// portable Linux bundle over the plain archive. `None` where no
 /// release is built.
 #[must_use]
@@ -280,10 +259,10 @@ pub fn install_latest() -> Result<std::path::PathBuf, String> {
 }
 
 /// Downloads the newest desktop release of the saved channel for
-/// this platform and swaps the running app for it, returning where
-/// the new install sits. A swap takes effect at the next launch; the
-/// running app keeps its own binary. The web build reports the
-/// platform as unable.
+/// this platform and swaps the running app and the engine beside it
+/// for it, returning where the new install sits. A swap takes effect
+/// at the next launch; the running app keeps its own binary. The web
+/// build reports the platform as unable.
 pub fn install_desktop_latest() -> Result<std::path::PathBuf, String> {
     #[cfg(not(target_arch = "wasm32"))]
     return native::install_desktop_latest(crate::prefs::load().channel);
@@ -295,10 +274,8 @@ pub fn install_desktop_latest() -> Result<std::path::PathBuf, String> {
 /// What one release check saw, for the UI thread to apply.
 #[derive(Debug, Default)]
 pub struct CheckOutcome {
-    /// The newest engine release, without the `v`.
-    pub cli: Option<String>,
-    /// The newest desktop release.
-    pub desktop: Option<String>,
+    /// The newest release, without the `v`.
+    pub latest: Option<String>,
     /// The newest nightly, when the channel is nightly.
     pub nightly: Option<crate::prefs::NightlyBuild>,
     /// Why the check failed, when it did. Cleared on a success.
@@ -349,15 +326,14 @@ pub fn run_check(prefs: &crate::prefs::Prefs, force: bool) -> Option<CheckOutcom
                 }
             }
         };
-        if feed.cli.is_none() && feed.desktop.is_none() && nightly.is_none() {
+        if feed.latest.is_none() && nightly.is_none() {
             return Some(CheckOutcome {
                 error: Some("the release list named nothing".to_owned()),
                 ..Default::default()
             });
         }
         Some(CheckOutcome {
-            cli: feed.cli.map(|release| release.version),
-            desktop: feed.desktop.map(|release| release.version),
+            latest: feed.latest.map(|release| release.version),
             nightly,
             error: None,
             badge: false,
@@ -369,11 +345,8 @@ pub fn run_check(prefs: &crate::prefs::Prefs, force: bool) -> Option<CheckOutcom
 /// Applies a check outcome to the preferences. The badge needs the
 /// engine's own version, which the caller reads off the store.
 pub fn apply_outcome(prefs: &mut crate::prefs::Prefs, outcome: CheckOutcome, engine: Option<&str>) {
-    if let Some(version) = outcome.cli {
-        prefs.latest_cli_version = Some(version);
-    }
-    if let Some(version) = outcome.desktop {
-        prefs.latest_desktop_version = Some(version);
+    if let Some(version) = outcome.latest {
+        prefs.latest_version = Some(version);
     }
     if outcome.nightly.is_some() {
         prefs.latest_nightly = outcome.nightly;
@@ -470,9 +443,7 @@ mod native {
         let tag = match channel {
             crate::prefs::Channel::Latest => {
                 let feed = super::parse_feed(&fetch_releases()?);
-                feed.cli
-                    .ok_or("the release list names no engine release")?
-                    .tag
+                feed.latest.ok_or("the release list names no release")?.tag
             }
             // The rolling tag exists once the first nightly published.
             crate::prefs::Channel::Nightly => "nightly".to_owned(),
@@ -493,9 +464,7 @@ mod native {
         let tag = match channel {
             crate::prefs::Channel::Latest => {
                 let feed = super::parse_feed(&fetch_releases()?);
-                feed.desktop
-                    .ok_or("the release list names no desktop release")?
-                    .tag
+                feed.latest.ok_or("the release list names no release")?.tag
             }
             crate::prefs::Channel::Nightly => "nightly".to_owned(),
         };
@@ -563,12 +532,10 @@ mod native {
         found.ok_or_else(|| format!("the archive holds no {wanted}"))
     }
 
-    /// Swaps the running app for the staged payload and returns where
-    /// the new install sits. A running binary cannot be overwritten
-    /// on Windows but can be renamed, so the old one steps aside
-    /// first and the new one takes its place at the next launch; on
-    /// Unix the rename replaces it in place while the running process
-    /// keeps its own copy. A macOS install swaps the whole bundle.
+    /// Swaps the running app for the staged payload, and the engine
+    /// beside it for the one staged beside the payload, and returns
+    /// where the new install sits. A macOS install swaps the whole
+    /// bundle, and the onelf bundle carries its engine inside.
     fn swap_into_place(staged: &Path) -> Result<PathBuf, String> {
         let current = std::env::current_exe()
             .map_err(|error| format!("cannot locate the running app: {error}"))?;
@@ -576,21 +543,43 @@ mod native {
         if let Some(app) = app_bundle_of(&current) {
             return swap_bundle(&app, staged);
         }
+        let engine = format!("kage{}", std::env::consts::EXE_SUFFIX);
+        let staged_engine = staged.with_file_name(&engine);
+        swap_file(staged, &current)
+            .map_err(|error| format!("cannot move the new app into place: {error}"))?;
+        if staged_engine.is_file() {
+            swap_file(&staged_engine, &current.with_file_name(&engine))
+                .map_err(|error| format!("cannot move the new engine into place: {error}"))?;
+        }
+        Ok(current)
+    }
+
+    /// Puts `staged` where `target` is. A running binary cannot be
+    /// overwritten on Windows but can be renamed, so the old one steps
+    /// aside first and the new one takes its place at the next launch;
+    /// on Unix the rename replaces it in place while a running process
+    /// keeps its own copy.
+    fn swap_file(staged: &Path, target: &Path) -> std::io::Result<()> {
         #[cfg(windows)]
         {
-            let aside = current.with_file_name("kage-desktop.exe.old");
+            let mut aside = target.as_os_str().to_owned();
+            aside.push(".old");
+            let aside = PathBuf::from(aside);
             let _ = std::fs::remove_file(&aside);
-            std::fs::rename(&current, &aside)
-                .map_err(|error| format!("cannot move the old app aside: {error}"))?;
-            if let Err(error) = std::fs::copy(staged, &current) {
-                let _ = std::fs::rename(&aside, &current);
-                return Err(format!("cannot write {}: {error}", current.display()));
+            let moved = target.exists();
+            if moved {
+                std::fs::rename(target, &aside)?;
             }
+            if let Err(error) = std::fs::copy(staged, target) {
+                if moved {
+                    let _ = std::fs::rename(&aside, target);
+                }
+                return Err(error);
+            }
+            Ok(())
         }
         #[cfg(not(windows))]
-        std::fs::rename(staged, &current)
-            .map_err(|error| format!("cannot move the new app into place: {error}"))?;
-        Ok(current)
+        std::fs::rename(staged, target)
     }
 
     /// The `.app` bundle `exe` runs from, when it sits in one.
@@ -733,7 +722,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_first_tag_of_each_family_wins() {
+    fn the_first_release_tag_wins_past_old_desktop_tags() {
         let feed = parse_feed(
             r#"[
                 {"tag_name": "kage-desktop-v0.9.0"},
@@ -743,17 +732,13 @@ mod tests {
             ]"#,
         );
         assert_eq!(
-            feed.cli.map(|release| release.tag),
+            feed.latest.map(|release| release.tag),
             Some("v0.2.0".to_owned())
-        );
-        assert_eq!(
-            feed.desktop.map(|release| release.version),
-            Some("0.9.0".to_owned())
         );
     }
 
     #[test]
-    fn unparsable_tags_are_skipped_within_a_family() {
+    fn unparsable_tags_are_skipped() {
         let feed = parse_feed(
             r#"[
                 {"tag_name": "v0.3.0-rc.1"},
@@ -761,10 +746,9 @@ mod tests {
             ]"#,
         );
         assert_eq!(
-            feed.cli.map(|release| release.version),
+            feed.latest.map(|release| release.version),
             Some("0.2.0".to_owned())
         );
-        assert!(feed.desktop.is_none());
     }
 
     #[test]
@@ -787,7 +771,7 @@ mod tests {
             Some("2026-10-10".to_owned())
         );
         assert_eq!(
-            feed.cli.map(|release| release.version),
+            feed.latest.map(|release| release.version),
             Some("0.2.1".to_owned())
         );
     }
@@ -868,29 +852,26 @@ mod tests {
         };
         assert_eq!(pending_update(&prefs, None), None);
 
-        prefs.latest_desktop_version = Some("99.0.0".to_owned());
+        prefs.latest_version = Some("99.0.0".to_owned());
         assert_eq!(
-            pending_update(&prefs, None).as_deref(),
-            Some("desktop 99.0.0 is available")
+            pending_update(&prefs, Some("0.1.0")).as_deref(),
+            Some("kage 99.0.0 is available"),
+            "the release brings its engine, so it is named once"
         );
 
-        prefs.latest_cli_version = Some("99.0.0".to_owned());
+        // A release no newer than this client, with an older engine
+        // run from elsewhere, names the engine alone.
+        prefs.latest_version = Some(env!("CARGO_PKG_VERSION").to_owned());
         assert_eq!(
-            pending_update(&prefs, None).as_deref(),
-            Some("desktop 99.0.0 is available"),
+            pending_update(&prefs, Some("0.0.1")).as_deref(),
+            Some(format!("engine {} is available", env!("CARGO_PKG_VERSION")).as_str())
+        );
+        assert_eq!(
+            pending_update(&prefs, None),
+            None,
             "an engine whose version is unknown is not counted behind"
         );
-        assert_eq!(
-            pending_update(&prefs, Some("0.1.0")).as_deref(),
-            Some("desktop 99.0.0 and engine 99.0.0 are available")
-        );
-
-        prefs.latest_desktop_version = Some("0.0.1".to_owned());
-        assert_eq!(
-            pending_update(&prefs, Some("0.1.0")).as_deref(),
-            Some("engine 99.0.0 is available")
-        );
-        prefs.latest_cli_version = Some("0.0.1".to_owned());
+        prefs.latest_version = Some("0.0.1".to_owned());
         assert_eq!(pending_update(&prefs, Some("0.1.0")), None);
     }
 

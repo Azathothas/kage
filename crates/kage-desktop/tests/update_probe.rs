@@ -62,8 +62,7 @@ fn about_page(prefs: Prefs, updates: UpdateState) -> Harness<'static, Probe> {
 /// Preferences that saw one check on the stable channel.
 fn checked() -> Prefs {
     Prefs {
-        latest_cli_version: Some("0.2.0".to_owned()),
-        latest_desktop_version: Some("0.3.0".to_owned()),
+        latest_version: Some("0.2.0".to_owned()),
         update_checked_at: Some(1),
         ..Prefs::default()
     }
@@ -94,8 +93,7 @@ fn a_current_client_is_told_it_is_current() {
     let mut prefs = checked();
     // The desktop is built at the crate version, so a lower latest
     // reads as current.
-    prefs.latest_desktop_version = Some("0.0.1".to_owned());
-    prefs.latest_cli_version = Some("0.1.0".to_owned());
+    prefs.latest_version = Some("0.1.0".to_owned());
     let harness = about_page(prefs, UpdateState::default());
     assert_eq!(
         testutil::count(&harness, "engine 0.1.0; current with 0.1.0"),
@@ -103,7 +101,7 @@ fn a_current_client_is_told_it_is_current() {
         "the engine is current"
     );
     assert!(
-        testutil::count(&harness, "desktop 0.0.1 is available") == 0,
+        testutil::count(&harness, "0.1.0 is available") == 0,
         "a lower latest is not newer"
     );
 }
@@ -111,8 +109,7 @@ fn a_current_client_is_told_it_is_current() {
 #[test]
 fn an_install_button_appears_for_each_thing_that_is_behind() {
     let mut prefs = checked();
-    prefs.latest_cli_version = Some("9.9.9".to_owned());
-    prefs.latest_desktop_version = Some("9.9.9".to_owned());
+    prefs.latest_version = Some("9.9.9".to_owned());
     let harness = about_page(prefs, UpdateState::default());
     assert_eq!(
         testutil::count(&harness, "Install engine"),
@@ -134,7 +131,7 @@ fn an_install_button_appears_for_each_thing_that_is_behind() {
 #[test]
 fn an_install_in_flight_reads_as_installing() {
     let mut prefs = checked();
-    prefs.latest_cli_version = Some("9.9.9".to_owned());
+    prefs.latest_version = Some("9.9.9".to_owned());
     let updates = UpdateState {
         installing: Some(Install::Engine),
         ..UpdateState::default()
@@ -167,7 +164,7 @@ fn a_failed_check_names_its_error() {
 #[test]
 fn an_install_note_reports_what_happened() {
     let mut prefs = checked();
-    prefs.latest_cli_version = Some("9.9.9".to_owned());
+    prefs.latest_version = Some("9.9.9".to_owned());
     let updates = UpdateState {
         install_note: Some((false, "the download did not load".to_owned())),
         ..UpdateState::default()
@@ -209,7 +206,7 @@ fn the_channel_buttons_switch_the_channel() {
 #[test]
 fn the_install_button_asks_for_that_install() {
     let mut prefs = checked();
-    prefs.latest_cli_version = Some("9.9.9".to_owned());
+    prefs.latest_version = Some("9.9.9".to_owned());
     let mut harness = about_page(prefs, UpdateState::default());
     harness.get_by_label("Install engine").click();
     harness.run();

@@ -11,7 +11,8 @@ mod testutil;
 
 /// A golden markdown document: headings, lists, a table, nested code,
 /// links, inline styles and a CJK line.
-const GOLDEN: &str = r#"# kage
+const GOLDEN: &str = concat!(
+    r#"# kage
 
 A **bold** and *italic* line with `inline code` and a [link](https://example.com/kage).
 
@@ -41,8 +42,9 @@ fn main() {
 }
 ```
 
-CJK: 影者の影は影に宿る。
-"#;
+"#,
+    "CJK: \u{5f71}\u{8005}\u{306e}\u{5f71}\u{306f}\u{5f71}\u{306b}\u{5bbf}\u{308b}\u{3002}\n"
+);
 
 /// A harness over the pipeline, rendering `GOLDEN` for entry `id`.
 fn harness_for(theme: &str, streaming: bool) -> Harness<'static, (String, bool)> {
@@ -180,9 +182,10 @@ fn the_cjk_line_renders_glyphs_now_that_a_fallback_loads() {
         harness.state().expect("the width was read")
     }
 
-    let (_, line) = measure("影者の影は影に宿る。");
+    let (_, line) =
+        measure("\u{5f71}\u{8005}\u{306e}\u{5f71}\u{306f}\u{5f71}\u{306b}\u{5bbf}\u{308b}\u{3002}");
     assert!(line, "every glyph of the CJK line resolves to a font");
-    let (han, _) = measure("影者影影宿");
+    let (han, _) = measure("\u{5f71}\u{8005}\u{5f71}\u{5f71}\u{5bbf}");
     assert!(
         (han - 140.0).abs() < 1.0,
         "the ideographs lay out at the CJK font's advances: {han} for five at 28px"

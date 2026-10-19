@@ -2,8 +2,6 @@
 name = "kage-client"
 description = "Sans-IO Agent Client Protocol client: frames in, state changes out."
 version.workspace = true
-# Internal to the client train (D9): it rides the desktop tag.
-publish = false
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -17,7 +15,7 @@ categories.workspace = true
 workspace = true
 
 [dependencies]
-kage-acp-wire = { path = "../kage-acp-wire" }
+kage-acp-wire.workspace = true
 kage-core.workspace = true
 log = "0.4.34"
 serde.workspace = true

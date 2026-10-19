@@ -25,8 +25,8 @@ use kage_client::{Session, TranscriptItem};
 use super::head::{self, Head, Lead, Target};
 use super::model::last_sentence;
 use crate::theme::{
-    FAMILY_BODY_REGULAR, FAMILY_MONO_REGULAR, FS_2XS, FS_BASE, FS_SM, FS_XS, Palette, R_FULL,
-    R_MD, SP_1, SP_2, SP_3, SP_4, SP_5, family,
+    FAMILY_BODY_REGULAR, FAMILY_MONO_REGULAR, FS_2XS, FS_BASE, FS_SM, FS_XS, Palette, R_FULL, R_MD,
+    SP_1, SP_2, SP_3, SP_4, SP_5, family,
 };
 
 /// The activity row's height, the design's minimum row height.
@@ -636,8 +636,11 @@ fn ruled_line(
     ui.painter()
         .hline(body.right() + SP_4..=rect.right(), mid, stroke);
     if pill {
-        ui.painter()
-            .rect_filled(body, egui::CornerRadius::same(R_MD as u8), palette.danger_soft);
+        ui.painter().rect_filled(
+            body,
+            egui::CornerRadius::same(R_MD as u8),
+            palette.danger_soft,
+        );
     }
     ui.painter().galley(body.min + pad, galley, color);
     response

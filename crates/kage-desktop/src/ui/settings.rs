@@ -220,9 +220,11 @@ fn key_caps(binding: &crate::ui::keys::Binding) -> String {
 /// cannot stack a second download.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Install {
-    /// The engine binary behind `kage rpc`.
+    /// The engine binary behind `kage rpc`, for a client that ships
+    /// none beside it.
     Engine,
-    /// This client, which takes effect at the next launch.
+    /// This client and the engine beside it, which take effect at the
+    /// next launch.
     Desktop,
 }
 
@@ -1666,16 +1668,17 @@ fn connection(ui: &mut egui::Ui, store: &Store, palette: &Palette) {
             |ui| badge(ui, link.name, palette),
             palette,
         );
+        #[cfg(not(target_arch = "wasm32"))]
         if link.name == "kage rpc" {
-            let binary = store
-                .prefs()
-                .kage_path
-                .clone()
-                .unwrap_or_else(|| "kage from the PATH".to_owned());
+            let binary =
+                match crate::transport::stdio::engine_program(store.prefs().kage_path.as_deref()) {
+                    program if program == "kage" => "kage from the PATH".to_owned(),
+                    program => program,
+                };
             row(
                 ui,
                 "kage binary",
-                "The engine this app spawns; the setup screen picks another when none runs",
+                "The engine this app spawns: the one shipped beside it, else the one the setup screen picked",
                 |ui| mono(ui, binary),
                 palette,
             );
@@ -2038,7 +2041,7 @@ fn updates(
         };
         (engine_line, desktop_line)
     } else {
-        let engine_line = match (prefs.latest_cli_version.as_deref(), engine.as_deref()) {
+        let engine_line = match (prefs.latest_version.as_deref(), engine.as_deref()) {
             (Some(latest), Some(now)) if crate::update::is_newer(latest, now) => {
                 format!("engine {now}; {latest} is available")
             }
@@ -2046,7 +2049,7 @@ fn updates(
             (Some(latest), None) => format!("engine version unknown; {latest} is available"),
             (None, _) => "engine: no check has run yet".to_owned(),
         };
-        let desktop_line = match prefs.latest_desktop_version.as_deref() {
+        let desktop_line = match prefs.latest_version.as_deref() {
             Some(latest) if crate::update::is_newer(latest, desktop) => {
                 format!("desktop {desktop}; {latest} is available")
             }
@@ -2055,21 +2058,24 @@ fn updates(
         };
         (engine_line, desktop_line)
     };
-    let engine_behind = if nightly {
-        prefs.latest_nightly.is_some()
-    } else {
-        matches!(
-            (prefs.latest_cli_version.as_deref(), engine.as_deref()),
-            (Some(latest), Some(now)) if crate::update::is_newer(latest, now)
-        )
-    };
+    // An engine shipped beside this client updates with it, so only
+    // one run from elsewhere gets its own install.
+    let engine_behind = crate::transport::stdio::bundled_engine().is_none()
+        && if nightly {
+            prefs.latest_nightly.is_some()
+        } else {
+            matches!(
+                (prefs.latest_version.as_deref(), engine.as_deref()),
+                (Some(latest), Some(now)) if crate::update::is_newer(latest, now)
+            )
+        };
     let desktop_behind = if nightly {
         prefs.latest_nightly.as_ref().is_some_and(|build| {
             option_env!("KAGE_BUILD_SHA").is_some_and(|sha| sha != build.commit)
         })
     } else {
         prefs
-            .latest_desktop_version
+            .latest_version
             .as_deref()
             .is_some_and(|latest| crate::update::is_newer(latest, desktop))
     };

@@ -24,8 +24,9 @@ use kage_client::Frame;
 
 use super::{Event, EventSender, Link, State, Transport};
 
-/// The golden transcript the replay transport plays, in wire order.
-const TRANSCRIPT: &str = include_str!("../../../crates/kage-client/tests/fixtures/fix-tools.jsonl");
+/// The golden transcript the replay transport plays, in wire order. A
+/// copy of the kage-client fixture, so the published crate carries it.
+const TRANSCRIPT: &str = include_str!("../../assets/replay/fix-tools.jsonl");
 
 /// The pause between two played frames, in milliseconds.
 const BEAT_MILLIS: u32 = 100;
@@ -207,6 +208,15 @@ mod tests {
     use super::ReplayTransport;
     use super::transcript;
     use crate::transport::{Event, Transport};
+
+    #[test]
+    fn the_transcript_matches_the_client_fixture() {
+        assert_eq!(
+            super::TRANSCRIPT,
+            include_str!("../../../kage-client/tests/fixtures/fix-tools.jsonl"),
+            "copy the kage-client fixture to assets/replay again"
+        );
+    }
 
     /// The replay holds an answer back until the shell's request with
     /// the same id is in flight: a slow frame would otherwise make

@@ -47,15 +47,15 @@ pub struct Prefs {
     pub starred_models: BTreeSet<String>,
     /// Sessions left out of the sidebar until restored.
     pub archived: BTreeSet<String>,
-    /// The `kage` binary the setup screen chose, when the PATH has none.
+    /// The `kage` binary the setup screen chose, run when none ships
+    /// beside this client.
     pub kage_path: Option<String>,
     /// Unix seconds of the last completed release check, which runs
     /// at most once a day.
     pub update_checked_at: Option<i64>,
-    /// The newest engine release the last check saw, without the `v`.
-    pub latest_cli_version: Option<String>,
-    /// The newest desktop release the last check saw.
-    pub latest_desktop_version: Option<String>,
+    /// The newest release the last check saw, without the `v`. The
+    /// engine, this client and the web client share it.
+    pub latest_version: Option<String>,
     /// Which release line updates follow: tagged stable releases or
     /// the rolling nightly built from main. One choice governs both
     /// the engine and this client's checks.
@@ -92,8 +92,7 @@ impl Default for Prefs {
             archived: BTreeSet::new(),
             kage_path: None,
             update_checked_at: None,
-            latest_cli_version: None,
-            latest_desktop_version: None,
+            latest_version: None,
             channel: Channel::default(),
             latest_nightly: None,
             check_error: None,

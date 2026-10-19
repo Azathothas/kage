@@ -9,6 +9,6 @@ target/
 node_modules
 /docs/.vitepress/cache
 /docs/.vitepress/dist
-gui/tests/snapshots/*.diff.png
-gui/tests/snapshots/*.new.png
-gui/tests/snapshots/*.old.png
+crates/kage-desktop/tests/snapshots/*.diff.png
+crates/kage-desktop/tests/snapshots/*.new.png
+crates/kage-desktop/tests/snapshots/*.old.png

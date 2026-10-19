@@ -9,7 +9,7 @@ E00 spike used) and prints the series summary: the peak, the first and
 last reading, and the growth across the run.
 
 Usage:
-    ./gui/scripts/rss_sampler.py -- ./target/debug/kage-desktop --smoke 10000
+    ./crates/kage-desktop/scripts/rss_sampler.py -- ./target/debug/kage-desktop --smoke 10000
 
 The child runs to completion; the sampler samples until it exits, then
 prints:

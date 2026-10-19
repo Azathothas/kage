@@ -1,17 +1,19 @@
-[workspace]
-resolver = "3"
-members = ["."]
-
 [package]
 name = "kage-desktop"
-version = "0.3.0"
-edition = "2024"
-# Pinned to 1.95.0 stable; the msrv gui leg in CI enforces
-# this floor.
+description = "The kage desktop and browser client."
+version.workspace = true
+edition.workspace = true
+# Newer than the CLI's floor: the egui stack needs 1.95. The msrv
+# desktop leg in CI enforces it.
 rust-version = "1.95"
-description = "The kage desktop client"
-license = "MIT"
-publish = false
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme.workspace = true
+keywords = ["agent", "ai", "llm", "desktop", "egui"]
+categories = ["development-tools", "gui"]
+# The probes, their snapshots and the web page are not needed to build.
+include = ["/src", "/assets", "/build.rs"]
 
 [lib]
 # cdylib so the wasm bundle carries the exported web entry; rlib for the
@@ -49,10 +51,10 @@ egui_virtual_list = "0.12"
 # Syntax highlighting for the transcript's code blocks; the
 # `default-fancy` flavor keeps the fancy regex engine.
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }
-kage-client = { path = "../crates/kage-client" }
+kage-client.workspace = true
 # The catalog's origin, so a provider's logo is read from the same place
 # the catalog is rather than from a URL repeated here.
-kage-core = { path = "../crates/kage-core" }
+kage-core.workspace = true
 async-channel = "2.5"
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
@@ -92,9 +94,9 @@ image = { version = "0.25", default-features = false, features = ["png", "ico"] 
 # Fetches the release list and the engine binary for the update
 # check and the setup screen download; rustls, so no system OpenSSL.
 ureq = "2.10"
-# Unpacks the engine release archive (tar.xz, or zip on Windows) in
-# the setup screen's downloader.
-compak = "0.2"
+# Unpacks the release archives (tar.xz, or zip on Windows) in the
+# setup screen's downloader and the updater.
+compak = { workspace = true, features = ["tar", "xz", "zip"] }
 # The native file dialog the setup screen's Browse opens, through the
 # XDG portal. Not on wasm: the browser build never runs a local binary.
 rfd = "0.17"
@@ -113,7 +115,7 @@ zbus = { version = "5", default-features = false, features = ["async-io", "block
 # unifies across the whole wasm graph.
 getrandom = { version = "0.4.3", features = ["wasm_js"] }
 # Exact versions so the wasm-bindgen CLI (0.2.129 installed) stays in
-# sync with the crate, same rule as the gui workspace lock.
+# sync with the crate, same rule as the workspace lock.
 wasm-bindgen = "=0.2.129"
 wasm-bindgen-futures = "=0.4.79"
 # `Date.now`, the browser clock behind `clock::unix_seconds`.
@@ -135,23 +137,6 @@ web-sys = { version = "=0.3.106", features = [
     "WebSocket",
     "Window",
 ] }
-
-# Size and speed for shipped binaries, after soar's profile. Nothing in
-# the client recovers from a panic, so aborting drops the unwind tables.
-# T01.1.3: fat (lto = true) vs thin measured in the E01 results; fat
-# builds the whole app tree clean in ~70s on 16 cores.
-[profile.release]
-codegen-units = 1
-lto = true
-panic = "abort"
-strip = true
-
-# Unoptimized egui, epaint and syntect miss a 120 Hz frame budget on a
-# long transcript, so a debug run animated in visible steps. The
-# dependencies build optimized once; the client itself stays quick to
-# rebuild.
-[profile.dev.package."*"]
-opt-level = 2
 
 [dev-dependencies]
 # The headless harness the E01 theme and icon probes render through.

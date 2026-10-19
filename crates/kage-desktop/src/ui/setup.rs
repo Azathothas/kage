@@ -1,9 +1,10 @@
 //! The setup screen: what the app shows in place of the chat while it
 //! cannot run `kage`.
 //!
-//! The app spawns `kage rpc` from the user's machine and never bundles
-//! it, so a missing binary gets this screen: point at a `kage` you
-//! have, or install one and check again. A chosen binary is probed with
+//! Release builds ship `kage` beside the app and run it. A build
+//! without one, such as `cargo install kage-desktop`, spawns the
+//! `kage` on the user's machine, so a missing binary gets this screen:
+//! point at a `kage` you have, or install one and check again. A chosen binary is probed with
 //! `--version` first and refused when it is not `kage` or is older than
 //! the minimum the gate checks. The web build runs nothing locally and
 //! never shows this screen.

@@ -139,18 +139,18 @@ impl Launch {
     }
 
     /// The transport the launch selected. Stdio runs `--rpc-bin`, else
-    /// the binary the setup screen saved, else `kage` from the PATH.
+    /// the engine [`crate::transport::stdio::engine_program`] picks.
     /// The browser has no local engine, so this never runs there.
     #[cfg(not(target_arch = "wasm32"))]
     fn transport(&self, saved: Option<&str>) -> Box<dyn Transport> {
         match &self.wire {
             Wire::Stdio => {
-                let config = match self.rpc_bin.as_deref().or(saved) {
+                let config = match self.rpc_bin.as_deref() {
                     Some(program) => StdioConfig {
                         program: program.to_owned(),
                         args: vec!["rpc".to_owned()],
                     },
-                    None => StdioConfig::engine(),
+                    None => StdioConfig::engine(saved),
                 };
                 Box::new(StdioTransport::new(config))
             }
@@ -394,17 +394,10 @@ impl Shell {
         self.replace_transport(Box::new(StdioTransport::new(config)), ctx);
     }
 
-    /// Looks for `kage` again: the saved path if the setup screen once
-    /// named one, else the PATH.
+    /// Looks for `kage` again, the way the launch did.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn retry_engine(&mut self, saved: Option<&str>, ctx: &egui::Context) {
-        let config = match saved {
-            Some(program) => StdioConfig {
-                program: program.to_owned(),
-                args: vec!["rpc".to_owned()],
-            },
-            None => StdioConfig::engine(),
-        };
+        let config = StdioConfig::engine(saved);
         self.replace_transport(
             Box::new(crate::transport::stdio::StdioTransport::new(config)),
             ctx,

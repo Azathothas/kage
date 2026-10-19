@@ -1,4 +1,4 @@
-"""Static file server for the gui/web bundle, header-correct for WebAssembly.
+"""Static file server for the crates/kage-desktop/web bundle, header-correct for WebAssembly.
 
 Usage: python3 serve_web.py [port] [--coop]
   port   listen port, default 8090
@@ -37,7 +37,7 @@ def main():
         ("127.0.0.1", port), partial(Handler, directory="web")
     )
     server.coop = coop
-    print(f"serving gui/web on http://127.0.0.1:{port} coop={coop}")
+    print(f"serving crates/kage-desktop/web on http://127.0.0.1:{port} coop={coop}")
     server.serve_forever()
 
 

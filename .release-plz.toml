@@ -3,6 +3,7 @@
 # release once that PR merges. Every crate shares the workspace
 # version, so they release together; only kage-cli, which installs
 # the `kage` binary, gets a tag, a GitHub release and the changelog.
+# The desktop and web client ship on that same release.
 
 [workspace]
 allow_dirty = false
@@ -43,6 +44,7 @@ changelog_include = [
   "kage-acp-wire",
   "kage-client",
   "kage-core",
+  "kage-desktop",
   "kage-jsonrpc",
   "kage-loop",
   "kage-mcp",
@@ -107,8 +109,11 @@ version_group = "kage"
 
 [[package]]
 name = "kage-client"
-publish = false
-release = false
+version_group = "kage"
+
+[[package]]
+name = "kage-desktop"
+version_group = "kage"
 
 [[package]]
 name = "xtask"
