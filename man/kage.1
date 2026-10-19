@@ -34,6 +34,13 @@ Print help
 .TP
 \fB\-V\fR, \fB\-\-version\fR
 Print version
+.SH COMMANDS
+.TP
+\fBkage list\fR
+List recorded sessions in `$XDG_DATA_HOME/kage/sessions/`
+.TP
+\fBkage resume\fR
+Resume a recorded session, appending new entries to the same file
 .TP
 \fIID\fR
 Session id or unique prefix. Mutually exclusive with \-\-last
@@ -50,20 +57,41 @@ Override the recorded model. Defaults to the model the session was last using
 \fB\-\-json\fR
 Emit one JSON object per event on stdout instead of plain text. Same format as the top\-level `\-\-json` flag
 .TP
+\fBkage fork\fR
+Fork a recorded session at a specific entry into a new session file
+.TP
 \fIID\fR
 Source session id or unique prefix
 .TP
 \fB\-\-at\fR\fI <AT>\fR
 Entry id (or unique prefix) to fork at; everything up through this entry is copied into the new session
 .TP
+\fBkage search\fR
+Regex\-search recorded sessions
+.TP
 \fIQUERY\fR
 Regex query, ripgrep\-style
+.TP
+\fBkage auth\fR
+Manage saved provider API credentials
+.TP
+\fBkage auth login\fR
+Save an API key for a provider, prompting for it without echo
 .TP
 \fIPROVIDER\fR
 Provider id. Omit to pick from a list
 .TP
+\fBkage auth logout\fR
+Remove a saved API key
+.TP
 \fIPROVIDER\fR
 Provider id
+.TP
+\fBkage auth list\fR
+Show which known and custom providers have credentials available
+.TP
+\fBkage init\fR
+First\-run setup wizard. Creates `~/.config/kage/config.toml`, scaffolds the data directories, and offers to save a provider API key. Idempotent: rerunning without `\-\-force` keeps any existing config in place
 .TP
 \fB\-\-force\fR
 Overwrite an existing `~/.config/kage/config.toml` instead of keeping it
@@ -71,14 +99,26 @@ Overwrite an existing `~/.config/kage/config.toml` instead of keeping it
 \fB\-\-non\-interactive\fR
 Skip every prompt. Useful for scripted bootstrap; will still write a fresh config when one is missing but never asks for an API key
 .TP
+\fBkage doctor\fR
+Diagnose the kage install: parses config, lists available providers, validates plugins, probes each MCP server. Exit code is `0` when no check fails, `1` otherwise
+.TP
+\fBkage completions\fR
+Print a shell completion script for `kage` to stdout
+.TP
 \fISHELL\fR
 Target shell
+.TP
+\fBkage rpc\fR
+Agent Client Protocol server: speak JSON\-RPC over stdio so an editor (Zed, Neovim, ...) can drive kage. Messages are newline\-delimited JSON. Each request is answered, and loop progress is streamed back as ACP `session/update` notifications
 .TP
 \fB\-m\fR, \fB\-\-model\fR\fI <MODEL>\fR
 Provider\-qualified model id (`provider/model`). Defaults the same way as the top\-level `\-m`
 .TP
 \fB\-\-system\fR\fI <SYSTEM>\fR
 System\-prompt role override forwarded to the agent loop
+.TP
+\fBkage serve\fR
+Serve the Agent Client Protocol over WebSocket so remote editors and ACP clients can drive kage over the network. One endpoint (`/acp`) behind a bearer token; every connection shares one engine. The same listener serves the web client bundle at `/`, so a browser needs only the page URL and the token. The startup output on stderr carries the connect URL, the only place the token is ever printed
 .TP
 \fB\-m\fR, \fB\-\-model\fR\fI <MODEL>\fR
 Provider\-qualified model id (`provider/model`). Defaults the same way as the top\-level `\-m`
@@ -101,11 +141,23 @@ Directory with the web client bundle to serve at `/` (built from `crates/kage\-d
 \fB\-\-fetch\-web\fR
 Download the web client bundle matching this kage into the web directory, replacing what is there, then serve
 .TP
+\fBkage trust\fR
+Trust the current directory\*(Aqs `.kage/config.toml`. Until a project is trusted, its `mcp`, `permissions` and `plugins.capabilities` settings are ignored. Trust covers the values as they are now, so editing any of them asks again
+.TP
 \fB\-\-revoke\fR
 Forget the trust recorded for this directory
 .TP
+\fBkage models\fR
+Manage the model catalog. kage ships a snapshot of the curated catalog; `kage models refresh` fetches a newer one into the model cache, which later runs use in place of the snapshot\*(Aqs model entries
+.TP
+\fBkage models refresh\fR
+Download the curated model catalog into `$XDG_CACHE_HOME/kage/models.json`. It can add models and update their metadata, never provider endpoints or credentials. Only runs when asked; kage never refreshes on its own
+.TP
 \fB\-\-source\fR\fI <SOURCE>\fR
 Read the catalog from here instead of the published feed. A `file://` URL reads a local file, which is how an offline run or a test pins a catalog. The `KAGE_CATALOG_URL` environment variable sets the same thing
+.TP
+\fBkage models fetch\fR
+List the models a provider endpoint serves. Names a saved provider to test its saved settings; the flags fill what the config leaves out, or probe an endpoint that is not configured
 .TP
 \fIPROVIDER\fR
 Provider id: a `[providers.<id>]` entry, an override, or a builtin such as `openai` or `anthropic`
@@ -128,78 +180,26 @@ The URL the model list is read from, when the endpoint\*(Aqs own will not do \- 
 \fB\-\-save\fR
 Save the fetched models into the saved `[providers.custom.<provider>]` entry: ids it does not list yet are appended as fresh `[[...models]]` tables, listed ones and their comments stay untouched. Needs the entry to exist; registered providers keep their models in the catalog instead
 .TP
-\fB\-\-tools\fR\fI <TOOLS>\fR
-Comma\-separated built\-in tools to expose. Unknown names are an error
-.TP
-\fISERVER\fR
-Server name from `[mcp.servers.<name>]`
-.TP
-\fISERVER\fR
-Server name from `[mcp.servers.<name>]`
-.SH COMMANDS
-.TP
-\fBkage list\fR
-List recorded sessions in `$XDG_DATA_HOME/kage/sessions/`
-.TP
-\fBkage resume\fR
-Resume a recorded session, appending new entries to the same file
-.TP
-\fBkage fork\fR
-Fork a recorded session at a specific entry into a new session file
-.TP
-\fBkage search\fR
-Regex\-search recorded sessions
-.TP
-\fBkage auth\fR
-Manage saved provider API credentials
-.TP
-\fBkage auth login\fR
-Save an API key for a provider, prompting for it without echo
-.TP
-\fBkage auth logout\fR
-Remove a saved API key
-.TP
-\fBkage auth list\fR
-Show which known and custom providers have credentials available
-.TP
-\fBkage init\fR
-First\-run setup wizard. Creates `~/.config/kage/config.toml`, scaffolds the data directories, and offers to save a provider API key. Idempotent: rerunning without `\-\-force` keeps any existing config in place
-.TP
-\fBkage doctor\fR
-Diagnose the kage install: parses config, lists available providers, validates plugins, probes each MCP server. Exit code is `0` when no check fails, `1` otherwise
-.TP
-\fBkage completions\fR
-Print a shell completion script for `kage` to stdout
-.TP
-\fBkage rpc\fR
-Agent Client Protocol server: speak JSON\-RPC over stdio so an editor (Zed, Neovim, ...) can drive kage. Messages are newline\-delimited JSON. Each request is answered, and loop progress is streamed back as ACP `session/update` notifications
-.TP
-\fBkage serve\fR
-Serve the Agent Client Protocol over WebSocket so remote editors and ACP clients can drive kage over the network. One endpoint (`/acp`) behind a bearer token; every connection shares one engine. The same listener serves the web client bundle at `/`, so a browser needs only the page URL and the token. The startup output on stderr carries the connect URL, the only place the token is ever printed
-.TP
-\fBkage trust\fR
-Trust the current directory\*(Aqs `.kage/config.toml`. Until a project is trusted, its `mcp`, `permissions` and `plugins.capabilities` settings are ignored. Trust covers the values as they are now, so editing any of them asks again
-.TP
-\fBkage models\fR
-Manage the model catalog. kage ships a snapshot of the curated catalog; `kage models refresh` fetches a newer one into the model cache, which later runs use in place of the snapshot\*(Aqs model entries
-.TP
-\fBkage models refresh\fR
-Download the curated model catalog into `$XDG_CACHE_HOME/kage/models.json`. It can add models and update their metadata, never provider endpoints or credentials. Only runs when asked; kage never refreshes on its own
-.TP
-\fBkage models fetch\fR
-List the models a provider endpoint serves. Names a saved provider to test its saved settings; the flags fill what the config leaves out, or probe an endpoint that is not configured
-.TP
 \fBkage mcp\fR
 Model Context Protocol: expose kage\*(Aqs built\-in tools to another agent over stdio (newline\-delimited JSON\-RPC) with `kage mcp serve`, or log in to remote MCP servers that need OAuth
 .TP
 \fBkage mcp serve\fR
 Serve kage\*(Aqs built\-in tools as an MCP server over stdio. Calls are checked against `[permissions]`, and a tool whose verdict is `ask` is refused because there is no one to ask
 .TP
+\fB\-\-tools\fR\fI <TOOLS>\fR
+Comma\-separated built\-in tools to expose. Unknown names are an error
+.TP
 \fBkage mcp login\fR
 Log in to a remote MCP server with OAuth. Prints the authorization URL, opens it in a browser when one is available, and waits for the browser to return, or for the redirected URL to be pasted on a machine without one. The token is stored in `$XDG_DATA_HOME/kage/mcp\-auth.json` (mode 0600)
 .TP
+\fISERVER\fR
+Server name from `[mcp.servers.<name>]`
+.TP
 \fBkage mcp logout\fR
 Forget the stored OAuth token of a remote MCP server
+.TP
+\fISERVER\fR
+Server name from `[mcp.servers.<name>]`
 .PP
 Run \fBkage \fR\fIcommand\fR\fB \-\-help\fR for the options of a command.
 .SH FILES

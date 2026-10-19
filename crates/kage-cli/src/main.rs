@@ -854,17 +854,15 @@ fn render_manpage(cmd: &clap::Command) -> io::Result<String> {
             if let Some(about) = page.get_about() {
                 roff.text([roman(about.to_string())]);
             }
-            let args = subcommand_args(page);
-            if !args.is_empty() {
-                let mut options = Roff::new();
-                for (tag, help) in args {
-                    options.control("TP", []);
-                    options.text(tag);
-                    if !help.is_empty() {
-                        options.text(help);
-                    }
+            // The option blocks belong to this command's `.TP` inside
+            // COMMANDS; pushing them to the page here would land them
+            // in the still-open OPTIONS section above.
+            for (tag, help) in subcommand_args(page) {
+                roff.control("TP", []);
+                roff.text(tag);
+                if !help.is_empty() {
+                    roff.text(help);
                 }
-                push(options.render());
             }
         }
     }
@@ -1378,6 +1376,22 @@ mod tests {
             page.contains("\\fISESSION\\fR") || page.contains("\\fIID\\fR"),
             "positional arguments missing"
         );
+    }
+
+    /// Subcommand-only flags must sit after `.SH COMMANDS`: roff
+    /// sections extend to the next `.SH`, so a block pushed earlier
+    /// documents a subcommand flag as a top-level one.
+    #[test]
+    fn manpage_keeps_subcommand_options_out_of_the_options_section() {
+        use clap::CommandFactory as _;
+        let page = render_manpage(&Cli::command()).unwrap();
+        let commands = page.find(".SH COMMANDS").expect("a COMMANDS section");
+        for flag in ["\\-\\-last", "\\-\\-port", "\\-\\-tools", "\\-\\-revoke"] {
+            assert!(
+                !page[..commands].contains(flag),
+                "{flag} is documented before .SH COMMANDS"
+            );
+        }
     }
 
     #[test]
