@@ -3,7 +3,7 @@
 use std::fmt::Write as _;
 use std::path::Path;
 
-use globset::Glob;
+use globset::GlobBuilder;
 use ignore::WalkBuilder;
 use kage_core::{Risk, ToolOutput};
 use schemars::JsonSchema;
@@ -18,7 +18,8 @@ const MAX_ENTRIES: usize = 5_000;
 /// Input shape for the `find` tool.
 #[derive(Debug, Deserialize, JsonSchema)]
 struct FindInput {
-    /// Glob pattern, e.g. `**/*.rs` or `src/**/*.toml`.
+    /// Glob pattern, e.g. `**/*.rs` or `src/**/*.toml`. `*` and `?`
+    /// stay within one path segment; `**` crosses them.
     pattern: String,
     /// Optional subdirectory under workdir. Defaults to workdir.
     #[serde(default, alias = "filePath", deserialize_with = "super::optional_path")]
@@ -39,7 +40,8 @@ impl Tool for FindTool {
 
     fn description(&self) -> &'static str {
         "Find paths matching a glob pattern. Honors `.gitignore` \
-         and `.kageignore`; skips dotfiles. Optional `type` filters by `f` \
+         and `.kageignore`; skips dotfiles. `*` and `?` stay within one \
+         path segment, `**` crosses them. Optional `type` filters by `f` \
          (files) or `d` (directories). Output is capped at 5000 entries."
     }
 
@@ -62,7 +64,9 @@ impl Tool for FindTool {
             None => cx.workdir().to_path_buf(),
         };
         std::fs::metadata(&root).map_err(ToolError::io_at("search", &root))?;
-        let glob = Glob::new(&input.pattern)
+        let glob = GlobBuilder::new(&input.pattern)
+            .literal_separator(true)
+            .build()
             .map_err(|e| ToolError::InvalidInput(format!("invalid glob: {e}")))?
             .compile_matcher();
 
@@ -172,6 +176,39 @@ mod tests {
         assert!(out.text.contains("src/main.rs"));
         assert!(out.text.contains("src/lib.rs"));
         assert!(!out.text.contains("Cargo.toml"));
+    }
+
+    #[test]
+    fn single_star_stays_within_one_path_segment() {
+        let dir = tempfile::tempdir().unwrap();
+        populate(dir.path());
+        fs::create_dir_all(dir.path().join("src/nested")).unwrap();
+        fs::write(dir.path().join("src/nested/deep.rs"), "// deep").unwrap();
+        let out = run(dir.path(), serde_json::json!({"pattern":"src/*.rs"})).unwrap();
+        assert!(out.text.contains("src/main.rs"), "{}", out.text);
+        assert!(!out.text.contains("src/nested/deep.rs"), "{}", out.text);
+    }
+
+    #[test]
+    fn double_star_still_crosses_path_segments() {
+        let dir = tempfile::tempdir().unwrap();
+        populate(dir.path());
+        fs::create_dir_all(dir.path().join("src/nested")).unwrap();
+        fs::write(dir.path().join("src/nested/deep.rs"), "// deep").unwrap();
+        let out = run(dir.path(), serde_json::json!({"pattern":"**/*.rs"})).unwrap();
+        assert!(out.text.contains("src/nested/deep.rs"), "{}", out.text);
+    }
+
+    #[test]
+    fn question_mark_stays_within_one_path_segment() {
+        let dir = tempfile::tempdir().unwrap();
+        populate(dir.path());
+        fs::create_dir_all(dir.path().join("src/nested")).unwrap();
+        fs::write(dir.path().join("src/nested/deep.rs"), "// deep").unwrap();
+        let out = run(dir.path(), serde_json::json!({"pattern":"src/mai?.rs"})).unwrap();
+        assert!(out.text.contains("src/main.rs"), "{}", out.text);
+        let out = run(dir.path(), serde_json::json!({"pattern":"src?nested/*.rs"})).unwrap();
+        assert_eq!(out.text, "(no matches)");
     }
 
     #[test]
