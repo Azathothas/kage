@@ -855,7 +855,7 @@ impl Store {
             Some(kage_client::wire::Implementation {
                 name: env!("CARGO_PKG_NAME").to_owned(),
                 title: None,
-                version: Some(env!("CARGO_PKG_VERSION").to_owned()),
+                version: Some(kage_core::build::VERSION.to_owned()),
             }),
         );
         if replay_sessions {

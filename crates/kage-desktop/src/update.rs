@@ -117,6 +117,15 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
     crate::gate::is_below(current, latest)
 }
 
+/// Whether a version kage reports, such as `0.3.1 (abc1234)`, is
+/// behind release `latest`. A nightly is not: it has no release number
+/// to compare, and the nightly channel tracks it by commit instead.
+#[must_use]
+pub fn reported_behind(latest: &str, reported: &str) -> bool {
+    kage_core::build::release(reported)
+        .is_some_and(|number| parses(number) && is_newer(latest, number))
+}
+
 /// What the last check saw as out of date, as one summary line for
 /// the toast and the settings badge, or `None` when nothing is
 /// behind. The stable channel compares parsed semvers: a client
@@ -131,17 +140,16 @@ pub fn pending_update(prefs: &crate::prefs::Prefs, engine: Option<&str>) -> Opti
     let behind = match prefs.channel {
         crate::prefs::Channel::Nightly => {
             let build = prefs.latest_nightly.as_ref()?;
-            let sha = option_env!("KAGE_BUILD_SHA")?;
+            let sha = kage_core::build::COMMIT?;
             (sha != build.commit).then(|| format!("desktop nightly {}", build.date))
         }
         crate::prefs::Channel::Latest => {
             let latest = prefs.latest_version.as_deref()?;
-            let desktop = env!("CARGO_PKG_VERSION");
-            if parses(desktop) && is_newer(latest, desktop) {
+            if reported_behind(latest, kage_core::build::VERSION) {
                 Some(format!("kage {latest}"))
             } else {
                 engine
-                    .filter(|now| parses(now) && is_newer(latest, now))
+                    .filter(|now| reported_behind(latest, now))
                     .map(|_| format!("engine {latest}"))
             }
         }
@@ -793,6 +801,14 @@ mod tests {
             releases_page(Channel::Nightly),
             "https://github.com/QaidVoid/kage/releases/tags/nightly"
         );
+    }
+
+    #[test]
+    fn a_reported_version_is_behind_by_its_release_number() {
+        assert!(reported_behind("0.4.0", "0.3.1 (abc1234)"));
+        assert!(!reported_behind("0.3.1", "0.3.1 (abc1234)"));
+        assert!(!reported_behind("9.9.9", "nightly (abc1234)"));
+        assert!(!reported_behind("0.4.0", "dev"));
     }
 
     #[test]

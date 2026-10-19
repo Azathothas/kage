@@ -695,7 +695,7 @@ fn probe(agent: &ureq::Agent, server_url: &str) -> Result<BTreeMap<String, Strin
         "params": {
             "protocolVersion": PROTOCOL_VERSION,
             "capabilities": {},
-            "clientInfo": { "name": "kage", "version": env!("CARGO_PKG_VERSION") },
+            "clientInfo": { "name": "kage", "version": kage_core::build::VERSION },
         },
     });
     let response = agent

@@ -449,7 +449,7 @@ impl Agent for CliAcpAgent {
             agent_info: Some(Implementation {
                 name: "kage".to_owned(),
                 title: None,
-                version: Some(env!("CARGO_PKG_VERSION").to_owned()),
+                version: Some(kage_core::build::VERSION.to_owned()),
             }),
             auth_methods: vec![],
             meta: Some(AgentMeta {

@@ -1,6 +1,6 @@
-//! Stamps `KAGE_VERSION`, what `kage --version` prints: the crate
-//! version, or `nightly` for a nightly build, followed by the commit a
-//! CI build was made from.
+//! Stamps `KAGE_VERSION`, the version every kage binary reports: the
+//! crate version, or `nightly` for a nightly build, followed by the
+//! commit a CI build was made from.
 
 fn main() {
     println!("cargo:rerun-if-env-changed=KAGE_BUILD_SHA");

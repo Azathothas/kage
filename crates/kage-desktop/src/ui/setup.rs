@@ -64,10 +64,7 @@ pub fn probe(program: &str) -> Result<String, String> {
         .strip_prefix("kage ")
         .ok_or_else(|| format!("{program} is not kage"))?
         .to_owned();
-    // A release prints its commit after the version, and a nightly
-    // names itself instead of a version; a nightly is never too old.
-    let number = version.split_whitespace().next().unwrap_or_default();
-    if number != "nightly" && crate::gate::is_below(number, MINIMUM_KAGE_VERSION) {
+    if !crate::gate::meets_minimum(&version) {
         return Err(format!(
             "That kage is {version}; this app needs {MINIMUM_KAGE_VERSION} or newer."
         ));

@@ -503,7 +503,7 @@ pub(crate) fn start_notices(
     now: DateTime<Utc>,
 ) -> Vec<(NoticeLevel, String)> {
     let mut notices = Vec::new();
-    let current = env!("CARGO_PKG_VERSION");
+    let current = kage_core::build::VERSION;
     match crate::state::record_version_seen(current) {
         Ok(Some(prev)) => notices.push((
             NoticeLevel::Info,

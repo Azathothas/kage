@@ -81,7 +81,7 @@ pub fn check(state: &State) -> Report {
         .as_ref()
         .and_then(|agent| agent.version.as_deref());
     match reported {
-        Some(version) if is_below(version, MINIMUM_KAGE_VERSION) => {
+        Some(version) if !meets_minimum(version) => {
             report.too_old = Some(version.to_owned());
         }
         None => report.too_old = Some("none".to_owned()),
@@ -94,6 +94,15 @@ pub fn check(state: &State) -> Report {
         report.missing.push(Capability::CloseSession);
     }
     report
+}
+
+/// Whether a version kage reports, such as `0.3.1 (abc1234)`, is at
+/// least [`MINIMUM_KAGE_VERSION`]. A nightly is built from the newest
+/// code, so it always is.
+pub(crate) fn meets_minimum(version: &str) -> bool {
+    kage_core::build::is_nightly(version)
+        || kage_core::build::release(version)
+            .is_some_and(|number| !is_below(number, MINIMUM_KAGE_VERSION))
 }
 
 /// Whether `version` sorts before `minimum`. A version that does not
@@ -175,6 +184,14 @@ mod tests {
     fn a_newer_engine_passes_too() {
         assert!(check(&state_with(Some("0.9.2"), true, true)).is_clean());
         assert!(check(&state_with(Some("1.0.0"), true, true)).is_clean());
+    }
+
+    #[test]
+    fn ci_builds_pass_by_their_release_number_or_as_a_nightly() {
+        assert!(check(&state_with(Some("0.9.2 (abc1234)"), true, true)).is_clean());
+        assert!(check(&state_with(Some("nightly (abc1234)"), true, true)).is_clean());
+        let report = check(&state_with(Some("0.0.9 (abc1234)"), true, true));
+        assert_eq!(report.too_old.as_deref(), Some("0.0.9 (abc1234)"));
     }
 
     #[test]
