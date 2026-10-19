@@ -24,6 +24,7 @@ crossbeam-channel.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
 clap_mangen.workspace = true
+compak = { workspace = true, features = ["tar", "xz"] }
 dirs.workspace = true
 ignore.workspace = true
 kage-acp.workspace = true

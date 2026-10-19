@@ -1,9 +1,10 @@
 name: release
 
-# Builds the `kage` binary for each target when release-plz publishes
-# a `v<version>` release, and attaches the archives to it. A manual run
-# rebuilds the release of the given tag. The desktop and web client
-# release on their own; see desktop-release.yml.
+# Builds everything a `v<version>` release ships when release-plz
+# publishes it: the `kage` archives, the web client bundle, and the
+# desktop archives and onelf bundles, which carry the same `kage`
+# binary beside the app. A manual run rebuilds the release of the
+# given tag.
 on:
   release:
     types: [published]
@@ -64,6 +65,9 @@ jobs:
           # Static musl binaries that run on any Linux.
           RUSTFLAGS: ${{ matrix.cross && '-C target-feature=+crt-static' || '' }}
         run: |
+          # `kage --version` names the commit; Cross.toml passes it into
+          # the cross container.
+          export KAGE_BUILD_SHA="$(git rev-parse HEAD)"
           tool=cargo
           if [ "${{ matrix.cross }}" = "true" ]; then tool=cross; fi
           "$tool" build --release --locked -p kage-cli --target "${{ matrix.target }}"
@@ -113,6 +117,13 @@ jobs:
             }
           done
 
+      # The desktop jobs bundle this exact binary beside the app.
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: engine-${{ matrix.name }}
+          path: kage-${{ matrix.name }}/kage*
+          if-no-files-found: error
+
       - uses: svenstaro/upload-release-action@29e53e917877a24fad85510ded594ab3c9ca12de # 2.11.5
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
@@ -128,3 +139,393 @@ jobs:
         with:
           subject-path: |
             dist/kage-${{ matrix.name }}.${{ matrix.ext }}
+
+  # The browser client `kage serve --fetch-web` installs: kage-desktop
+  # built for wasm, its wasm-bindgen glue, the page and the icon set.
+  web:
+    name: web client
+    if: startsWith(inputs.tag || github.ref_name, 'v')
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crates/kage-desktop
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Toolchain
+        run: rustup target add wasm32-unknown-unknown
+
+      # The CLI has to match the wasm-bindgen crate Cargo.lock pins.
+      - uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
+        with:
+          tool: wasm-bindgen@0.2.129
+
+      # Stable only: the previous GPUI web build needed nightly for
+      # `stdarch_wasm_atomic_wait`, which the egui stack does not use.
+      # `--no-default-features` drops the native binary target, which
+      # has no entry on wasm32; the cdylib is the whole bundle.
+      - name: Build
+        run: |
+          export KAGE_BUILD_SHA="$(git rev-parse HEAD)"
+          cargo build --release --locked --target wasm32-unknown-unknown \
+            -p kage-desktop --no-default-features
+          wasm-bindgen --out-dir web --target web \
+            ../../target/wasm32-unknown-unknown/release/kage_desktop.wasm
+
+      - name: Package
+        run: |
+          bundle=../../web-bundle/web
+          mkdir -p "$bundle/assets/icons"
+          cp web/index.html web/favicon.svg web/boot.js web/kage_desktop.js \
+            web/kage_desktop_bg.wasm "$bundle/"
+          # The browser loads its icons and fonts from the bundle
+          # (FR-52), so they ship beside the wasm instead of being
+          # fetched from an origin. They are the crate's own assets.
+          cp assets/icons/*.svg "$bundle/assets/icons/"
+          cp -R assets/fonts "$bundle/assets/fonts"
+          # `kage serve` compares this with its own version.
+          echo "${TAG#v}" > "$bundle/VERSION"
+          tar -C ../../web-bundle -cJf ../../kage-web.tar.xz web
+
+      - name: Verify bundle
+        run: |
+          listing="$(tar -tJf ../../kage-web.tar.xz)"
+          echo "$listing"
+          for wanted in web/VERSION web/favicon.svg web/boot.js web/kage_desktop.js \
+            web/kage_desktop_bg.wasm web/assets/icons/a-large-small.svg; do
+            echo "$listing" | grep -qx "$wanted" || {
+              echo "the web bundle is missing $wanted" >&2
+              exit 1
+            }
+          done
+
+      - uses: svenstaro/upload-release-action@29e53e917877a24fad85510ded594ab3c9ca12de # 2.11.5
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: kage-web.tar.xz
+          overwrite: true
+          tag: ${{ env.TAG }}
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: kage-web.tar.xz
+
+  # Linux links the system display libraries, so the plain archive builds
+  # on the oldest supported Ubuntu for a low glibc floor. The portable
+  # onelf bundle is the desktop-onelf job's. Every archive carries the
+  # release's `kage` beside the app, which runs it before any `kage` on
+  # the PATH.
+  desktop:
+    name: desktop ${{ matrix.name }}
+    needs: binaries
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86_64-linux
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - name: aarch64-linux
+            os: ubuntu-22.04-arm
+            target: aarch64-unknown-linux-gnu
+          - { name: aarch64-macos, os: macos-latest, target: aarch64-apple-darwin }
+          - { name: x86_64-macos, os: macos-latest, target: x86_64-apple-darwin }
+          - { name: x86_64-windows, os: windows-latest, target: x86_64-pc-windows-msvc }
+    defaults:
+      run:
+        shell: bash
+        working-directory: crates/kage-desktop
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: engine-${{ matrix.name }}
+          path: engine
+
+      - name: Toolchain
+        run: |
+          rustup toolchain install
+          rustup target add "${{ matrix.target }}"
+
+      - name: Install Linux system packages
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig-dev libxkbcommon-dev \
+            libxkbcommon-x11-dev libwayland-dev libxcb1-dev
+
+      - name: Build
+        run: |
+          export KAGE_BUILD_SHA="$(git rev-parse HEAD)"
+          cargo build --release --locked -p kage-desktop --target "${{ matrix.target }}"
+
+      - name: Package
+        run: |
+          artifact="kage-desktop-${{ matrix.name }}"
+          bin="../../target/${{ matrix.target }}/release/kage-desktop"
+          engine="../../engine/kage"
+          if [ "$RUNNER_OS" = "Windows" ]; then bin="$bin.exe"; engine="$engine.exe"; fi
+          chmod +x "$engine"
+          mkdir -p "$artifact" ../../dist
+          cp ../../LICENSE ../../README.md "$artifact/"
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            version="${TAG#v}"
+            app="$artifact/Kage.app"
+            mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+            cp "$bin" "$app/Contents/MacOS/kage-desktop"
+            cp "$engine" "$app/Contents/MacOS/kage"
+            cat > "$app/Contents/Info.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>kage-desktop</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.qaidvoid.kage-desktop</string>
+              <key>CFBundleName</key>
+              <string>Kage</string>
+              <key>CFBundleIconFile</key>
+              <string>kage</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>CFBundleShortVersionString</key>
+              <string>$version</string>
+              <key>CFBundleVersion</key>
+              <string>$version</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
+            # The icns comes from the 1024 px app icon, which covers
+            # every standard slot.
+            iconset="$RUNNER_TEMP/kage.iconset"
+            mkdir -p "$iconset"
+            for slot in 16 32 128 256 512; do
+              sips -z "$slot" "$slot" assets/brand/kage-icon.png \
+                --out "$iconset/icon_${slot}x${slot}.png" >/dev/null
+              px=$((slot * 2))
+              sips -z "$px" "$px" assets/brand/kage-icon.png \
+                --out "$iconset/icon_${slot}x${slot}@2x.png" >/dev/null
+            done
+            iconutil -c icns "$iconset" -o "$app/Contents/Resources/kage.icns"
+          else
+            cp "$bin" "$engine" "$artifact/"
+            if [ "$RUNNER_OS" = "Linux" ]; then
+              mkdir -p "$artifact/share/applications" "$artifact/share/icons"
+              printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=kage' \
+                'Comment=Desktop client for the kage coding agent' \
+                'Exec=kage-desktop' 'Icon=kage' 'Terminal=false' \
+                'Categories=Development;' > "$artifact/share/applications/kage.desktop"
+              cp -R assets/icons/hicolor "$artifact/share/icons/hicolor"
+            fi
+          fi
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            7z a "../../dist/$artifact.zip" "$artifact"
+          else
+            tar -cJf "../../dist/$artifact.tar.xz" "$artifact"
+          fi
+
+      # Lists the archive and fails when the bundled engine or the
+      # integration files are missing: the freedesktop sidecars on
+      # Linux, the app bundle on macOS. The Windows zip carries the
+      # embedded icon resource instead.
+      - name: Verify archives
+        run: |
+          folder="kage-desktop-${{ matrix.name }}"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            artifact="$folder.zip"
+            listing="$(7z l -slt "../../dist/$artifact" | sed -n 's/^Path = //p' | tr '\\' '/')"
+          else
+            artifact="$folder.tar.xz"
+            listing="$(tar -tJf "../../dist/$artifact")"
+          fi
+          echo "$listing"
+          check() {
+            echo "$listing" | grep -qx "$folder/$1" || {
+              echo "$artifact is missing $1" >&2
+              exit 1
+            }
+          }
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            check kage-desktop.exe
+            check kage.exe
+          elif [ "$RUNNER_OS" = "Linux" ]; then
+            check kage-desktop
+            check kage
+            check share/applications/kage.desktop
+            for size in 16x16 32x32 48x48 64x64 128x128 256x256 512x512; do
+              check "share/icons/hicolor/$size/apps/kage.png"
+            done
+          else
+            check Kage.app/Contents/MacOS/kage-desktop
+            check Kage.app/Contents/MacOS/kage
+            check Kage.app/Contents/Info.plist
+            check Kage.app/Contents/Resources/kage.icns
+            tar -xJf "../../dist/$artifact" -C "$RUNNER_TEMP" \
+              "$folder/Kage.app/Contents/Info.plist"
+            plutil -lint "$RUNNER_TEMP/$folder/Kage.app/Contents/Info.plist"
+          fi
+
+      - name: Subjects
+        id: subjects
+        working-directory: dist
+        run: echo "subjects=$(printf 'dist/%s\n' * | paste -sd, -)" >> "$GITHUB_OUTPUT"
+
+      - uses: svenstaro/upload-release-action@29e53e917877a24fad85510ded594ab3c9ca12de # 2.11.5
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: dist/*
+          file_glob: true
+          overwrite: true
+          tag: ${{ env.TAG }}
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ steps.subjects.outputs.subjects }}
+
+  # The portable Linux bundle, built in Arch the way aeris builds its own:
+  # a glibc and loader bundled from Ubuntu did not run on other systems.
+  # It carries the slimmed Mesa GL stack too, so it draws on a host with
+  # none. crates/kage-desktop/onelf.toml says what rides along, and the
+  # release's static `kage` rides in bin/ beside the app.
+  desktop-onelf:
+    name: desktop onelf ${{ matrix.name }}
+    needs: binaries
+    runs-on: ${{ matrix.runner }}
+    container:
+      image: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86_64-linux
+            arch: x86_64
+            runner: ubuntu-latest
+            image: archlinux:latest
+            onelf-sha256: 4a00ad52ef982fe26a174d256ad27ad119bab1d9cf8014d6150a8f97947f1c28
+          - name: aarch64-linux
+            arch: aarch64
+            runner: ubuntu-24.04-arm
+            image: menci/archlinuxarm:latest
+            onelf-sha256: 72ffda33bad3b0572df5149c7705bd3addb13d317f24ae1f435cb68a28548d58
+    defaults:
+      run:
+        shell: bash
+        working-directory: crates/kage-desktop
+    env:
+      ONELF_VERSION: 0.4.1
+    steps:
+      - name: Install Arch packages
+        working-directory: /
+        run: |
+          pacman -Syu --disable-sandbox --noconfirm --needed \
+            base-devel git curl tar xz rustup patchelf pkgconf \
+            libxcb libxkbcommon libxkbcommon-x11 wayland fontconfig \
+            libxcursor libxi libxrender \
+            mesa xorg-server-xvfb xorg-xauth ttf-dejavu
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: engine-${{ matrix.name }}
+          path: engine
+
+      - name: Toolchain
+        run: rustup toolchain install
+
+      # git refuses to run in the container, where the checkout is
+      # owned by another uid, unless told the directory is safe.
+      - name: Build
+        run: |
+          export KAGE_BUILD_SHA="$(git -c safe.directory='*' rev-parse HEAD)"
+          cargo build --release --locked -p kage-desktop
+
+      # The graphics stack is most of the bundle and LLVM over half of it.
+      # These builds drop what a bundled renderer never reaches for and
+      # install under the stock names, so onelf picks them up unchanged.
+      # After the build: rustc links the system LLVM, and the slim one
+      # lacks targets it needs.
+      - name: Slim the graphics stack
+        working-directory: /tmp
+        run: |
+          base="https://github.com/pkgforge-dev/archlinux-pkgs-debloated/releases/download/continuous"
+          mkdir -p debloated
+          cd debloated
+          for pkg in llvm-libs-nano mesa-nano libxml2-iculess; do
+            curl -fsSL -O --remove-on-error "$base/$pkg-${{ matrix.arch }}.pkg.tar.zst" ||
+              curl -fsSL -O --remove-on-error "$base/$pkg-${{ matrix.arch }}.pkg.tar.xz"
+          done
+          pacman -U --disable-sandbox --noconfirm ./*.pkg.tar.*
+
+      - name: Install onelf
+        run: |
+          curl -fsSL -o /usr/local/bin/onelf \
+            "https://github.com/QaidVoid/onelf/releases/download/$ONELF_VERSION/onelf-${{ matrix.name }}"
+          echo "${{ matrix.onelf-sha256 }}  /usr/local/bin/onelf" | sha256sum -c -
+          chmod +x /usr/local/bin/onelf
+
+      - name: Pack with onelf
+        run: |
+          mkdir -p AppDir/bin AppDir/.onelf/icons AppDir/.onelf/desktop \
+            AppDir/share/icons ../../dist
+          cp ../../target/release/kage-desktop AppDir/bin/kage-desktop
+          install -m 755 ../../engine/kage AppDir/bin/kage
+          # The app icon serves as the default and under the entrypoint
+          # name; the hicolor ladder serves theme lookups.
+          cp assets/icons/hicolor/512x512/apps/kage.png AppDir/.onelf/icons/default.png
+          cp assets/icons/hicolor/512x512/apps/kage.png AppDir/.onelf/icons/kage-desktop.png
+          cp -R assets/icons/hicolor AppDir/share/icons/hicolor
+          printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=kage' \
+            'Comment=Desktop client for the kage coding agent' \
+            'Exec=kage-desktop' 'Icon=default' 'Terminal=false' \
+            'Categories=Development;' > AppDir/.onelf/desktop/default.desktop
+          for wanted in \
+            AppDir/.onelf/icons/default.png \
+            AppDir/.onelf/icons/kage-desktop.png \
+            AppDir/.onelf/desktop/default.desktop \
+            AppDir/share/icons/hicolor/512x512/apps/kage.png \
+            AppDir/bin/kage; do
+            [ -f "$wanted" ] || {
+              echo "the onelf AppDir is missing $wanted" >&2
+              exit 1
+            }
+          done
+          cp onelf.toml AppDir/onelf.toml
+          version="${TAG#v}"
+          sed -i "s/^version[[:space:]]*=.*/version = \"$version\"/" AppDir/onelf.toml
+          grep -qx "version = \"$version\"" AppDir/onelf.toml || {
+            echo "AppDir/onelf.toml does not name version $version" >&2
+            exit 1
+          }
+          onelf build AppDir
+          onelf verify AppDir/kage-desktop.onelf
+          mv AppDir/kage-desktop.onelf "../../dist/kage-desktop-${{ matrix.name }}.onelf"
+
+      # Xvfb offers no DRI3, so this proves the bundle starts and draws on
+      # its own software renderer. The replay needs no agent or network.
+      - name: Smoke run the bundle
+        run: |
+          xvfb-run -a -s "-screen 0 1280x800x24" timeout 60 \
+            "../../dist/kage-desktop-${{ matrix.name }}.onelf" --replay --smoke 3000
+
+      - uses: svenstaro/upload-release-action@29e53e917877a24fad85510ded594ab3c9ca12de # 2.11.5
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: dist/kage-desktop-${{ matrix.name }}.onelf
+          overwrite: true
+          tag: ${{ env.TAG }}
+
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/kage-desktop-${{ matrix.name }}.onelf

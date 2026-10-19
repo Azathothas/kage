@@ -18,12 +18,12 @@ kage-loop       (core + provider + tools)
 kage-remote     (core + tungstenite)
 kage-tui        (core + plugin)
 kage-cli        (binary)            (depends on everything it uses)
-
-kage-desktop (gui/, outside the workspace) builds on kage-client.
+kage-desktop    (binary)            (client + core; never links the engine)
 ```
 
 Layering is strict: depend only downward. The `kage-cli` binary is
-the only crate that wires the whole graph together.
+the only crate that wires the whole graph together; `kage-desktop`
+talks to it over ACP instead.
 
 ## what each crate owns
 
@@ -43,6 +43,7 @@ the only crate that wires the whole graph together.
 | `kage-remote`    | The ACP WebSocket transport: request-head parsing and token authorization, the bearer token file, and the frame-to-line pipe that turns one accepted TCP stream into the reader and writer pair the agent serving loop consumes |
 | `kage-tui`       | The interactive TUI, modal input, block renderer    |
 | `kage-cli`       | The binary, CLI flags, the session engine, frontend wiring |
+| `kage-desktop`   | The desktop client, which runs the `kage rpc` shipped beside it, and its wasm build, the browser client `kage serve` hands out |
 
 ## the engine
 
@@ -322,9 +323,9 @@ token:
   connections are already served. Every connection runs on its own
   thread off the main accept loop.
 - The same routing table serves the web client bundle when a web
-  directory is available (`--web-dir`, default `web/` beside the
-  executable): `GET /` answers the page and `GET /<file>` a file
-  under the directory. Every asset response carries a strict
+  directory is available (`--web-dir`, default
+  `$XDG_DATA_HOME/kage/web`, which `--fetch-web` fills): `GET /`
+  answers the page and `GET /<file>` a file under the directory. Every asset response carries a strict
   `Content-Security-Policy` (same-origin sources only, WebAssembly
   compilation allowed, inline script closed off) plus `nosniff` and
   `no-referrer`; the page is `no-store`, the unhashed module and

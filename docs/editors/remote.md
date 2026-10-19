@@ -35,9 +35,10 @@ Flags:
   `--port 0` picks a free port and shows it in the connect URL.
 - `--rotate-token` replaces the stored token before serving.
 - `--web-dir <dir>` serves the browser client bundle at `/` from
-  `dir`. The default is a `web/` directory beside the executable; a
-  missing or empty directory only disables the web UI, `/acp` keeps
-  working.
+  `dir`. The default is `~/.local/share/kage/web`; a missing or empty
+  directory only disables the web UI, `/acp` keeps working.
+- `--fetch-web` downloads the browser client matching this `kage` into
+  the web directory before serving. See [web client](#web-client).
 
 Credentials resolve as for the TUI and `kage rpc` (OS keyring,
 `kage auth login`, or an API-key env var). With no provider configured
@@ -254,41 +255,46 @@ a WebSocket handshake failed.
 ## web client
 
 `kage serve` can serve the repository's own browser client, so a
-browser needs nothing but the page URL and the token. It serves the
-`web/` folder beside the `kage` executable, or the folder `--web-dir`
-names.
+browser needs nothing but the page URL and the token. It serves
+`~/.local/share/kage/web` (`$XDG_DATA_HOME/kage/web`), or the folder
+`--web-dir` names.
 
-The client ships as `kage-web.tar.xz` in the `kage-desktop-v<version>`
-releases, which version apart from `kage`. Take it from the newest
-one on the [releases page](https://github.com/QaidVoid/kage/releases).
-Unpack it beside the `kage` executable to serve it with no flag, or
-anywhere and name the folder:
+The client ships as `kage-web.tar.xz` in every release, at the same
+version as `kage`. `--fetch-web` downloads the one from your `kage`'s
+own release into the web folder, replacing what is there, and then
+serves; a nightly `kage` takes the nightly's:
 
 ```sh
-version=0.1.0   # the newest kage-desktop release
-curl -fsSL "https://github.com/QaidVoid/kage/releases/download/kage-desktop-v$version/kage-web.tar.xz" | tar -xJ
-kage serve --web-dir web
+kage serve --fetch-web
 ```
 
-The client works with any `kage` from 0.1.0 on. When the engine is
-older than the client needs, or lacks a feature it uses, the client
-says so in a banner.
+Run it again after updating `kage`: serve warns when the folder holds
+a client made for another version. To install it by hand, unpack the
+archive's `web/` folder into `~/.local/share/kage/`:
+
+```sh
+version=0.4.0   # your kage --version
+curl -fsSL "https://github.com/QaidVoid/kage/releases/download/v$version/kage-web.tar.xz" \
+    | tar -xJ -C ~/.local/share/kage
+```
+
+When the engine is older than the client needs, or lacks a feature it
+uses, the client says so in a banner.
 
 To build the bundle yourself:
 
 ```sh
 rustup target add wasm32-unknown-unknown
-cargo install wasm-bindgen-cli --version 0.2.129   # match gui/Cargo.lock
-cd gui
-cargo build --release --locked --target wasm32-unknown-unknown --no-default-features
-wasm-bindgen --out-dir web --target web \
+cargo install wasm-bindgen-cli --version 0.2.129   # match Cargo.lock
+cargo build --release --locked --target wasm32-unknown-unknown \
+    -p kage-desktop --no-default-features
+wasm-bindgen --out-dir crates/kage-desktop/web --target web \
     target/wasm32-unknown-unknown/release/kage_desktop.wasm
-cd ..
-cargo run --bin kage -- serve --web-dir gui/web
+cargo run --bin kage -- serve --web-dir crates/kage-desktop/web
 ```
 
-The gui dependency versions are frozen in `gui/Cargo.lock`, so match
-the lockfile rather than any version number; the wasm-bindgen CLI in
+The dependency versions are frozen in `Cargo.lock`, so match the
+lockfile rather than any version number; the wasm-bindgen CLI in
 particular has to equal the crate version the lock pins.
 
 Then open the page URL from the startup output:
@@ -304,7 +310,7 @@ rides any URL; the serve log shows no query-string token. The three
 token forms above stay available for non-browser clients.
 
 The serving origin answers only from the bundle directory: `GET /`
-with the page, `GET /<file>` with a file under `--web-dir`, everything
+with the page, `GET /<file>` with a file under the web folder, everything
 else `404`. A path is served only when it stays inside the directory
 after its %-escapes are decoded, so `GET /../Cargo.toml` and its
 encoded forms are refused.

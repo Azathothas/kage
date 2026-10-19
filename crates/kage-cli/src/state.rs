@@ -26,7 +26,7 @@ pub struct State {
     /// Last `provider/model` the user successfully ran.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_model: Option<String>,
-    /// Last `kage` binary version (`CARGO_PKG_VERSION`) that opened
+    /// Last `kage` binary version (`kage_core::build::version()`) that opened
     /// the TUI. Compared on startup to detect upgrades.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_seen_version: Option<String>,

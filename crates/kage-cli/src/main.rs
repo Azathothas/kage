@@ -74,7 +74,7 @@ pub(crate) const DEFAULT_SYSTEM: &str = "You are kage, a helpful coding agent.";
 #[derive(Parser, Debug)]
 #[command(
     name = "kage",
-    version,
+    version = env!("KAGE_VERSION"),
     about = "A minimal, extensible coding agent in your terminal",
     long_about = None
 )]
@@ -231,9 +231,8 @@ pub(crate) enum Command {
     /// Serve the Agent Client Protocol over WebSocket so remote editors
     /// and ACP clients can drive kage over the network. One endpoint
     /// (`/acp`) behind a bearer token; every connection shares one
-    /// engine. With `--web-dir` the same listener serves the web
-    /// client bundle at `/`, so a browser needs only the page URL and
-    /// the token. The startup output on stderr carries the connect
+    /// engine. The same listener serves the web client bundle at `/`,
+    /// so a browser needs only the page URL and the token. The startup output on stderr carries the connect
     /// URL, the only place the token is ever printed.
     Serve {
         /// Provider-qualified model id (`provider/model`). Defaults
@@ -256,12 +255,16 @@ pub(crate) enum Command {
         /// the new one.
         #[arg(long = "rotate-token")]
         rotate_token: bool,
-        /// Directory with the web client bundle to serve at `/`
-        /// (built from `gui/`). Defaults to a `web/` directory beside
-        /// the executable. A missing or empty directory only disables
-        /// the web UI; `/acp` keeps working.
+        /// Directory with the web client bundle to serve at `/` (built
+        /// from `crates/kage-desktop`). Defaults to
+        /// `$XDG_DATA_HOME/kage/web`. A missing or empty directory only
+        /// disables the web UI; `/acp` keeps working.
         #[arg(long = "web-dir")]
         web_dir: Option<PathBuf>,
+        /// Download the web client bundle matching this kage into the
+        /// web directory, replacing what is there, then serve.
+        #[arg(long = "fetch-web")]
+        fetch_web: bool,
     },
     /// Trust the current directory's `.kage/config.toml`. Until a
     /// project is trusted, its `mcp`, `permissions` and
@@ -441,6 +444,7 @@ pub(crate) fn run_subcommand(command: Command) -> ExitCode {
             port,
             rotate_token,
             web_dir,
+            fetch_web,
         } => config_error().unwrap_or_else(|| {
             serve::run(
                 model.as_deref(),
@@ -449,6 +453,7 @@ pub(crate) fn run_subcommand(command: Command) -> ExitCode {
                 port,
                 rotate_token,
                 web_dir.as_deref(),
+                fetch_web,
             )
         }),
         Command::Trust { revoke } => trust::run(revoke),
@@ -688,14 +693,20 @@ pub(crate) fn run_completions(shell: clap_complete::Shell) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// The CLI definition the man page renders. The page names the release
+/// alone: a commit would make the committed page stale on every commit.
+fn manpage_command() -> clap::Command {
+    use clap::CommandFactory as _;
+    Cli::command().version(env!("CARGO_PKG_VERSION"))
+}
+
 /// Render the manpage via `clap_mangen` and write it to `out`, or with
 /// `check`, compare the rendered page against the file at `out` and
 /// fail when they differ. Creates the parent directory when missing so
 /// a fresh checkout can run `kage gen-manpage --out man/kage.1`
 /// without a prior `mkdir`.
 pub(crate) fn run_gen_manpage(out: &std::path::Path, check: bool) -> ExitCode {
-    use clap::CommandFactory as _;
-    let buffer = match render_manpage(&Cli::command()) {
+    let buffer = match render_manpage(&manpage_command()) {
         Ok(buffer) => buffer,
         Err(err) => {
             eprintln!("kage: render manpage: {err}");
@@ -945,6 +956,7 @@ fn subcommand_print_conflict(cli: &Cli) -> Option<ExitCode> {
 }
 
 fn main() -> ExitCode {
+    kage_core::build::set_version(env!("KAGE_VERSION"));
     let cli = Cli::parse();
 
     if let Some(code) = subcommand_print_conflict(&cli) {
@@ -1370,13 +1382,12 @@ mod tests {
 
     #[test]
     fn gen_manpage_check_fails_on_drift_and_passes_on_current() {
-        use clap::CommandFactory as _;
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("kage.1");
         assert_eq!(run_gen_manpage(&out, true), ExitCode::from(1), "missing");
         std::fs::write(&out, "stale\n").unwrap();
         assert_eq!(run_gen_manpage(&out, true), ExitCode::from(1), "stale");
-        let page = render_manpage(&Cli::command()).unwrap();
+        let page = render_manpage(&manpage_command()).unwrap();
         std::fs::write(&out, &page).unwrap();
         assert_eq!(run_gen_manpage(&out, true), ExitCode::SUCCESS, "current");
     }

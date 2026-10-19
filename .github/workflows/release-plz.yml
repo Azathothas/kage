@@ -33,6 +33,13 @@ jobs:
             exit 1
           fi
       - run: rustup toolchain install
+      # Publishing kage-desktop compiles it, which links the system
+      # display libraries.
+      - name: Install Linux system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libfontconfig-dev libxkbcommon-dev \
+            libxkbcommon-x11-dev libwayland-dev libxcb1-dev
       - uses: release-plz/action@b8d6b54b02889ff2ae2bb82e8b57c3a8fc1683a5 # v0.5.139
         with:
           command: release
@@ -70,10 +77,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN || secrets.GITHUB_TOKEN }}
 
   # release-plz bumps the workspace crates but cannot run our
-  # generators, so a fresh release PR always fails its checks twice:
-  # the man page embeds the crate version, and gui/Cargo.lock pins the
-  # crates it builds against. Regenerate both on the PR branch, so the
-  # release PR lands green without a manual round trip.
+  # generators, so a fresh release PR fails its man page check: the
+  # page embeds the crate version. Regenerate it on the PR branch, so
+  # the release PR lands green without a manual round trip.
   fixup:
     name: fix up the release PR
     needs: release-pr
@@ -108,16 +114,7 @@ jobs:
           cargo build --locked -p kage-cli --bin kage
           ./target/debug/kage gen-manpage --out man/kage.1
 
-      - name: Refresh the gui lockfile
-        if: steps.pr.outputs.branch != ''
-        # `cargo metadata` re-resolves without compiling, which is all
-        # the lockfile refresh needs: the bumped path deps get their
-        # new versions, nothing else moves.
-        run: |
-          cd gui
-          cargo metadata --format-version 1 > /dev/null
-
-      - name: Commit and push the refreshes
+      - name: Commit and push the refresh
         if: steps.pr.outputs.branch != ''
         env:
           BRANCH: ${{ steps.pr.outputs.branch }}
@@ -125,10 +122,10 @@ jobs:
           version="$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if git diff --quiet -- man/kage.1 gui/Cargo.lock; then
+          if git diff --quiet -- man/kage.1; then
             echo "the release PR is already current; nothing to push"
             exit 0
           fi
-          git add man/kage.1 gui/Cargo.lock
-          git commit -m "chore: regenerate the man page and gui lock for v$version"
+          git add man/kage.1
+          git commit -m "chore: regenerate the man page for v$version"
           git push origin "HEAD:$BRANCH"

@@ -1450,7 +1450,7 @@ fn the_card_reads_as_labeled_rows_with_change_hints() {
     };
     assert_eq!(
         row("kage"),
-        format!("   kage {}", env!("CARGO_PKG_VERSION"))
+        format!("   kage {}", kage_core::build::version())
     );
     assert!(row("model").starts_with("   model         Fake (fake:m)"));
     assert!(row("model").ends_with("ctrl+p to change"));

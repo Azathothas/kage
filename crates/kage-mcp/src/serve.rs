@@ -124,7 +124,7 @@ where
                                 "capabilities": { "tools": { "listChanged": false } },
                                 "serverInfo": {
                                     "name": "kage",
-                                    "version": env!("CARGO_PKG_VERSION"),
+                                    "version": kage_core::build::version(),
                                 },
                             })),
                             "tools/list" => Ok(serde_json::json!({ "tools": tool_list(registry) })),

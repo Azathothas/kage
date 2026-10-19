@@ -1,0 +1,5 @@
+# cross builds the static Linux binaries in a container, which sees
+# only the environment named here. The release and nightly workflows
+# stamp the commit and the channel into `kage --version` through these.
+[build.env]
+passthrough = ["KAGE_BUILD_SHA", "KAGE_CHANNEL"]

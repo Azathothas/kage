@@ -6,6 +6,7 @@ members = [
   "crates/kage-cli",
   "crates/kage-client",
   "crates/kage-core",
+  "crates/kage-desktop",
   "crates/kage-jsonrpc",
   "crates/kage-loop",
   "crates/kage-mcp",
@@ -32,7 +33,7 @@ categories = ["command-line-utilities", "development-tools"]
 [workspace.dependencies]
 kage-acp = { path = "crates/kage-acp", version = "0.3.0" }
 kage-acp-wire = { path = "crates/kage-acp-wire", version = "0.3.0" }
-kage-client = { path = "crates/kage-client", version = "0.1.0" }
+kage-client = { path = "crates/kage-client", version = "0.3.0" }
 kage-core = { path = "crates/kage-core", version = "0.3.0" }
 kage-jsonrpc = { path = "crates/kage-jsonrpc", version = "0.3.0" }
 kage-loop = { path = "crates/kage-loop", version = "0.3.0" }
@@ -53,6 +54,7 @@ hmac = "0.13.0"
 clap = { version = "4.6.7", features = ["derive"] }
 clap_complete = "4.6.11"
 clap_mangen = "0.3.3"
+compak = { version = "0.2.2", default-features = false }
 syntect = { version = "5.3.0", default-features = false, features = [
   "default-fancy"
 ] }
@@ -109,3 +111,22 @@ unsafe_code = "forbid"
 codegen-units = 1
 lto = true
 strip = true
+
+# Unoptimized egui, epaint and syntect miss a 120 Hz frame budget on a
+# long kage-desktop transcript, so a debug run animated in visible
+# steps. These build optimized once; everything else stays quick to
+# rebuild.
+[profile.dev.package.egui]
+opt-level = 2
+
+[profile.dev.package.epaint]
+opt-level = 2
+
+[profile.dev.package.emath]
+opt-level = 2
+
+[profile.dev.package.syntect]
+opt-level = 2
+
+[profile.dev.package.fancy-regex]
+opt-level = 2

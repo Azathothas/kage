@@ -50,8 +50,8 @@ jobs:
         run: |
           cargo build -p kage-cli
           ./target/debug/kage gen-manpage --out man/kage.1 --check
-      # Enforce the ASCII-only source rule. Scans crates/, gui/src,
-      # xtask/src, plugins/ and man/; Unicode glyphs must be written as
+      # Enforce the ASCII-only source rule. Scans crates/, xtask/src,
+      # plugins/ and man/; Unicode glyphs must be written as
       # `\u{..}` escapes, not raw bytes.
       - run: cargo xtask check-ascii
 
@@ -72,32 +72,24 @@ jobs:
         include:
           - name: workspace
             toolchain: "1.89.0"
-            workdir: .
-            check: cargo +1.89.0 check --workspace --all-targets --locked
-          # gui/ is its own Cargo workspace with its own Cargo.lock and
-          # rust-toolchain.toml. Its floor is 1.95, kept from the GPUI
-          # days because that is where the client was written; the egui
+            check: cargo +1.89.0 check --workspace --exclude kage-desktop --all-targets --locked
+          # kage-desktop's floor is 1.95, kept from the GPUI days
+          # because that is where the client was written; the egui
           # stack itself asks for less. The leg still catches anything
           # in the lockfile that quietly starts needing newer.
-          - name: gui
+          - name: desktop
             toolchain: "1.95.0"
-            workdir: gui
-            check: cargo +1.95.0 check --all-targets --locked
+            check: cargo +1.95.0 check -p kage-desktop --all-targets --locked
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ${{ matrix.workdir }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # The workspace and gui pin their toolchains via
-      # rust-toolchain.toml; the MSRV gates check the declared floors
-      # against the committed Cargo.locks, so install the floors and
-      # never touch the pins.
+      # The workspace pins its toolchain via rust-toolchain.toml; the
+      # MSRV gates check the declared floors against the committed
+      # Cargo.lock, so install the floors and never touch the pin.
       - run: rustup toolchain install ${{ matrix.toolchain }} --profile minimal --no-self-update
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: msrv-${{ matrix.toolchain }}
-          workspaces: ${{ matrix.workdir }}
       - run: ${{ matrix.check }}
 
   test:
@@ -115,38 +107,29 @@ jobs:
           tool: cargo-nextest
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       # --no-fail-fast so one failing OS surfaces every failure in that
-      # leg instead of hiding them behind the first.
-      - run: cargo nextest run --profile ci --all-targets --no-tests=pass --no-fail-fast
+      # leg instead of hiding them behind the first. The desktop job
+      # runs kage-desktop's suite, which needs a software GL stack.
+      - run: cargo nextest run --profile ci --workspace --exclude kage-desktop --all-targets --no-tests=pass --no-fail-fast
 
-  gui:
-    name: gui (${{ matrix.os }})
+  desktop:
+    name: desktop (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        # gui/ is its own Cargo workspace with its own Cargo.lock and
-        # rust-toolchain.toml, so every command here runs inside it.
-        working-directory: gui
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: gui
       - name: Install Linux system packages
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y libfontconfig-dev libxkbcommon-dev \
             libxkbcommon-x11-dev libwayland-dev libxcb1-dev xvfb
-      - name: fmt
-        if: runner.os == 'Linux'
-        run: cargo fmt --check
-      - run: cargo clippy --locked --all-targets -- -D warnings
-      - run: cargo build --locked
+      - run: cargo clippy --locked -p kage-desktop --all-targets -- -D warnings
+      - run: cargo build --locked -p kage-desktop
       # The kittest snapshot probes render through the wgpu backend,
       # which on a headless Linux runner needs a software GL stack
       # (mesa's lavapipe) to rasterize the shell and compare it to the
@@ -165,9 +148,9 @@ jobs:
           echo "VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json" >> "$GITHUB_ENV"
       # Every probe target, including the parity rig's snapshot
       # comparison. The lib unit tests run here too, so this leg is the
-      # gui suite on all three platforms.
+      # desktop suite on all three platforms.
       - name: Probe run
-        run: cargo test --locked --all-targets --no-fail-fast
+        run: cargo test --locked -p kage-desktop --all-targets --no-fail-fast
       # The smoke run drives the real event loop, window, list,
       # composer, markdown and the 30 Hz stream on every Linux CI run.
       # winit needs a display, so it opens under Xvfb; --replay feeds
@@ -177,8 +160,8 @@ jobs:
         if: runner.os == 'Linux'
         run: xvfb-run -a ./target/debug/kage-desktop --replay --smoke 5000 --stream
       # The web target compiles on the pinned stable toolchain, and the
-      # wasm-bindgen CLI turns the cdylib into the bundle gui/web/
-      # ships. No nightly anywhere: the old GPUI web build needed
+      # wasm-bindgen CLI turns the cdylib into the bundle
+      # crates/kage-desktop/web/ ships. No nightly anywhere: the old GPUI web build needed
       # `stdarch_wasm_atomic_wait` from nightly, which the egui stack
       # does not use. The CLI version must equal the pinned crate.
       - name: wasm build
@@ -186,12 +169,13 @@ jobs:
         run: |
           rustup target add wasm32-unknown-unknown
           cargo install wasm-bindgen-cli --version 0.2.129 --locked
-          cargo build --locked --release --target wasm32-unknown-unknown --no-default-features
+          cargo build --locked --release --target wasm32-unknown-unknown \
+            -p kage-desktop --no-default-features
           wasm-bindgen --version
-          wasm-bindgen --out-dir web --target web \
+          wasm-bindgen --out-dir crates/kage-desktop/web --target web \
             target/wasm32-unknown-unknown/release/kage_desktop.wasm
       # NFR-12 hygiene: no git-rev dependencies and no [patch.crates-io]
-      # escape hatch in either Cargo.toml. A patch would fork a
+      # escape hatch in any Cargo.toml. A patch would fork a
       # dependency away from the lockfile the release pipeline ships.
       - name: Dependency hygiene
         shell: bash

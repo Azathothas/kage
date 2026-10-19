@@ -15,7 +15,6 @@ fn scan_roots() -> Vec<PathBuf> {
     let root = crate::workspace_root();
     vec![
         root.join("crates"),
-        root.join("gui").join("src"),
         root.join("xtask").join("src"),
         root.join("plugins"),
         root.join("man"),

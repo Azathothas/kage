@@ -12,8 +12,10 @@
 //! on `/acp`, `431` for an oversize request head, and `503` once
 //! [`MAX_CONNECTIONS`] connections are already being served. The other
 //! routes serve the web client bundle: `GET /` with the page and
-//! `GET /<file>` with a file under the `--web-dir` directory
-//! ([`assets`]), `405` for other methods, `404` elsewhere.
+//! `GET /<file>` with a file under the web directory ([`assets`]),
+//! `405` for other methods, `404` elsewhere. The web directory is
+//! `--web-dir`, else `$XDG_DATA_HOME/kage/web`, where `--fetch-web`
+//! installs the bundle matching this build ([`fetch`]).
 //!
 //! On unix, serve also registers a local socket ([`crate::rpc::link`])
 //! that a kage TUI of the same user attaches through, so `kage resume`
@@ -49,6 +51,7 @@ use signal_hook::iterator::Signals;
 use crate::rpc::host::Host;
 
 mod assets;
+mod fetch;
 
 use assets::WebDir;
 
@@ -92,14 +95,34 @@ fn token_path() -> Result<PathBuf, String> {
     Ok(crate::data_root()?.join("remote-token"))
 }
 
-/// The web bundle directory when `--web-dir` is not given: a `web/`
-/// directory beside the executable, where a bundle copied next to the
-/// binary is picked up without flags.
-pub(crate) fn default_web_dir() -> PathBuf {
-    std::env::current_exe()
-        .ok()
-        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf))
-        .map_or_else(|| PathBuf::from("web"), |dir| dir.join("web"))
+/// The web bundle directory when `--web-dir` is not given:
+/// `$XDG_DATA_HOME/kage/web`, where `--fetch-web` installs it.
+fn default_web_dir() -> Result<PathBuf, String> {
+    Ok(crate::data_root()?.join("web"))
+}
+
+/// Opens the web bundle at `dir` and logs what serve will do with it:
+/// nothing when it has no page, and a nudge when it was made for
+/// another build.
+fn open_web(dir: &Path, log: &Log) -> WebDir {
+    let web = WebDir::open(dir);
+    if !web.available() {
+        log(&format!(
+            "web UI unavailable: no index.html under {}; pass --fetch-web to install it, \
+             or --web-dir to serve another",
+            dir.display()
+        ));
+    } else if let Some(found) = fetch::installed(dir)
+        && found != fetch::build().1
+    {
+        log(&format!(
+            "warning: the web UI under {} is {found}, not this kage's {}; \
+             pass --fetch-web to update it",
+            dir.display(),
+            fetch::build().1
+        ));
+    }
+    web
 }
 
 /// Entry point for the `Serve` subcommand.
@@ -110,6 +133,7 @@ pub(crate) fn run(
     port: u16,
     rotate_token: bool,
     web_dir: Option<&Path>,
+    fetch_web: bool,
 ) -> ExitCode {
     kage_core::reaper::start();
     let log: Log = Arc::new(|line| eprintln!("kage serve: {line}"));
@@ -127,14 +151,24 @@ pub(crate) fn run(
             return ExitCode::from(1);
         }
     };
-    let bundle_dir = web_dir.map_or_else(default_web_dir, Path::to_path_buf);
-    let web = WebDir::open(&bundle_dir);
-    if !web.available() {
+    let bundle_dir = match web_dir.map_or_else(default_web_dir, |dir| Ok(dir.to_path_buf())) {
+        Ok(dir) => dir,
+        Err(e) => {
+            eprintln!("kage: serve: {e}");
+            return ExitCode::from(1);
+        }
+    };
+    if fetch_web {
         log(&format!(
-            "web UI unavailable: no index.html under {}; pass --web-dir to serve it",
+            "fetching the web UI into {}",
             bundle_dir.display()
         ));
+        if let Err(e) = fetch::install(&bundle_dir) {
+            eprintln!("kage: serve: cannot fetch the web UI: {e}");
+            return ExitCode::from(1);
+        }
     }
+    let web = open_web(&bundle_dir, &log);
     let listener = match TcpListener::bind((bind_host, port)) {
         Ok(listener) => listener,
         Err(e) => {

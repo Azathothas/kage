@@ -28,7 +28,8 @@ Settings opens from the gear at the bottom of the sidebar. Its pages:
 
 The About page compares the engine and this client against the public
 releases at most once a day; **Check now** re-runs it, and **Releases**
-opens the releases page in your browser.
+opens the releases page in your browser. The engine shipped beside the
+app updates with it, so a release offers one install for both.
 
 The pages that edit engine options write the user config, as
 [configuration](/guide/config) describes. A project config that sets

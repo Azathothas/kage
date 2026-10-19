@@ -276,7 +276,7 @@ fn start_lines(spec: &SlotSpec, src: &Sources<'_>, width: usize) -> Vec<(Keep, L
                 Line::from(vec![
                     indent(),
                     Span::styled("kage", styles.strong),
-                    Span::styled(format!(" {}", env!("CARGO_PKG_VERSION")), styles.base),
+                    Span::styled(format!(" {}", kage_core::build::version()), styles.base),
                 ]),
             )),
             SlotItem::Builtin("mark") => {
@@ -746,7 +746,11 @@ pub(super) fn push_builtin(
             out.extend(agents_text(status.agents).map(|text| Span::styled(text, styles.text)));
         }
         "version" => out.push(Span::styled(
-            format!("v{}", env!("CARGO_PKG_VERSION")),
+            if kage_core::build::is_nightly(kage_core::build::version()) {
+                kage_core::build::version().to_owned()
+            } else {
+                format!("v{}", kage_core::build::version())
+            },
             styles.text,
         )),
         _ => {}

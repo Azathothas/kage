@@ -52,10 +52,10 @@ read.
 ## Install
 
 Download `kage` for Linux, macOS or Windows from the
-[releases](https://github.com/QaidVoid/kage/releases); the
-`kage-desktop` releases carry the desktop app and the browser client
-`kage serve` hands out. Or install
-from crates.io, with Rust 1.89 or newer and a C compiler:
+[releases](https://github.com/QaidVoid/kage/releases); every release
+also carries the desktop app, with `kage` inside, and the browser
+client `kage serve --fetch-web` installs. Or install from crates.io,
+with Rust 1.89 or newer and a C compiler:
 
 ```sh
 cargo install kage-cli --locked

@@ -1,7 +1,8 @@
 name: nightly
 
-# Builds the CLI and the desktop client from main every night and
-# republishes the rolling `nightly` pre-release. A night where main
+# Builds the CLI, the web client and the desktop client, which carries
+# the CLI beside it, from main every night and republishes the rolling
+# `nightly` pre-release. A night where main
 # has not moved since the last nightly skips the builds; a manual run
 # always rebuilds, so a broken nightly can be re-cut without pushing
 # an empty commit first.
@@ -83,6 +84,10 @@ jobs:
         env:
           # Static musl binaries that run on any Linux.
           RUSTFLAGS: ${{ matrix.cross && '-C target-feature=+crt-static' || '' }}
+          # `kage --version` reads `nightly (<commit>)`, and
+          # `kage serve --fetch-web` takes the nightly web bundle.
+          KAGE_BUILD_SHA: ${{ github.sha }}
+          KAGE_CHANNEL: nightly
         run: |
           tool=cargo
           if [ "${{ matrix.cross }}" = "true" ]; then tool=cross; fi
@@ -129,9 +134,16 @@ jobs:
             }
           done
 
+      # The desktop jobs bundle this exact binary beside the app.
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: cli-${{ matrix.name }}
+          name: engine-${{ matrix.name }}
+          path: kage-${{ matrix.name }}/kage*
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-cli-${{ matrix.name }}
           path: dist/*
           if-no-files-found: error
 
@@ -143,14 +155,17 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: gui
+        working-directory: crates/kage-desktop
+    env:
+      KAGE_BUILD_SHA: ${{ github.sha }}
+      KAGE_CHANNEL: nightly
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Toolchain
         run: rustup target add wasm32-unknown-unknown
 
-      # The CLI has to match the wasm-bindgen crate gui/Cargo.lock pins.
+      # The CLI has to match the wasm-bindgen crate Cargo.lock pins.
       - uses: taiki-e/install-action@9114bf4d891761788c546334fd37538eae1bf8b3 # v2.87.16
         with:
           tool: wasm-bindgen@0.2.129
@@ -160,13 +175,14 @@ jobs:
       # binary target, which has no entry on wasm32.
       - name: Build
         run: |
-          cargo build --release --locked --target wasm32-unknown-unknown --no-default-features
+          cargo build --release --locked --target wasm32-unknown-unknown \
+            -p kage-desktop --no-default-features
           wasm-bindgen --out-dir web --target web \
-            target/wasm32-unknown-unknown/release/kage_desktop.wasm
+            ../../target/wasm32-unknown-unknown/release/kage_desktop.wasm
 
       - name: Package
         run: |
-          bundle=../web-bundle/web
+          bundle=../../web-bundle/web
           mkdir -p "$bundle/assets/icons"
           cp web/index.html web/favicon.svg web/boot.js web/kage_desktop.js \
             web/kage_desktop_bg.wasm "$bundle/"
@@ -175,30 +191,33 @@ jobs:
           # the bundle (FR-52).
           cp assets/icons/*.svg "$bundle/assets/icons/"
           cp -R assets/fonts "$bundle/assets/fonts"
-          tar -C ../web-bundle -cJf ../kage-web.tar.xz web
+          # `kage serve` compares this with the commit it was built from.
+          echo "${{ github.sha }}" > "$bundle/VERSION"
+          tar -C ../../web-bundle -cJf ../../kage-web.tar.xz web
 
       - name: Verify bundle
         run: |
-          listing="$(tar -tJf ../kage-web.tar.xz)"
+          listing="$(tar -tJf ../../kage-web.tar.xz)"
           echo "$listing"
-          echo "$listing" | grep -qx 'web/favicon.svg' || {
-            echo 'the web bundle is missing web/favicon.svg' >&2
-            exit 1
-          }
+          for wanted in web/VERSION web/favicon.svg; do
+            echo "$listing" | grep -qx "$wanted" || {
+              echo "the web bundle is missing $wanted" >&2
+              exit 1
+            }
+          done
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: web
+          name: release-web
           path: kage-web.tar.xz
           if-no-files-found: error
 
-  # The desktop client. Nightly builds stamp the commit into the app
-  # bundle and the About page, so the client can tell whether it is on
-  # the current nightly.
+  # The desktop client, with the night's `kage` beside it. Nightly
+  # builds stamp the commit into the app bundle and the About page, so
+  # the client can tell whether it is on the current nightly.
   desktop:
     name: desktop ${{ matrix.name }}
-    needs: check-changes
-    if: ${{ needs.check-changes.outputs.changed == 'true' }}
+    needs: cli
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -216,11 +235,17 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: gui
+        working-directory: crates/kage-desktop
     env:
       KAGE_BUILD_SHA: ${{ github.sha }}
+      KAGE_CHANNEL: nightly
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: engine-${{ matrix.name }}
+          path: engine
 
       - name: Toolchain
         run: |
@@ -235,20 +260,23 @@ jobs:
             libxkbcommon-x11-dev libwayland-dev libxcb1-dev
 
       - name: Build
-        run: cargo build --release --locked --target "${{ matrix.target }}"
+        run: cargo build --release --locked -p kage-desktop --target "${{ matrix.target }}"
 
       - name: Package
         run: |
           artifact="kage-desktop-${{ matrix.name }}"
-          bin="target/${{ matrix.target }}/release/kage-desktop"
-          if [ "$RUNNER_OS" = "Windows" ]; then bin="$bin.exe"; fi
-          mkdir -p "$artifact" ../dist
-          cp ../LICENSE ../README.md "$artifact/"
+          bin="../../target/${{ matrix.target }}/release/kage-desktop"
+          engine="../../engine/kage"
+          if [ "$RUNNER_OS" = "Windows" ]; then bin="$bin.exe"; engine="$engine.exe"; fi
+          chmod +x "$engine"
+          mkdir -p "$artifact" ../../dist
+          cp ../../LICENSE ../../README.md "$artifact/"
           version="$(git rev-parse --short HEAD)"
           if [ "$RUNNER_OS" = "macOS" ]; then
             app="$artifact/Kage.app"
             mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
             cp "$bin" "$app/Contents/MacOS/kage-desktop"
+            cp "$engine" "$app/Contents/MacOS/kage"
             cat > "$app/Contents/Info.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -284,7 +312,7 @@ jobs:
             done
             iconutil -c icns "$iconset" -o "$app/Contents/Resources/kage.icns"
           else
-            cp "$bin" "$artifact/"
+            cp "$bin" "$engine" "$artifact/"
             if [ "$RUNNER_OS" = "Linux" ]; then
               mkdir -p "$artifact/share/applications" "$artifact/share/icons"
               printf '%s\n' '[Desktop Entry]' 'Type=Application' 'Name=kage' \
@@ -295,17 +323,21 @@ jobs:
             fi
           fi
           if [ "$RUNNER_OS" = "Windows" ]; then
-            7z a "../dist/$artifact.zip" "$artifact"
+            7z a "../../dist/$artifact.zip" "$artifact"
           else
-            tar -cJf "../dist/$artifact.tar.xz" "$artifact"
+            tar -cJf "../../dist/$artifact.tar.xz" "$artifact"
           fi
 
       - name: Verify archives
-        if: runner.os != 'Windows'
         run: |
           folder="kage-desktop-${{ matrix.name }}"
-          artifact="$folder.tar.xz"
-          listing="$(tar -tJf "../dist/$artifact")"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            artifact="$folder.zip"
+            listing="$(7z l -slt "../../dist/$artifact" | sed -n 's/^Path = //p' | tr '\\' '/')"
+          else
+            artifact="$folder.tar.xz"
+            listing="$(tar -tJf "../../dist/$artifact")"
+          fi
           echo "$listing"
           check() {
             echo "$listing" | grep -qx "$folder/$1" || {
@@ -313,23 +345,29 @@ jobs:
               exit 1
             }
           }
-          if [ "$RUNNER_OS" = "Linux" ]; then
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            check kage-desktop.exe
+            check kage.exe
+          elif [ "$RUNNER_OS" = "Linux" ]; then
+            check kage-desktop
+            check kage
             check share/applications/kage.desktop
             for size in 16x16 32x32 48x48 64x64 128x128 256x256 512x512; do
               check "share/icons/hicolor/$size/apps/kage.png"
             done
           else
             check Kage.app/Contents/MacOS/kage-desktop
+            check Kage.app/Contents/MacOS/kage
             check Kage.app/Contents/Info.plist
             check Kage.app/Contents/Resources/kage.icns
-            tar -xJf "../dist/$artifact" -C "$RUNNER_TEMP" \
+            tar -xJf "../../dist/$artifact" -C "$RUNNER_TEMP" \
               "$folder/Kage.app/Contents/Info.plist"
             plutil -lint "$RUNNER_TEMP/$folder/Kage.app/Contents/Info.plist"
           fi
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: desktop-${{ matrix.name }}
+          name: release-desktop-${{ matrix.name }}
           path: dist/*
           if-no-files-found: error
 
@@ -337,8 +375,7 @@ jobs:
   # desktop-onelf job builds it.
   desktop-onelf:
     name: desktop onelf ${{ matrix.name }}
-    needs: check-changes
-    if: ${{ needs.check-changes.outputs.changed == 'true' }}
+    needs: cli
     runs-on: ${{ matrix.runner }}
     container:
       image: ${{ matrix.image }}
@@ -359,10 +396,11 @@ jobs:
     defaults:
       run:
         shell: bash
-        working-directory: gui
+        working-directory: crates/kage-desktop
     env:
       ONELF_VERSION: 0.4.1
       KAGE_BUILD_SHA: ${{ github.sha }}
+      KAGE_CHANNEL: nightly
     steps:
       - name: Install Arch packages
         working-directory: /
@@ -375,11 +413,16 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: engine-${{ matrix.name }}
+          path: engine
+
       - name: Toolchain
         run: rustup toolchain install
 
       - name: Build
-        run: cargo build --release --locked
+        run: cargo build --release --locked -p kage-desktop
 
       - name: Slim the graphics stack
         working-directory: /tmp
@@ -405,8 +448,9 @@ jobs:
       - name: Pack with onelf
         run: |
           mkdir -p AppDir/bin AppDir/.onelf/icons AppDir/.onelf/desktop \
-            AppDir/share/icons ../dist
-          cp target/release/kage-desktop AppDir/bin/kage-desktop
+            AppDir/share/icons ../../dist
+          cp ../../target/release/kage-desktop AppDir/bin/kage-desktop
+          install -m 755 ../../engine/kage AppDir/bin/kage
           cp assets/icons/hicolor/512x512/apps/kage.png AppDir/.onelf/icons/default.png
           cp assets/icons/hicolor/512x512/apps/kage.png AppDir/.onelf/icons/kage-desktop.png
           cp -R assets/icons/hicolor AppDir/share/icons/hicolor
@@ -418,7 +462,8 @@ jobs:
             AppDir/.onelf/icons/default.png \
             AppDir/.onelf/icons/kage-desktop.png \
             AppDir/.onelf/desktop/default.desktop \
-            AppDir/share/icons/hicolor/512x512/apps/kage.png; do
+            AppDir/share/icons/hicolor/512x512/apps/kage.png \
+            AppDir/bin/kage; do
             [ -f "$wanted" ] || {
               echo "the onelf AppDir is missing $wanted" >&2
               exit 1
@@ -435,18 +480,18 @@ jobs:
           }
           onelf build AppDir
           onelf verify AppDir/kage-desktop.onelf
-          mv AppDir/kage-desktop.onelf "../dist/kage-desktop-${{ matrix.name }}.onelf"
+          mv AppDir/kage-desktop.onelf "../../dist/kage-desktop-${{ matrix.name }}.onelf"
 
       # Xvfb offers no DRI3, so this proves the bundle starts and draws on
       # its own software renderer. The replay needs no agent or network.
       - name: Smoke run the bundle
         run: |
           xvfb-run -a -s "-screen 0 1280x800x24" timeout 60 \
-            "../dist/kage-desktop-${{ matrix.name }}.onelf" --replay --smoke 3000
+            "../../dist/kage-desktop-${{ matrix.name }}.onelf" --replay --smoke 3000
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: onelf-${{ matrix.name }}
+          name: release-onelf-${{ matrix.name }}
           path: dist/*
           if-no-files-found: error
 
@@ -464,7 +509,7 @@ jobs:
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          pattern: '*'
+          pattern: 'release-*'
           merge-multiple: true
           path: dist
 
