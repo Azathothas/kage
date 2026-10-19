@@ -243,18 +243,23 @@ mod imp {
     use super::{Child, ExitStatus, io};
     use std::process::{Command, Output};
 
+    /// Nothing to start: only Unix reaps orphaned children.
     pub fn start() {}
 
+    /// Nothing to drain: only Unix reaps orphaned children.
     pub fn drain() {}
 
+    /// [`Child::try_wait`], as no reaper takes statuses here.
     pub fn try_wait(child: &mut Child) -> io::Result<Option<ExitStatus>> {
         child.try_wait()
     }
 
+    /// [`Child::wait`], as no reaper takes statuses here.
     pub fn wait(child: &mut Child) -> io::Result<ExitStatus> {
         child.wait()
     }
 
+    /// [`Command::output`], as no reaper takes statuses here.
     pub fn output(command: &mut Command) -> io::Result<Output> {
         command.output()
     }
