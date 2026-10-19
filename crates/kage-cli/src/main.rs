@@ -693,17 +693,20 @@ pub(crate) fn run_completions(shell: clap_complete::Shell) -> ExitCode {
     ExitCode::SUCCESS
 }
 
+/// The CLI definition the man page renders. The page names the release
+/// alone: a commit would make the committed page stale on every commit.
+fn manpage_command() -> clap::Command {
+    use clap::CommandFactory as _;
+    Cli::command().version(env!("CARGO_PKG_VERSION"))
+}
+
 /// Render the manpage via `clap_mangen` and write it to `out`, or with
 /// `check`, compare the rendered page against the file at `out` and
 /// fail when they differ. Creates the parent directory when missing so
 /// a fresh checkout can run `kage gen-manpage --out man/kage.1`
 /// without a prior `mkdir`.
 pub(crate) fn run_gen_manpage(out: &std::path::Path, check: bool) -> ExitCode {
-    use clap::CommandFactory as _;
-    // The page names the release alone: a commit would make the
-    // committed page stale on every commit.
-    let command = Cli::command().version(env!("CARGO_PKG_VERSION"));
-    let buffer = match render_manpage(&command) {
+    let buffer = match render_manpage(&manpage_command()) {
         Ok(buffer) => buffer,
         Err(err) => {
             eprintln!("kage: render manpage: {err}");
@@ -1379,13 +1382,12 @@ mod tests {
 
     #[test]
     fn gen_manpage_check_fails_on_drift_and_passes_on_current() {
-        use clap::CommandFactory as _;
         let dir = tempfile::tempdir().unwrap();
         let out = dir.path().join("kage.1");
         assert_eq!(run_gen_manpage(&out, true), ExitCode::from(1), "missing");
         std::fs::write(&out, "stale\n").unwrap();
         assert_eq!(run_gen_manpage(&out, true), ExitCode::from(1), "stale");
-        let page = render_manpage(&Cli::command()).unwrap();
+        let page = render_manpage(&manpage_command()).unwrap();
         std::fs::write(&out, &page).unwrap();
         assert_eq!(run_gen_manpage(&out, true), ExitCode::SUCCESS, "current");
     }
