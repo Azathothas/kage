@@ -35,27 +35,41 @@ impl Token {
     /// `--rotate-token`, and when a fresh token cannot be generated or
     /// written.
     pub fn load_or_create(path: &Path) -> io::Result<Token> {
-        if let Ok(stored) = fs::read_to_string(path) {
-            let stored = stored.trim();
-            if stored.is_empty() {
-                return Self::rotate(path);
+        match fs::read_to_string(path) {
+            Ok(stored) => {
+                let stored = stored.trim();
+                if stored.is_empty() {
+                    return Self::rotate(path);
+                }
+                if !is_token_shape(stored) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "{} holds {} characters that are not a 64-character hex token; \
+                             replace it with `kage serve --rotate-token`",
+                            path.display(),
+                            stored.chars().count()
+                        ),
+                    ));
+                }
+                Ok(Token {
+                    value: stored.to_owned(),
+                })
             }
-            if !is_token_shape(stored) {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "{} holds {} characters that are not a 64-character hex token; \
-                         replace it with `kage serve --rotate-token`",
-                        path.display(),
-                        stored.chars().count()
-                    ),
-                ));
-            }
-            return Ok(Token {
-                value: stored.to_owned(),
-            });
+            // Only a genuinely absent file means "no token yet"; a file
+            // that exists but cannot be read (not UTF-8, unreadable,
+            // another I/O error) must fail loudly instead of being
+            // silently replaced, which would 401 every paired client.
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Self::rotate(path),
+            Err(e) => Err(io::Error::new(
+                e.kind(),
+                format!(
+                    "{} cannot be read as a token; \
+                     replace it with `kage serve --rotate-token`: {e}",
+                    path.display()
+                ),
+            )),
         }
-        Self::rotate(path)
     }
 
     /// Generates a fresh token, replaces the file at `path` with it,
@@ -170,6 +184,16 @@ mod tests {
         fs::write(&path, b"  \n").unwrap();
         let token = Token::load_or_create(&path).unwrap();
         assert_eq!(token.as_str().len(), 64);
+    }
+
+    #[test]
+    fn an_unreadable_file_is_refused_not_replaced() {
+        let (_dir, path) = token_file();
+        fs::write(&path, [0xff, 0xfe, b'a']).unwrap();
+        let before = fs::read(&path).unwrap();
+        let err = Token::load_or_create(&path).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData, "{err}");
+        assert_eq!(fs::read(&path).unwrap(), before, "the file must be untouched");
     }
 
     #[test]
