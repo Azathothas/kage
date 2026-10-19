@@ -298,18 +298,37 @@ fn decode(text: &str) -> String {
         .replace("&amp;", "&")
 }
 
-fn searxng(base: &str, query: &str) -> Result<Vec<SearchResult>, ToolError> {
-    let mut url = url::Url::parse(base)
-        .and_then(|base| base.join("search"))
-        .map_err(|e| ToolError::Other(format!("[tools.web_search] url: {e}")))?;
-    url.query_pairs_mut()
+/// Builds the SearXNG search endpoint for `base` and `query`. The base
+/// is normalised to end in `/` first: `Url::join` is the RFC 3986
+/// merge, which treats the base's last path segment as a file name, so
+/// a plain join would turn `https://host/searxng` into
+/// `https://host/search`.
+fn searxng_url(base: &str, query: &str) -> Result<url::Url, String> {
+    let mut base = url::Url::parse(base).map_err(|e| format!("[tools.web_search] url: {e}"))?;
+    let path = base.path();
+    if !path.is_empty() && !path.ends_with('/') {
+        base.set_path(&format!("{path}/"));
+    }
+    let mut endpoint = base
+        .join("search")
+        .map_err(|e| format!("[tools.web_search] url: {e}"))?;
+    endpoint
+        .query_pairs_mut()
         .append_pair("q", query)
         .append_pair("format", "json");
+    Ok(endpoint)
+}
+
+fn searxng(base: &str, query: &str) -> Result<Vec<SearchResult>, ToolError> {
+    let url = searxng_url(base, query).map_err(ToolError::Other)?;
+    let endpoint = match url.host_str() {
+        Some(host) => format!("{host}{}", url.path()),
+        None => "the SearXNG instance".to_owned(),
+    };
     let body = get(&url, &[])?;
     let json: serde_json::Value = serde_json::from_str(&body).map_err(|_| {
         ToolError::Other(format!(
-            "{} did not answer with JSON; enable the json format in its settings",
-            url.host_str().unwrap_or("the SearXNG instance")
+            "{endpoint} did not answer with JSON; enable the json format in its settings"
         ))
     })?;
     Ok(json["results"]
@@ -368,7 +387,36 @@ fn parse_brave(json: &serde_json::Value) -> Vec<SearchResult> {
 
 #[cfg(test)]
 mod tests {
-    use super::{output, parse_brave, parse_duckduckgo, result_url};
+    use super::{output, parse_brave, parse_duckduckgo, result_url, searxng_url};
+
+    #[test]
+    fn searxng_url_keeps_a_base_path_without_a_trailing_slash() {
+        let url = searxng_url("https://host/searxng", "rust").unwrap();
+        assert!(
+            url.as_str().starts_with("https://host/searxng/search?"),
+            "{}",
+            url.as_str()
+        );
+    }
+
+    #[test]
+    fn searxng_url_keeps_a_base_path_with_a_trailing_slash() {
+        let url = searxng_url("https://host/searxng/", "rust").unwrap();
+        assert!(
+            url.as_str().starts_with("https://host/searxng/search?"),
+            "{}",
+            url.as_str()
+        );
+    }
+
+    #[test]
+    fn searxng_url_joins_a_root_base_and_carries_the_query() {
+        let url = searxng_url("https://host", "rust engines").unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://host/search?q=rust+engines&format=json"
+        );
+    }
 
     #[test]
     fn brave_without_a_key_names_the_variable() {
