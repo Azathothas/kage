@@ -93,25 +93,21 @@ fn serve_registry(
     shell: &ShellConfig,
     renames: &BTreeMap<String, String>,
 ) -> Result<ToolRegistry, String> {
-    let mut registry = kage_tools::builtin_registry()
+    let registry = kage_tools::builtin_registry()
         .with_shell_config(shell)
         .with_renames(renames);
-    let wanted: Vec<&str> = tools.iter().map(|t| t.trim()).collect();
-    if let Some(unknown) = wanted.iter().find(|t| registry.get(t).is_none()) {
-        let mut known: Vec<&str> = registry.names().collect();
-        known.sort_unstable();
+    let wanted: Vec<String> = tools.iter().map(|t| t.trim().to_owned()).collect();
+    // The known set is the full registry, captured before the
+    // narrowing: the message exists to tell the user what they could
+    // have written.
+    let mut known: Vec<&str> = registry.names().collect();
+    known.sort_unstable();
+    let (registry, missing) = registry.retain_named(&wanted);
+    if let Some(unknown) = missing.first() {
         return Err(format!(
             "unknown tool `{unknown}` in --tools (known: {})",
             known.join(", ")
         ));
-    }
-    let unlisted: Vec<String> = registry
-        .names()
-        .filter(|n| !wanted.contains(n))
-        .map(str::to_owned)
-        .collect();
-    for name in unlisted {
-        registry.unregister(&name);
     }
     Ok(registry)
 }
@@ -410,6 +406,19 @@ mod tests {
     }
 
     #[test]
+    fn serve_registry_keeps_a_tool_named_by_its_advertised_name() {
+        let renames = BTreeMap::from([("shell".to_owned(), "run_command".to_owned())]);
+        let reg =
+            serve_registry(&names(&["run_command"]), &ShellConfig::default(), &renames).unwrap();
+        let listed: Vec<String> = reg
+            .list_for_provider()
+            .into_iter()
+            .map(|s| s.name)
+            .collect();
+        assert_eq!(listed, vec!["run_command".to_owned()]);
+    }
+
+    #[test]
     fn serve_registry_rejects_unknown_tools() {
         let err = serve_registry(
             &names(&["read", "nope"]),
@@ -418,6 +427,10 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("`nope`"), "{err}");
+        // The known list names the whole registry, not just what the
+        // caller asked for and kept.
+        assert!(err.contains("grep"), "{err}");
+        assert!(err.contains("write"), "{err}");
     }
 
     #[test]
