@@ -53,11 +53,15 @@ jobs:
   # release job: the changelog range is bounded by the commit the last
   # version was published from, which only exists in crates.io's
   # records once that job has published. Running the two in parallel
-  # once made every release PR repeat the whole repo history.
+  # once made every release PR repeat the whole repo history. It still
+  # runs when the release fails: a crate that is new at the current
+  # version can only publish after the bump this PR brings, so waiting
+  # for success would never open it.
   release-pr:
     name: release PR
     runs-on: ubuntu-latest
     needs: release
+    if: ${{ !cancelled() }}
     permissions:
       contents: write
       pull-requests: write
@@ -83,6 +87,7 @@ jobs:
   fixup:
     name: fix up the release PR
     needs: release-pr
+    if: ${{ !cancelled() && needs.release-pr.result == 'success' }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
