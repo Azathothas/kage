@@ -36,12 +36,12 @@ pub const PROTOCOL_VERSION: &str = "2025-06-18";
 
 /// How long the `initialize` handshake waits before giving up on a
 /// silent server when the config sets no deadline.
-pub(crate) const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(10);
+pub const INITIALIZE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// How long a client-issued request (e.g. `tools/list`) waits before
 /// giving up on a silent server. Long-running `tools/call` is exempt:
 /// it goes through [`Self::request_cancellable`] instead.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// The `notifications/cancelled` notice MCP expects when kage abandons
 /// a request. MCP forbids cancelling `initialize`, so that one gets none.
@@ -736,14 +736,26 @@ impl McpServerHandle {
         let stderr = child.stderr.take().map(StderrTail::capture);
         let (peer, inbound, _reader) =
             connect_with(BufReader::new(stdout), stdin, Some(cancel_notice()));
-        let conn = Arc::new(McpConnection::initialize_with_timeout(
-            name,
-            peer,
-            inbound,
-            roots,
-            handler,
-            startup_timeout,
-        )?);
+        let conn = Arc::new(
+            match McpConnection::initialize_with_timeout(
+                name,
+                peer,
+                inbound,
+                roots,
+                handler,
+                startup_timeout,
+            ) {
+                Ok(conn) => conn,
+                // The handshake failed while `child` is still live on this
+                // stack, and dropping a `Child` does not kill it: kill the
+                // group here, or a silent server outlives the failed spawn.
+                Err(error) => {
+                    kill_process_group(&mut child);
+                    let _ = child.wait();
+                    return Err(error);
+                }
+            },
+        );
         Ok(Self {
             conn,
             child: Some(child),
@@ -865,6 +877,44 @@ mod tests {
 
     use super::*;
     use crate::test_support::{answer_requests, wait_until};
+
+    /// A handshake that never completes must not leak the spawned
+    /// child: the spawn error path kills the process group itself.
+    #[test]
+    #[cfg(unix)]
+    fn spawn_kills_the_child_when_the_handshake_times_out() {
+        use nix::errno::Errno;
+        use nix::sys::signal::kill;
+        use nix::unistd::Pid;
+
+        let pidfile =
+            std::env::temp_dir().join(format!("kage-handshake-hang-{}.pid", std::process::id()));
+        let _ = std::fs::remove_file(&pidfile);
+        let script = format!("echo $$ > '{}'; exec sleep 30", pidfile.display());
+        let cfg: McpServer =
+            serde_json::from_str(&format!(r#"{{"command":"sh","args":["-c",{script:?}]}}"#))
+                .unwrap();
+        let spawn = McpServerHandle::spawn_with_startup_timeout(
+            "hang",
+            &cfg,
+            &[],
+            None,
+            None,
+            Duration::from_millis(500),
+        );
+        assert!(spawn.is_err(), "the silent handshake must time out");
+        let pid: i32 = std::fs::read_to_string(&pidfile)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
+        let _ = std::fs::remove_file(&pidfile);
+        assert_eq!(
+            kill(Pid::from_raw(pid), None).unwrap_err(),
+            Errno::ESRCH,
+            "the child outlived the failed handshake"
+        );
+    }
 
     /// A minimal MCP server that answers `initialize` and rejects every
     /// other request.

@@ -110,6 +110,9 @@ type OutSlot = Arc<Mutex<Option<io::PipeWriter>>>;
 #[derive(Clone)]
 struct Endpoint {
     agent: ureq::Agent,
+    /// The bounded agent for inline notification posts. See
+    /// [`transport_config_bounded`].
+    notifications: ureq::Agent,
     url: String,
     headers: BTreeMap<String, String>,
     tokens: Option<Arc<dyn TokenSource>>,
@@ -133,7 +136,13 @@ pub(crate) fn connect_http(
     headers: &BTreeMap<String, String>,
     tokens: Option<Arc<dyn TokenSource>>,
 ) -> Result<(Peer, Receiver<Inbound>, JoinHandle<()>), String> {
-    open_http(transport_agent(), url, headers, tokens)
+    open_http_with(
+        transport_agent_bounded(),
+        transport_agent(),
+        url,
+        headers,
+        tokens,
+    )
 }
 
 /// Transport deadlines, mirroring `kage_provider::http::build_agent`:
@@ -161,9 +170,52 @@ fn transport_agent() -> ureq::Agent {
     transport_config().new_agent()
 }
 
-/// [`connect_http`] against an explicit agent, so tests can run the
-/// whole transport against an in-process fake server.
+/// A notification POST is answered with an immediate 202 by any
+/// conforming server, and unlike a request it is posted inline to keep
+/// `notifications/initialized` ordered, so a server that accepts it
+/// and stalls would hold the writing thread for the transport's
+/// 600 s per-phase deadlines. Notifications ride an agent whose
+/// whole exchange is bounded to one request timeout instead. ureq
+/// charges its phases one after another, so per-phase deadlines alone
+/// would sum to several request timeouts; `timeout_global` caps the
+/// total. Unlike [`transport_config`], `recv_response` is set too,
+/// since a notification's reply is a small 202 and never a stream.
+fn transport_config_bounded() -> ureq::config::Config {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(crate::server::REQUEST_TIMEOUT))
+        .timeout_resolve(Some(Duration::from_secs(15)))
+        .timeout_connect(Some(Duration::from_secs(30)))
+        .timeout_send_request(Some(crate::server::REQUEST_TIMEOUT))
+        .timeout_send_body(Some(crate::server::REQUEST_TIMEOUT))
+        .timeout_recv_response(Some(crate::server::REQUEST_TIMEOUT))
+        .timeout_recv_body(Some(crate::server::REQUEST_TIMEOUT))
+        .max_redirects(0)
+        .build()
+}
+
+fn transport_agent_bounded() -> ureq::Agent {
+    transport_config_bounded().new_agent()
+}
+
+/// [`connect_http`] against one agent for everything, so tests can
+/// run the whole transport against an in-process fake server. The
+/// clone shares the agent's connector, so a fake sees the notification
+/// POST exactly as it saw it when notifications rode the one agent.
+#[cfg(test)]
 fn open_http(
+    agent: ureq::Agent,
+    url: &str,
+    headers: &BTreeMap<String, String>,
+    tokens: Option<Arc<dyn TokenSource>>,
+) -> Result<(Peer, Receiver<Inbound>, JoinHandle<()>), String> {
+    // The clone shares the agent's connector, so a test fake sees the
+    // notification POST exactly as it saw it when notifications rode
+    // the one agent.
+    open_http_with(agent.clone(), agent, url, headers, tokens)
+}
+
+fn open_http_with(
+    notifications: ureq::Agent,
     agent: ureq::Agent,
     url: &str,
     headers: &BTreeMap<String, String>,
@@ -177,6 +229,7 @@ fn open_http(
         .any(|key| key.eq_ignore_ascii_case("authorization"));
     let endpoint = Endpoint {
         agent,
+        notifications,
         url: url.to_owned(),
         headers: headers.clone(),
         tokens: tokens.filter(|_| !configured),
@@ -288,12 +341,12 @@ impl PostFailure {
 /// configured headers.
 fn send_post(
     endpoint: &Endpoint,
+    agent: &ureq::Agent,
     shared: &SharedState,
     bearer: Option<&str>,
     body: &[u8],
 ) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
-    let mut req = endpoint
-        .agent
+    let mut req = agent
         .post(&endpoint.url)
         .header("accept", "application/json, text/event-stream")
         .header("content-type", "application/json");
@@ -324,18 +377,19 @@ fn send_post(
 /// empty body is a bare success.
 fn post_and_forward(
     endpoint: &Endpoint,
+    agent: &ureq::Agent,
     shared: &SharedState,
     out: &OutSlot,
     body: &[u8],
 ) -> Result<(), PostFailure> {
     let url = &endpoint.url;
     let bearer = endpoint.bearer();
-    let mut sent = send_post(endpoint, shared, bearer.as_deref(), body);
+    let mut sent = send_post(endpoint, agent, shared, bearer.as_deref(), body);
     if let (Some(token), Some(source)) = (bearer.as_deref(), endpoint.tokens.as_ref())
         && matches!(sent, Err(ureq::Error::StatusCode(401)))
         && let Some(fresh) = source.rejected(url, token)
     {
-        sent = send_post(endpoint, shared, Some(&fresh), body);
+        sent = send_post(endpoint, agent, shared, Some(&fresh), body);
     }
     let response = match sent {
         Ok(response) => response,
@@ -456,20 +510,26 @@ impl Write for HttpPoster {
         }
         let body = std::mem::take(&mut self.buf);
         let Some(id) = request_id(&body) else {
-            return post_and_forward(&self.endpoint, &self.shared, &self.out, &body).map_err(
-                |failure| {
-                    if failure.fatal {
-                        close(&self.out);
-                    }
-                    failure.error
-                },
-            );
+            return post_and_forward(
+                &self.endpoint,
+                &self.endpoint.notifications,
+                &self.shared,
+                &self.out,
+                &body,
+            )
+            .map_err(|failure| {
+                if failure.fatal {
+                    close(&self.out);
+                }
+                failure.error
+            });
         };
         let endpoint = self.endpoint.clone();
         let shared = Arc::clone(&self.shared);
         let out = Arc::clone(&self.out);
         std::thread::spawn(move || {
-            let Err(failure) = post_and_forward(&endpoint, &shared, &out, &body) else {
+            let Err(failure) = post_and_forward(&endpoint, &endpoint.agent, &shared, &out, &body)
+            else {
                 return;
             };
             let reply = serde_json::json!({
@@ -540,6 +600,19 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
+
+    /// The bounded agent exists so an unanswered notification POST cannot
+    /// hold a writer past one request deadline per phase; pin its timeouts.
+    #[test]
+    fn the_notification_agent_is_bounded_to_one_request_timeout() {
+        let timeouts = transport_config_bounded().timeouts();
+        let bounded = Some(crate::server::REQUEST_TIMEOUT);
+        assert_eq!(timeouts.global, bounded);
+        assert_eq!(timeouts.send_request, bounded);
+        assert_eq!(timeouts.send_body, bounded);
+        assert_eq!(timeouts.recv_response, bounded);
+        assert_eq!(timeouts.recv_body, bounded);
+    }
 
     #[test]
     fn frame_joins_multi_line_data_and_skips_comments() {

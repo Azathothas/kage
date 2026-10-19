@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::Duration;
 
 use kage_core::config::Config;
+use kage_mcp::server::{INITIALIZE_TIMEOUT, REQUEST_TIMEOUT};
 use kage_plugin::{HostLog, LogLevel, PluginRuntime};
 use serde_json::json;
 
@@ -83,6 +84,10 @@ fn write_verdict(out: &mut impl Write, checks: &[Check]) {
         let _ = writeln!(out, "doctor: one or more checks failed");
         return;
     }
+    if checks.iter().any(|c| matches!(c.status, Status::Warn)) {
+        let _ = writeln!(out, "doctor: one or more checks warn; see the rows above");
+        return;
+    }
     let names = checks.iter().map(|c| c.name).collect::<Vec<_>>().join(", ");
     let _ = writeln!(out, "doctor: {names} all ok");
 }
@@ -127,15 +132,28 @@ fn collect_checks() -> Vec<Check> {
 }
 
 /// Per-server bound for the spawn + `initialize` + `tools/list`
-/// probe. A server that never answers `initialize` is exactly what
-/// this check should flag, so we cap the wait rather than block
-/// `doctor` forever.
-const MCP_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+/// probe: the same handshake deadline a real run allows (the spec's
+/// `startup_timeout_secs`, default [`INITIALIZE_TIMEOUT`]) plus one
+/// full request deadline for `tools/list` and a second of slack. A
+/// server that never answers `initialize` is exactly what this check
+/// should flag, so the wait stays bounded; a working cold start is
+/// not the thing being flagged.
+fn mcp_probe_timeout(spec: &kage_core::config::McpServer) -> Duration {
+    let startup = spec
+        .startup_timeout_secs
+        .map_or(INITIALIZE_TIMEOUT, Duration::from_secs);
+    // One bounded notification POST plus one tools/list page: both
+    // are cut at REQUEST_TIMEOUT (the notification by the HTTP
+    // transport's bounded agent, the page by the request deadline),
+    // so the worker's own work always ends inside this bound and the
+    // join in [`probe_mcp_server`] stays prompt.
+    startup + 2 * REQUEST_TIMEOUT + Duration::from_secs(1)
+}
 
 /// Spawn each enabled `[mcp.servers.*]`, handshake, and list its
 /// tools, reporting one aggregate row. A server that fails to spawn,
 /// errors during discovery, or does not answer within
-/// [`MCP_PROBE_TIMEOUT`] makes the check FAIL with the offender
+/// [`mcp_probe_timeout`] makes the check FAIL with the offender
 /// named. Plugin-declared servers are not probed here: `doctor` has
 /// no plugin runtime loaded and only validates static config. The
 /// config is read without validation, so the probe still runs when
@@ -210,35 +228,53 @@ fn check_mcp_servers(
 }
 
 /// Spawn one server in a worker thread and wait at most
-/// [`MCP_PROBE_TIMEOUT`] for the handshake + tool list. The worker
-/// owns the [`kage_mcp::McpServerHandle`], so it kills the child when
-/// it finishes; a pathologically hung server (never answers
-/// `initialize`) leaks only this diagnostic thread, never affecting a
-/// real `kage` run.
+/// [`mcp_probe_timeout`] for the handshake + tool list, handing the
+/// worker the same startup deadline a real run would use. The worker
+/// owns the [`kage_mcp::McpServerHandle`], so the child dies with the
+/// thread: the handshake's notification POST and the single
+/// `tools/list` page are each cut at [`REQUEST_TIMEOUT`], so the
+/// worker's work ends inside the outer bound, the join below never
+/// outlives it, and [`Drop`](kage_mcp::McpServerHandle) runs on every
+/// return path.
 fn probe_mcp_server(name: &str, spec: &kage_core::config::McpServer) -> Result<usize, String> {
+    let startup = spec
+        .startup_timeout_secs
+        .map_or(INITIALIZE_TIMEOUT, Duration::from_secs);
+    let bound = mcp_probe_timeout(spec);
     let (tx, rx) = mpsc::channel();
     let server_name = name.to_owned();
     let spec = spec.clone();
-    std::thread::spawn(move || {
-        let result = kage_mcp::McpServerHandle::spawn(&server_name, &spec, &[], None)
-            .map_err(|e| e.to_string())
-            .and_then(|handle| {
-                handle
-                    .connection()
-                    .list_tools()
-                    .map(|tools| tools.len())
-                    .map_err(|e| e.to_string())
-            });
+    let worker = std::thread::spawn(move || {
+        let result = kage_mcp::McpServerHandle::spawn_with_startup_timeout(
+            &server_name,
+            &spec,
+            &[],
+            None,
+            None,
+            startup,
+        )
+        .map_err(|e| e.to_string())
+        .and_then(|handle| {
+            handle
+                .connection()
+                .list_tools_with_page_cap(1)
+                .map(|tools| tools.len())
+                .map_err(|e| e.to_string())
+        });
         let _ = tx.send(result);
     });
-    match rx.recv_timeout(MCP_PROBE_TIMEOUT) {
+    let outcome = match rx.recv_timeout(bound) {
         Ok(outcome) => outcome,
-        Err(mpsc::RecvTimeoutError::Timeout) => Err(format!(
-            "no response within {}s",
-            MCP_PROBE_TIMEOUT.as_secs()
-        )),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            Err(format!("no response within {}s", bound.as_secs()))
+        }
         Err(mpsc::RecvTimeoutError::Disconnected) => Err("probe thread died".into()),
-    }
+    };
+    // The worker's own deadlines end inside the outer bound, so this
+    // join is prompt on every path and the child never outlives the
+    // probe.
+    let _ = worker.join();
+    outcome
 }
 
 /// The `config` row: whether the layered config passes the checks
@@ -810,6 +846,41 @@ mod tests {
         assert!(!check.body.contains("config unreadable"), "{}", check.body);
     }
 
+    /// A server that answers `initialize` and then goes silent must
+    /// leave no process behind: the probe's worker owns the handle,
+    /// the worker is joined on every return path, and `Drop` kills the
+    /// child's whole group. Takes about 15 s: the silent `tools/list`
+    /// must run out its real request deadline.
+    #[test]
+    #[cfg(unix)]
+    fn mcp_check_kills_a_server_that_answers_initialize_then_hangs() {
+        use std::process::{Command, Stdio};
+
+        let dir = tempfile::tempdir().unwrap();
+        let pidfile = dir.path().join("pid");
+        let script = format!(
+            "echo $$ > '{}'; printf '%s\n' '{}'; exec sleep 30\n",
+            pidfile.display(),
+            r#"{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","capabilities":{},"serverInfo":{"name":"hang","version":"0"}}}"#
+        );
+        let toml = format!("[servers.hang]\ncommand = \"sh\"\nargs = [\"-c\", {script:?}]\n");
+        let check = check_mcp_servers(servers(&toml));
+        assert_eq!(check.status, Status::Fail, "{}", check.body);
+        assert!(check.body.contains("hang"), "{}", check.body);
+        let pid = fs::read_to_string(&pidfile).unwrap().trim().to_owned();
+        assert!(
+            !Command::new("kill")
+                .arg("-0")
+                .arg(&pid)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .unwrap()
+                .success(),
+            "the hung server {pid} is still alive after the probe returned"
+        );
+    }
+
     #[test]
     fn providers_check_counts_a_keyless_custom_provider() {
         let config: Config = toml::from_str(
@@ -933,6 +1004,18 @@ mod tests {
             String::from_utf8(out).unwrap(),
             "doctor: one or more checks failed\n"
         );
+    }
+
+    /// A WARN row is not an all-clear: the closing line must not
+    /// contradict the table above it.
+    #[test]
+    fn the_verdict_does_not_claim_all_ok_over_a_warn() {
+        let warned = vec![check("config", Status::Ok), check("auth", Status::Warn)];
+        let mut out = Vec::new();
+        write_verdict(&mut out, &warned);
+        let text = String::from_utf8(out).unwrap();
+        assert!(!text.contains("all ok"), "{text}");
+        assert!(text.contains("warn"), "{text}");
     }
 
     #[test]

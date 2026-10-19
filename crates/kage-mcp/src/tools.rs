@@ -67,72 +67,110 @@ impl McpConnection {
         let mut total_bytes = 0usize;
         let mut cursor: Option<String> = None;
         for _ in 0..MAX_TOOL_PAGES {
-            let params = cursor.take().map_or_else(
-                || serde_json::json!({}),
-                |c| serde_json::json!({ "cursor": c }),
-            );
-            let result = self.request("tools/list", params)?;
-            let tools = result
-                .get("tools")
-                .and_then(|t| t.as_array())
-                .ok_or_else(|| McpError::Protocol {
-                    server: self.name().to_owned(),
-                    detail: "tools/list result missing `tools` array".to_owned(),
-                })?;
-            for tool in tools {
-                let Some(name) = tool.get("name").and_then(|n| n.as_str()) else {
-                    return Err(McpError::Protocol {
-                        server: self.name().to_owned(),
-                        detail: "a tool entry had no `name`".to_owned(),
-                    });
-                };
-                let description = tool
-                    .get("description")
-                    .and_then(|d| d.as_str())
-                    .unwrap_or_default()
-                    .to_owned();
-                let input_schema = tool
-                    .get("inputSchema")
-                    .cloned()
-                    .unwrap_or_else(|| serde_json::json!({ "type": "object" }));
-                let schema_bytes = input_schema.to_string().len();
-                if description.len() > MAX_FIELD_BYTES || schema_bytes > MAX_FIELD_BYTES {
-                    return Err(McpError::Protocol {
-                        server: self.name().to_owned(),
-                        detail: format!(
-                            "tool `{name}` advertises {} bytes of description or schema, \
-                             at most {MAX_FIELD_BYTES} are kept",
-                            description.len().max(schema_bytes)
-                        ),
-                    });
-                }
-                if out.len() >= MAX_TOOLS {
-                    return Err(McpError::Protocol {
-                        server: self.name().to_owned(),
-                        detail: format!("tools/list returned more than {MAX_TOOLS} tools"),
-                    });
-                }
-                total_bytes += name.len() + description.len() + schema_bytes;
-                if total_bytes > MAX_LIST_BYTES {
-                    return Err(McpError::Protocol {
-                        server: self.name().to_owned(),
-                        detail: format!("tools/list accumulated more than {MAX_LIST_BYTES} bytes"),
-                    });
-                }
-                out.push(McpToolDef {
-                    name: name.to_owned(),
-                    description,
-                    input_schema,
-                });
-            }
-            match result.get("nextCursor").and_then(|c| c.as_str()) {
-                Some(next) if !next.is_empty() => cursor = Some(next.to_owned()),
-                _ => return Ok(out),
+            if !self.follow_tools_page(&mut cursor, &mut out, &mut total_bytes)? {
+                return Ok(out);
             }
         }
         Err(McpError::Protocol {
             server: self.name().to_owned(),
             detail: format!("tools/list pagination exceeded {MAX_TOOL_PAGES} pages"),
+        })
+    }
+
+    /// Like [`Self::list_tools`], but follows at most `max_pages`
+    /// `nextCursor` hops and returns what was gathered when the cap
+    /// stops it. A liveness probe uses a small cap so a
+    /// cursor-echoing server cannot hold the caller past its own
+    /// deadline; a real discovery pass uses [`Self::list_tools`],
+    /// which reports endless pagination as a protocol error.
+    ///
+    /// # Errors
+    ///
+    /// Same conditions as [`Self::list_tools`].
+    pub fn list_tools_with_page_cap(&self, max_pages: usize) -> Result<Vec<McpToolDef>, McpError> {
+        let mut out = Vec::new();
+        let mut total_bytes = 0usize;
+        let mut cursor: Option<String> = None;
+        for _ in 0..max_pages {
+            if !self.follow_tools_page(&mut cursor, &mut out, &mut total_bytes)? {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    /// Request one `tools/list` page and fold it into `out` under the
+    /// size and count caps. Returns whether a `nextCursor` remains.
+    fn follow_tools_page(
+        &self,
+        cursor: &mut Option<String>,
+        out: &mut Vec<McpToolDef>,
+        total_bytes: &mut usize,
+    ) -> Result<bool, McpError> {
+        let params = cursor.take().map_or_else(
+            || serde_json::json!({}),
+            |c| serde_json::json!({ "cursor": c }),
+        );
+        let result = self.request("tools/list", params)?;
+        let tools = result
+            .get("tools")
+            .and_then(|t| t.as_array())
+            .ok_or_else(|| McpError::Protocol {
+                server: self.name().to_owned(),
+                detail: "tools/list result missing `tools` array".to_owned(),
+            })?;
+        for tool in tools {
+            let Some(name) = tool.get("name").and_then(|n| n.as_str()) else {
+                return Err(McpError::Protocol {
+                    server: self.name().to_owned(),
+                    detail: "a tool entry had no `name`".to_owned(),
+                });
+            };
+            let description = tool
+                .get("description")
+                .and_then(|d| d.as_str())
+                .unwrap_or_default()
+                .to_owned();
+            let input_schema = tool
+                .get("inputSchema")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({ "type": "object" }));
+            let schema_bytes = input_schema.to_string().len();
+            if description.len() > MAX_FIELD_BYTES || schema_bytes > MAX_FIELD_BYTES {
+                return Err(McpError::Protocol {
+                    server: self.name().to_owned(),
+                    detail: format!(
+                        "tool `{name}` advertises {} bytes of description or schema, \
+                         at most {MAX_FIELD_BYTES} are kept",
+                        description.len().max(schema_bytes)
+                    ),
+                });
+            }
+            if out.len() >= MAX_TOOLS {
+                return Err(McpError::Protocol {
+                    server: self.name().to_owned(),
+                    detail: format!("tools/list returned more than {MAX_TOOLS} tools"),
+                });
+            }
+            *total_bytes += name.len() + description.len() + schema_bytes;
+            if *total_bytes > MAX_LIST_BYTES {
+                return Err(McpError::Protocol {
+                    server: self.name().to_owned(),
+                    detail: format!("tools/list accumulated more than {MAX_LIST_BYTES} bytes"),
+                });
+            }
+            out.push(McpToolDef {
+                name: name.to_owned(),
+                description,
+                input_schema,
+            });
+        }
+        Ok(match result.get("nextCursor").and_then(|c| c.as_str()) {
+            Some(next) if !next.is_empty() => {
+                *cursor = Some(next.to_owned());
+                true
+            }
+            _ => false,
         })
     }
 }
@@ -368,6 +406,14 @@ mod tests {
         let defs = conn.list_tools().unwrap();
         let names: Vec<_> = defs.iter().map(|d| d.name.as_str()).collect();
         assert_eq!(names, ["read_file", "write_file"]);
+    }
+
+    #[test]
+    fn a_page_cap_stops_after_one_page() {
+        let conn = fs_server();
+        let defs = conn.list_tools_with_page_cap(1).unwrap();
+        let names: Vec<_> = defs.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(names, ["read_file"]);
     }
 
     #[test]
