@@ -55,7 +55,7 @@ rebind `kage.action.TogglePlanMode` to another key.
 | `?`             | Normal  | Open the keyboard reference         |
 | `:`             | Normal  | Open the `:` command line           |
 | `ctrl+q`        | any     | Quit                                |
-| `ctrl+c`        | any     | Clear the draft, else interrupt the run, else arm quit |
+| `ctrl+c`        | any     | Interrupt the run, else arm quit |
 
 In vim Insert mode, `ctrl+w` kills the previous word instead (see
 [input editing](#input-editing)).
@@ -63,8 +63,9 @@ In vim Insert mode, `ctrl+w` kills the previous word instead (see
 ## modeless mode
 
 In modeless mode the editor is always in an insert-like state.
-`esc` never enters Normal. It clears the draft or interrupts the run
-(see [esc and ctrl+c](#esc-and-ctrl-c)). All Emacs/readline keys and
+`esc` never enters Normal. It interrupts the run, and idle a second
+`esc` opens the rewind picker (see [esc and ctrl+c](#esc-and-ctrl-c)).
+All Emacs/readline keys and
 the buffer navigation keys above work without any mode switching.
 
 | Key  | Effect                          |
@@ -72,8 +73,8 @@ the buffer navigation keys above work without any mode switching.
 | `enter` | Send the prompt, or steer it into the running turn |
 | `tab` | Queue the prompt until the running turn ends |
 | `shift+enter` / `alt+enter` | Insert a newline |
-| `esc` | Clear the draft, else interrupt the run, else clear the search highlight; `esc` `esc` opens the rewind picker (see [esc and ctrl+c](#esc-and-ctrl-c)) |
-| `ctrl+c` | Clear the draft, else interrupt the run, else arm quit |
+| `esc` | Interrupt the run, else clear the search highlight; `esc` `esc` opens the rewind picker (see [esc and ctrl+c](#esc-and-ctrl-c)) |
+| `ctrl+c` | Interrupt the run, else arm quit |
 | `pageup` / `pagedown` | Scroll the conversation buffer 10 lines |
 | `ctrl+w` | Kill the previous word |
 | `ctrl+g` | Edit the prompt draft in `$VISUAL`/`$EDITOR` |
@@ -97,15 +98,14 @@ leaves shell mode. See
 ## esc and ctrl+c
 
 `esc` in modeless mode and `ctrl+c` in every mode step through the
-same escalation:
+same escalation. Neither key touches the draft: interrupting leaves
+an unsent draft in the editor, and submitting a prompt is what puts
+it in the history that `up` walks.
 
-1. With a draft in the prompt, they clear it. The draft goes to the
-   prompt history, so `up` brings it back, and the footer reads
-   `draft cleared, up restores it`.
-2. With an empty draft while kage works, they interrupt the run. The
+1. While kage works, they interrupt the run. The
    conversation shows `Interrupted`.
-3. Idle with an empty draft, `esc` clears an active search
-   highlight (the footer then reads `esc to clear the search`). A
+2. Idle with a search highlight active, `esc` clears it
+   (the footer then reads `esc to clear the search`). A
    second `esc` within 0.6 seconds opens the
    [rewind picker](/guide/commands#commands): one row per prompt the
    session's branch tree holds, oldest first, branches indented one

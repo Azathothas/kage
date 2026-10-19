@@ -926,6 +926,43 @@ fn v_in_input_pane_starts_input_visual() {
     assert_eq!(state.input_visual_range(), Some((0, 1)));
 }
 
+/// A selection left dangling across a focus change must not let an
+/// operator key delete draft text while the conversation pane holds
+/// focus.
+#[test]
+fn a_focus_change_leaves_input_visual() {
+    let mut state = InputState::new();
+    state.paste("draft");
+    state.handle_key(key(KeyCode::Esc));
+    state.handle_key(key(KeyCode::Char('0')));
+    state.handle_key(key(KeyCode::Char('v')));
+    assert_eq!(state.mode(), Mode::Visual);
+    assert!(state.set_focused_pane(Pane::Buffer));
+    assert_eq!(state.mode(), Mode::Normal);
+    assert!(state.input_visual_range().is_none());
+    let actions = state.handle_key(key(KeyCode::Char('d')));
+    assert!(
+        !actions
+            .iter()
+            .any(|a| matches!(a, InputAction::EnterMode(_))),
+        "d must not act on the draft from the buffer pane: {actions:?}"
+    );
+    assert_eq!(state.text(), "draft");
+}
+
+#[test]
+fn a_pane_toggle_also_leaves_input_visual() {
+    let mut state = InputState::new();
+    state.paste("draft");
+    state.handle_key(key(KeyCode::Esc));
+    state.handle_key(key(KeyCode::Char('0')));
+    state.handle_key(key(KeyCode::Char('v')));
+    assert!(state.toggle_focused_pane());
+    assert_eq!(state.focused_pane(), Pane::Buffer);
+    assert_eq!(state.mode(), Mode::Normal);
+    assert_eq!(state.text(), "draft");
+}
+
 #[test]
 fn input_visual_d_deletes_selected_range() {
     let mut state = InputState::new();

@@ -360,8 +360,9 @@ pub struct InputState {
     /// selection) from "v in buffer pane" (the cell-overlay selection).
     visual_anchor: Option<usize>,
     /// When true the editor is non-modal (`[ui] editor = "modeless"`):
-    /// it never leaves an insert-like state, `Esc` clears the draft or
-    /// interrupts the turn, and `PageUp` / `PageDown` scroll the buffer. Set by the host
+    /// it never leaves an insert-like state, `Esc` interrupts the turn
+    /// (idle, a second `esc` opens the rewind picker), and `PageUp` /
+    /// `PageDown` scroll the buffer. Set by the host
     /// from config / the settings dialog.
     modeless: bool,
 }

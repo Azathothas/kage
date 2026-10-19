@@ -119,6 +119,16 @@ fn keybindings_command_lists_the_table_per_mode_with_owners() {
 }
 
 #[test]
+fn keybindings_panel_does_not_advertise_a_draft_clear() {
+    let (mut app, _rx, buffer) = app_with_config("", &[]);
+    app.push_keybindings();
+    let rendered = last_block_text(&buffer);
+    for stale in ["clear the draft", "clears the draft", "draft cleared"] {
+        assert!(!rendered.contains(stale), "stale {stale}: {rendered}");
+    }
+}
+
+#[test]
 fn config_action_binding_fires_builtin_action() {
     let (mut app, _rx, _) = app_with_config("", &[("ctrl+g", "action:BeginCommand")]);
     assert_eq!(app.handle_key(ctrl('g')), None);

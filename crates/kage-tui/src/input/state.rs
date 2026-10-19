@@ -31,8 +31,9 @@ impl InputState {
 
     /// Switch between vim-modal and non-modal (modeless) editing.
     /// Turning modeless on snaps the editor into the insert-like
-    /// state and keeps it there; `Esc` then clears the draft or
-    /// interrupts the turn rather than entering Normal. Live-applicable from the settings
+    /// state and keeps it there; `Esc` then interrupts the turn
+    /// (idle, a second `esc` opens the rewind picker) rather than
+    /// entering Normal. Live-applicable from the settings
     /// dialog.
     pub fn set_modeless(&mut self, on: bool) {
         self.modeless = on;
@@ -155,6 +156,9 @@ impl InputState {
         if self.focused_pane == pane {
             return false;
         }
+        if pane != Pane::Input {
+            self.drop_input_visual();
+        }
         self.focused_pane = pane;
         true
     }
@@ -164,8 +168,23 @@ impl InputState {
     /// changes state by definition; the bool stays for symmetry with
     /// the setter so callers can use them interchangeably).
     pub fn toggle_focused_pane(&mut self) -> bool {
+        if self.focused_pane == Pane::Input {
+            self.drop_input_visual();
+        }
         self.focused_pane = self.focused_pane.opposite();
         true
+    }
+
+    /// Leave input-pane Visual when focus moves away from the input.
+    /// A selection left dangling across a focus change would let an
+    /// operator key act on the unsent draft while the conversation
+    /// pane holds focus, deleting draft text the user never saw
+    /// selected.
+    fn drop_input_visual(&mut self) {
+        self.visual_anchor = None;
+        if self.mode == Mode::Visual {
+            self.mode = Mode::Normal;
+        }
     }
 
     /// Push the current `(text, cursor)` onto the undo stack and

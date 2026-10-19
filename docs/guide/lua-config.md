@@ -294,7 +294,7 @@ pane. A mapping or `"<Nop>"` on one of these keys shadows it.
 `kage.keymap.del` cannot remove it.
 
 `ctrl+q` (quit) and `ctrl+c` work above every layer, including overlays.
-`ctrl+c` clears the draft, else interrupts the run, else arms quit (see
+`ctrl+c` interrupts the run, else arms quit (see
 [keybindings](/guide/keybindings#esc-and-ctrl-c)). While kage is idle,
 `ctrl+c` closes an open overlay instead. Both yield only
 to a mapping owned by `init.lua` or `config.toml`. A plugin mapping on
@@ -568,7 +568,7 @@ An item is one of:
 | `agents` | the live agents under the session on screen and how many of them run in the background, such as `3 agents (2 bg)`, hidden while none runs |
 | `tasks` | the `!` shell commands still running, such as `1 shell` |
 | `mode` | `NORMAL`, `INSERT` or `VISUAL` in vim mode, `shell` while `!` shell mode is armed, nothing otherwise |
-| `hint` | what the next keys do: the pending keys of a mapping sequence, the keys of the open picker, dialog, approval panel, `:` line or search line, `ctrl+c again to quit` or `draft cleared, up restores it`, else a hint for the current state such as `? for shortcuts`, `tab to queue`, `ctrl+t for agents`, or `enter to steer`, `esc to go back` and `ctrl+c to stop` in an agent view |
+| `hint` | what the next keys do: the pending keys of a mapping sequence, the keys of the open picker, dialog, approval panel, `:` line or search line, `ctrl+c again to quit` or `esc again to rewind`, else a hint for the current state such as `? for shortcuts`, `tab to queue`, `ctrl+t for agents`, or `enter to steer`, `esc to go back` and `ctrl+c to stop` in an agent view |
 | `cwd` | the working directory with `~` for your home, and the git branch checked out, such as `~/dev/kage (main)` |
 | `version` | the kage version |
 | `sessions` | `start` only: the three most recent sessions with their titles and times |
