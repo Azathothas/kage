@@ -227,6 +227,21 @@ pub fn is_unsafe(ip: &IpAddr) -> bool {
             if segs[0] == 0x0100 && segs[1..4] == [0, 0, 0] {
                 return true;
             }
+            // 6to4 2002::/16 carries an IPv4 address in segs[1..3];
+            // vet it by the IPv4 rules like the embedded forms below.
+            if segs[0] == 0x2002 {
+                let v4 = std::net::Ipv4Addr::new(
+                    (segs[1] >> 8) as u8,
+                    (segs[1] & 0xff) as u8,
+                    (segs[2] >> 8) as u8,
+                    (segs[2] & 0xff) as u8,
+                );
+                return is_unsafe(&IpAddr::V4(v4));
+            }
+            // Teredo 2001:0000::/32; never a legitimate fetch target.
+            if segs[0] == 0x2001 && segs[1] == 0 {
+                return true;
+            }
             // IPv4-mapped ::ffff:0:0/96, NAT64 64:ff9b::/96, and the
             // deprecated IPv4-compatible ::/96 all carry an IPv4
             // address in their last 32 bits; vet it by the IPv4 rules.
@@ -416,6 +431,28 @@ mod tests {
         // A global address outside the embedded forms stays safe.
         assert!(!is_unsafe(&IpAddr::V6(Ipv6Addr::new(
             0x2606, 0x4700, 0, 0, 0, 0, 0x6810, 0x85e3
+        ))));
+    }
+
+    #[test]
+    fn six_to_four_and_teredo_embeddings_are_vetted() {
+        // 6to4 2002::/16 wrapping 127.0.0.1 and 10.0.0.1.
+        assert!(is_unsafe(&IpAddr::V6(Ipv6Addr::new(
+            0x2002, 0x7f00, 0x0001, 0, 0, 0, 0, 0
+        ))));
+        assert!(is_unsafe(&IpAddr::V6(Ipv6Addr::new(
+            0x2002, 0x0a00, 0x0001, 0, 0, 0, 0, 0
+        ))));
+        // Control: 6to4 wrapping 8.8.8.8 stays public.
+        assert!(!is_unsafe(&IpAddr::V6(Ipv6Addr::new(
+            0x2002, 0x0808, 0x0808, 0, 0, 0, 0, 0
+        ))));
+        // Teredo 2001:0000::/32, bare and with a server address.
+        assert!(is_unsafe(&IpAddr::V6(Ipv6Addr::new(
+            0x2001, 0, 0, 0, 0, 0, 0, 0
+        ))));
+        assert!(is_unsafe(&IpAddr::V6(Ipv6Addr::new(
+            0x2001, 0, 0x1234, 0x5678, 0, 0, 0xf726, 0x816b
         ))));
     }
 }
