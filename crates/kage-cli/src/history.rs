@@ -67,11 +67,34 @@ pub fn append_to(path: &Path, entry: &str) -> Result<(), String> {
             .map_err(|err| format!("history: mkdir {}: {err}", parent.display()))?;
     }
     let line = serde_json::to_string(entry).map_err(|e| format!("history: encode: {e}"))?;
-    let mut file = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
+    let mut options = fs::OpenOptions::new();
+    options.create(true).append(true);
+    // The file holds the user's prompts verbatim; it is pinned to
+    // 0600 like the credential stores in the sibling directories.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(0o600);
+    }
+    let mut file = options
         .open(path)
         .map_err(|err| format!("history: open {}: {err}", path.display()))?;
+    // `OpenOptions::mode` applies only when the file is created, so a
+    // history file from before the hardening keeps the wider mode it
+    // was created with; pin it back on every write.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = file
+            .metadata()
+            .map_err(|err| format!("history: stat {}: {err}", path.display()))?
+            .permissions()
+            .mode();
+        if mode & 0o777 != 0o600 {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+                .map_err(|err| format!("history: chmod {}: {err}", path.display()))?;
+        }
+    }
     writeln!(file, "{line}").map_err(|err| format!("history: write {}: {err}", path.display()))
 }
 
@@ -110,6 +133,34 @@ mod tests {
         fs::write(&path, "\"good\"\nnot-json\n\"also good\"\n").unwrap();
         let loaded = load_from(&path).unwrap();
         assert_eq!(loaded, vec!["good", "also good"]);
+    }
+
+    /// Where the platform has modes: the history file holds prompts
+    /// verbatim, so it must not be group- or world-readable.
+    #[test]
+    #[cfg(unix)]
+    fn the_history_file_is_private() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.txt");
+        append_to(&path, "secret prompt").unwrap();
+        let mode = fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    /// A file that predates the hardening at a wider mode is pinned
+    /// back to 0600 on the next append.
+    #[test]
+    #[cfg(unix)]
+    fn a_prehardening_history_file_is_pinned_back_to_private() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("history.txt");
+        fs::write(&path, "\"old\"\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        append_to(&path, "new prompt").unwrap();
+        let mode = fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     #[test]

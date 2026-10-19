@@ -159,7 +159,10 @@ fn handle_config<W: Write>(out: &mut W, force: bool) -> Result<(), String> {
 }
 
 fn write_config(path: &Path) -> Result<(), String> {
-    fs::write(path, STARTER_CONFIG).map_err(|e| format!("write {}: {e}", path.display()))
+    // Atomic, like every other config writer: an interrupted or
+    // full-disk `--force` must not truncate an existing config.
+    kage_core::fsutil::atomic_write(path, STARTER_CONFIG.as_bytes())
+        .map_err(|e| format!("write {}: {e}", path.display()))
 }
 
 /// Drop the type stub into the data dir and point

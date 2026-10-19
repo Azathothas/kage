@@ -113,7 +113,9 @@ impl State {
                 .map_err(|err| format!("state: mkdir {}: {err}", parent.display()))?;
         }
         let raw = serde_json::to_string_pretty(self).map_err(|e| format!("state: encode: {e}"))?;
-        kage_core::fsutil::atomic_write(path, raw.as_bytes())
+        // Private like the sibling credential stores: the state file
+        // records upstream auth-failure text verbatim.
+        kage_core::fsutil::atomic_write_private(path, raw.as_bytes())
             .map_err(|err| format!("state: write {}: {err}", path.display()))
     }
 
@@ -191,6 +193,19 @@ mod tests {
         state.save_to(&path).unwrap();
         let read = State::load_from(&path).unwrap();
         assert_eq!(read, state);
+    }
+
+    /// Where the platform has modes: the state file records upstream
+    /// auth-failure text, so it must not be group- or world-readable.
+    #[test]
+    #[cfg(unix)]
+    fn the_state_file_is_private() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        State::empty().save_to(&path).unwrap();
+        let mode = fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     #[test]
