@@ -25,8 +25,10 @@ const ARCHIVE_CAP: u64 = 64 * 1024 * 1024;
 /// `VERSION` file carries: the commit for a nightly build, the crate
 /// version otherwise.
 pub(crate) fn build() -> (String, &'static str) {
-    match kage_core::build::COMMIT {
-        Some(sha) if kage_core::build::NIGHTLY => ("nightly".to_owned(), sha),
+    match option_env!("KAGE_COMMIT") {
+        Some(sha) if kage_core::build::is_nightly(env!("KAGE_VERSION")) => {
+            ("nightly".to_owned(), sha)
+        }
         _ => (
             format!("v{}", env!("CARGO_PKG_VERSION")),
             env!("CARGO_PKG_VERSION"),
@@ -129,7 +131,7 @@ mod tests {
 
     #[test]
     fn a_release_build_reads_its_own_tag() {
-        if !kage_core::build::NIGHTLY {
+        if !kage_core::build::is_nightly(env!("KAGE_VERSION")) {
             let version = env!("CARGO_PKG_VERSION");
             assert_eq!(build(), (format!("v{version}"), version));
         }

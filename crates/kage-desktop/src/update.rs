@@ -140,12 +140,14 @@ pub fn pending_update(prefs: &crate::prefs::Prefs, engine: Option<&str>) -> Opti
     let behind = match prefs.channel {
         crate::prefs::Channel::Nightly => {
             let build = prefs.latest_nightly.as_ref()?;
-            let sha = kage_core::build::COMMIT?;
+            // Only a CI build is on some nightly; a local build names
+            // its checkout's commit and would read as behind forever.
+            let sha = option_env!("KAGE_BUILD_SHA")?;
             (sha != build.commit).then(|| format!("desktop nightly {}", build.date))
         }
         crate::prefs::Channel::Latest => {
             let latest = prefs.latest_version.as_deref()?;
-            if reported_behind(latest, kage_core::build::VERSION) {
+            if reported_behind(latest, env!("KAGE_VERSION")) {
                 Some(format!("kage {latest}"))
             } else {
                 engine

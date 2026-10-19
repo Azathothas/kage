@@ -1,27 +1,34 @@
 //! What this build of kage calls itself.
 //!
-//! A CI build names the commit it was made from, and a nightly names
-//! itself instead of a release number: `0.3.1`, `0.3.1 (abc1234)` or
-//! `nightly (abc1234)`. Every binary, the CLI, the TUI and the desktop
-//! client, reports this one string, on `--version` and over the
-//! protocols alike.
+//! A build names the commit it was made from when it knows it, and a
+//! nightly names itself instead of a release number: `0.3.1`,
+//! `0.3.1 (abc1234)` or `nightly (abc1234)`. The binaries stamp the
+//! string at compile time and hand it over with [`set_version`] first
+//! thing, so the libraries report the same one over the protocols
+//! without rebuilding on every commit.
 
-/// The version this build reports.
-pub const VERSION: &str = env!("KAGE_VERSION");
+use std::sync::OnceLock;
 
-/// The commit a CI build was made from.
-pub const COMMIT: Option<&str> = option_env!("KAGE_BUILD_SHA");
+/// The version the running binary set.
+static VERSION: OnceLock<&'static str> = OnceLock::new();
 
-/// Whether this is a nightly build.
-pub const NIGHTLY: bool = is_nightly(VERSION);
+/// Records the version the running binary was stamped with. Only the
+/// first call counts.
+pub fn set_version(version: &'static str) {
+    let _ = VERSION.set(version);
+}
+
+/// The version this build reports: what the binary set, else the bare
+/// crate version.
+#[must_use]
+pub fn version() -> &'static str {
+    VERSION.get().copied().unwrap_or(env!("CARGO_PKG_VERSION"))
+}
 
 /// Whether a reported version names a nightly build.
 #[must_use]
-pub const fn is_nightly(version: &str) -> bool {
-    matches!(
-        version.as_bytes(),
-        [b'n', b'i', b'g', b'h', b't', b'l', b'y', ..]
-    )
+pub fn is_nightly(version: &str) -> bool {
+    version.split_whitespace().next() == Some("nightly")
 }
 
 /// The release number a reported version carries: `0.3.1` of
@@ -29,8 +36,10 @@ pub const fn is_nightly(version: &str) -> bool {
 /// empty report.
 #[must_use]
 pub fn release(version: &str) -> Option<&str> {
-    let number = version.split_whitespace().next()?;
-    (!is_nightly(number)).then_some(number)
+    version
+        .split_whitespace()
+        .next()
+        .filter(|number| *number != "nightly")
 }
 
 #[cfg(test)]
@@ -50,6 +59,6 @@ mod tests {
         assert!(is_nightly("nightly (abc1234)"));
         assert!(is_nightly("nightly"));
         assert!(!is_nightly("0.3.1 (abc1234)"));
-        assert!(!is_nightly("night"));
+        assert!(!is_nightly("nightlyish"));
     }
 }

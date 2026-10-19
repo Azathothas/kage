@@ -283,7 +283,7 @@ impl McpConnection {
         let params = serde_json::json!({
             "protocolVersion": PROTOCOL_VERSION,
             "capabilities": serde_json::Value::Object(capabilities),
-            "clientInfo": { "name": "kage", "version": kage_core::build::VERSION },
+            "clientInfo": { "name": "kage", "version": kage_core::build::version() },
         });
         let result = peer
             .request_timeout("initialize", params, timeout)

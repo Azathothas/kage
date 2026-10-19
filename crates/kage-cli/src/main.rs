@@ -74,7 +74,7 @@ pub(crate) const DEFAULT_SYSTEM: &str = "You are kage, a helpful coding agent.";
 #[derive(Parser, Debug)]
 #[command(
     name = "kage",
-    version = kage_core::build::VERSION,
+    version = env!("KAGE_VERSION"),
     about = "A minimal, extensible coding agent in your terminal",
     long_about = None
 )]
@@ -700,7 +700,10 @@ pub(crate) fn run_completions(shell: clap_complete::Shell) -> ExitCode {
 /// without a prior `mkdir`.
 pub(crate) fn run_gen_manpage(out: &std::path::Path, check: bool) -> ExitCode {
     use clap::CommandFactory as _;
-    let buffer = match render_manpage(&Cli::command()) {
+    // The page names the release alone: a commit would make the
+    // committed page stale on every commit.
+    let command = Cli::command().version(env!("CARGO_PKG_VERSION"));
+    let buffer = match render_manpage(&command) {
         Ok(buffer) => buffer,
         Err(err) => {
             eprintln!("kage: render manpage: {err}");
@@ -950,6 +953,7 @@ fn subcommand_print_conflict(cli: &Cli) -> Option<ExitCode> {
 }
 
 fn main() -> ExitCode {
+    kage_core::build::set_version(env!("KAGE_VERSION"));
     let cli = Cli::parse();
 
     if let Some(code) = subcommand_print_conflict(&cli) {

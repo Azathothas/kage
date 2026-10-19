@@ -437,7 +437,7 @@ where
         client_info: Some(Implementation {
             name: "kage".to_owned(),
             title: None,
-            version: Some(kage_core::build::VERSION.to_owned()),
+            version: Some(kage_core::build::version().to_owned()),
         }),
     };
     peer.request_timeout(

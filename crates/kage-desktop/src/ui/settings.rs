@@ -1943,7 +1943,7 @@ fn about(
         palette.ink_strong,
     );
     let versions = ui.painter().layout_no_wrap(
-        format!("desktop {} \u{b7} {engine}", kage_core::build::VERSION),
+        format!("desktop {} \u{b7} {engine}", env!("KAGE_VERSION")),
         egui::FontId::new(FS_SM, family(FAMILY_BODY_REGULAR)),
         palette.muted,
     );
@@ -2015,7 +2015,7 @@ fn updates(
         .agent
         .as_ref()
         .and_then(|agent| agent.version.clone());
-    let desktop = kage_core::build::VERSION;
+    let desktop = env!("KAGE_VERSION");
     let nightly = prefs.channel == crate::prefs::Channel::Nightly;
     let (engine_line, desktop_line) = if nightly {
         let engine_line = match prefs.latest_nightly.as_ref() {
@@ -2027,16 +2027,16 @@ fn updates(
             None => "engine: no nightly seen yet".to_owned(),
         };
         let desktop_line = match prefs.latest_nightly.as_ref() {
-            Some(build) if kage_core::build::COMMIT.is_some_and(|sha| sha == build.commit) => {
+            Some(build) if option_env!("KAGE_BUILD_SHA").is_some_and(|sha| sha == build.commit) => {
                 format!(
                     "desktop {}; on the {} nightly",
-                    kage_core::build::VERSION,
+                    env!("KAGE_VERSION"),
                     build.date
                 )
             }
             Some(build) => format!(
                 "desktop {}; nightly {} available",
-                kage_core::build::VERSION,
+                env!("KAGE_VERSION"),
                 build.date
             ),
             None => "desktop: no nightly seen yet".to_owned(),
@@ -2055,7 +2055,7 @@ fn updates(
             (None, _) => "engine: no check has run yet".to_owned(),
         };
         let desktop_line = match prefs.latest_version.as_deref() {
-            Some(latest) if kage_core::build::NIGHTLY => {
+            Some(latest) if kage_core::build::is_nightly(env!("KAGE_VERSION")) => {
                 format!("desktop {desktop}; the newest release is {latest}")
             }
             Some(latest) if crate::update::reported_behind(latest, desktop) => {
@@ -2078,10 +2078,9 @@ fn updates(
             )
         };
     let desktop_behind = if nightly {
-        prefs
-            .latest_nightly
-            .as_ref()
-            .is_some_and(|build| kage_core::build::COMMIT.is_some_and(|sha| sha != build.commit))
+        prefs.latest_nightly.as_ref().is_some_and(|build| {
+            option_env!("KAGE_BUILD_SHA").is_some_and(|sha| sha != build.commit)
+        })
     } else {
         prefs
             .latest_version
