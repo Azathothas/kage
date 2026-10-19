@@ -14,13 +14,16 @@ under `[providers.custom.*]`.
 | `anthropic`        | Anthropic           | `ANTHROPIC_API_KEY` |
 | `openai`           | OpenAI              | `OPENAI_API_KEY`    |
 | `openai-responses` | OpenAI Responses API | `OPENAI_API_KEY`   |
-| `gemini`           | Google Gemini       | `GEMINI_API_KEY`    |
+| `google`           | Google Gemini       | `GEMINI_API_KEY`    |
 | `acp`              | external ACP agents | -                   |
 
 `openai-responses` serves `openai-responses:<model>` addressing on top
 of the same OpenAI credential, and `kage auth login openai` covers both.
 `acp` is not an HTTP provider and cannot be overridden here. Its agents
 are configured under `[acp.*]`.
+
+The Gemini provider's id is `google`; `gemini` names only the wire
+protocol a custom provider selects with `kind = "gemini"` below.
 
 ## openai-compatible providers
 
@@ -423,7 +426,7 @@ startup with exit status 1:
 
 - A custom id must be non-empty lowercase letters, digits, or dashes.
 - A custom id must not be a built-in id (`acp`, `anthropic`,
-  `gemini`, `openai`, `openai-responses`). Override those providers
+  `google`, `openai`, `openai-responses`). Override those providers
   with `[providers.<id>]` instead, and do the same for a catalog
   provider rather than reusing its id.
 - A custom provider must declare at least one model.
