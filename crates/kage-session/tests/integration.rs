@@ -445,4 +445,16 @@ fn damaged_files_round_trip_or_error_but_never_lose_a_line() {
         Err(SessionError::Empty { .. })
     ));
     assert!(matches!(replay(&empty), Err(SessionError::Empty { .. })));
+
+    // `fork` agrees with the other readers on both shapes.
+    let forked = dir.path().join("forked.jsonl");
+    assert!(matches!(
+        fork(&partial, &forked, SessionId::new(), EntryId::new()),
+        Err(SessionError::MissingHeader { .. })
+    ));
+    assert!(matches!(
+        fork(&empty, &forked, SessionId::new(), EntryId::new()),
+        Err(SessionError::Empty { .. })
+    ));
+    assert!(!forked.exists(), "a refused fork must not write dst");
 }

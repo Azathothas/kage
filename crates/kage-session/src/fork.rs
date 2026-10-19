@@ -45,10 +45,20 @@ pub fn fork(
     at: EntryId,
 ) -> Result<bool, SessionError> {
     let mut reader = SessionReader::iter(src)?;
-    let first = reader.next().ok_or_else(|| SessionError::Empty {
-        path: src.to_path_buf(),
-    })??;
-    let SessionEntry::Header(parent_header) = first else {
+    let Some(first) = reader.next() else {
+        // A torn first line is a crash mid-header, not an empty
+        // session; name it the way every other reader does.
+        return Err(if reader.torn_trailing() {
+            SessionError::MissingHeader {
+                path: src.to_path_buf(),
+            }
+        } else {
+            SessionError::Empty {
+                path: src.to_path_buf(),
+            }
+        });
+    };
+    let SessionEntry::Header(parent_header) = first? else {
         return Err(SessionError::MissingHeader {
             path: src.to_path_buf(),
         });
