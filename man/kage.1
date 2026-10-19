@@ -96,7 +96,10 @@ TCP port to bind. `0` picks a free port and the connect URL shows it
 Replace the stored token with a fresh one before serving, so every client holding the old connect URL must be sent the new one
 .TP
 \fB\-\-web\-dir\fR\fI <WEB_DIR>\fR
-Directory with the web client bundle to serve at `/` (built from `gui/`). Defaults to a `web/` directory beside the executable. A missing or empty directory only disables the web UI; `/acp` keeps working
+Directory with the web client bundle to serve at `/` (built from `crates/kage\-desktop`). Defaults to `$XDG_DATA_HOME/kage/web`. A missing or empty directory only disables the web UI; `/acp` keeps working
+.TP
+\fB\-\-fetch\-web\fR
+Download the web client bundle matching this kage into the web directory, replacing what is there, then serve
 .TP
 \fB\-\-revoke\fR
 Forget the trust recorded for this directory
@@ -172,7 +175,7 @@ Print a shell completion script for `kage` to stdout
 Agent Client Protocol server: speak JSON\-RPC over stdio so an editor (Zed, Neovim, ...) can drive kage. Messages are newline\-delimited JSON. Each request is answered, and loop progress is streamed back as ACP `session/update` notifications
 .TP
 \fBkage serve\fR
-Serve the Agent Client Protocol over WebSocket so remote editors and ACP clients can drive kage over the network. One endpoint (`/acp`) behind a bearer token; every connection shares one engine. With `\-\-web\-dir` the same listener serves the web client bundle at `/`, so a browser needs only the page URL and the token. The startup output on stderr carries the connect URL, the only place the token is ever printed
+Serve the Agent Client Protocol over WebSocket so remote editors and ACP clients can drive kage over the network. One endpoint (`/acp`) behind a bearer token; every connection shares one engine. The same listener serves the web client bundle at `/`, so a browser needs only the page URL and the token. The startup output on stderr carries the connect URL, the only place the token is ever printed
 .TP
 \fBkage trust\fR
 Trust the current directory\*(Aqs `.kage/config.toml`. Until a project is trusted, its `mcp`, `permissions` and `plugins.capabilities` settings are ignored. Trust covers the values as they are now, so editing any of them asks again

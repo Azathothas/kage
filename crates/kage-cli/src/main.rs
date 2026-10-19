@@ -231,9 +231,8 @@ pub(crate) enum Command {
     /// Serve the Agent Client Protocol over WebSocket so remote editors
     /// and ACP clients can drive kage over the network. One endpoint
     /// (`/acp`) behind a bearer token; every connection shares one
-    /// engine. With `--web-dir` the same listener serves the web
-    /// client bundle at `/`, so a browser needs only the page URL and
-    /// the token. The startup output on stderr carries the connect
+    /// engine. The same listener serves the web client bundle at `/`,
+    /// so a browser needs only the page URL and the token. The startup output on stderr carries the connect
     /// URL, the only place the token is ever printed.
     Serve {
         /// Provider-qualified model id (`provider/model`). Defaults
@@ -256,12 +255,16 @@ pub(crate) enum Command {
         /// the new one.
         #[arg(long = "rotate-token")]
         rotate_token: bool,
-        /// Directory with the web client bundle to serve at `/`
-        /// (built from `gui/`). Defaults to a `web/` directory beside
-        /// the executable. A missing or empty directory only disables
-        /// the web UI; `/acp` keeps working.
+        /// Directory with the web client bundle to serve at `/` (built
+        /// from `crates/kage-desktop`). Defaults to
+        /// `$XDG_DATA_HOME/kage/web`. A missing or empty directory only
+        /// disables the web UI; `/acp` keeps working.
         #[arg(long = "web-dir")]
         web_dir: Option<PathBuf>,
+        /// Download the web client bundle matching this kage into the
+        /// web directory, replacing what is there, then serve.
+        #[arg(long = "fetch-web")]
+        fetch_web: bool,
     },
     /// Trust the current directory's `.kage/config.toml`. Until a
     /// project is trusted, its `mcp`, `permissions` and
@@ -441,6 +444,7 @@ pub(crate) fn run_subcommand(command: Command) -> ExitCode {
             port,
             rotate_token,
             web_dir,
+            fetch_web,
         } => config_error().unwrap_or_else(|| {
             serve::run(
                 model.as_deref(),
@@ -449,6 +453,7 @@ pub(crate) fn run_subcommand(command: Command) -> ExitCode {
                 port,
                 rotate_token,
                 web_dir.as_deref(),
+                fetch_web,
             )
         }),
         Command::Trust { revoke } => trust::run(revoke),

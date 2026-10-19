@@ -177,15 +177,10 @@ fn spawn_server_in(scripts: Vec<Script>, web_dir: Option<&Path>) -> Server {
     let stop = Arc::new(AtomicBool::new(false));
     let sink = Arc::clone(&lines);
     let log: Log = Arc::new(move |line| sink.lock().unwrap().push(line.to_owned()));
-    let bundle_dir = web_dir.map_or_else(default_web_dir, std::path::Path::to_path_buf);
-    let web = WebDir::open(&bundle_dir);
+    let missing = dir.path().join("web");
+    let web = open_web(web_dir.unwrap_or(&missing), &log);
     if web.available() {
         log(&format!("web UI: http://{addr}/"));
-    } else {
-        log(&format!(
-            "web UI unavailable: no index.html under {}; pass --web-dir to serve it",
-            bundle_dir.display()
-        ));
     }
     let served_token = Arc::clone(&token);
     let served_stop = Arc::clone(&stop);
