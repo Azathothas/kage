@@ -231,6 +231,21 @@ fn simple_result_to_table(lua: &Lua, r: &SimpleResult) -> mlua::Result<Table> {
     Ok(table)
 }
 
+/// Reads `reader` up to `max_bytes` plus one lookahead byte, reporting
+/// whether the body was cut at `max_bytes`. The lookahead is what makes
+/// `truncated` exact; it saturates so a maximal `max_bytes` means "no
+/// cap" instead of wrapping.
+fn read_capped(reader: impl Read, max_bytes: u64) -> (Vec<u8>, bool) {
+    let mut buf = Vec::new();
+    let mut taken = reader.take(max_bytes.saturating_add(1));
+    let _ = taken.read_to_end(&mut buf);
+    let truncated = u64::try_from(buf.len()).unwrap_or(u64::MAX) > max_bytes;
+    if truncated {
+        buf.truncate(usize::try_from(max_bytes).unwrap_or(buf.len()));
+    }
+    (buf, truncated)
+}
+
 fn simple_request(
     method: &str,
     url: &str,
@@ -247,14 +262,7 @@ fn simple_request(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_owned();
-    let mut reader = response.into_body().into_reader();
-    let mut buf = Vec::new();
-    let mut taken = (&mut reader).take(max_bytes + 1);
-    let _ = taken.read_to_end(&mut buf);
-    let truncated = u64::try_from(buf.len()).unwrap_or(u64::MAX) > max_bytes;
-    if truncated {
-        buf.truncate(usize::try_from(max_bytes).unwrap_or(buf.len()));
-    }
+    let (buf, truncated) = read_capped(response.into_body().into_reader(), max_bytes);
     Ok(SimpleResult {
         status,
         body: String::from_utf8_lossy(&buf).into_owned(),
@@ -776,6 +784,20 @@ mod tests {
         let opts: Table = lua.load("{ max_bytes = 10 }").eval().unwrap();
         let spec = super::build_request(Some(&opts)).unwrap();
         assert_eq!(spec.max_bytes, Some(10));
+    }
+
+    #[test]
+    fn read_capped_serves_the_whole_body_for_a_maximal_max_bytes() {
+        let (buf, truncated) = super::read_capped("hello".as_bytes(), u64::MAX);
+        assert_eq!(buf, b"hello");
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn read_capped_cuts_the_body_at_max_bytes() {
+        let (buf, truncated) = super::read_capped("hello".as_bytes(), 3);
+        assert_eq!(buf, b"hel");
+        assert!(truncated);
     }
 
     #[test]
