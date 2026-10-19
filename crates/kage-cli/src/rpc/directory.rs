@@ -209,7 +209,10 @@ pub(super) fn parse(json: &str) -> Result<Vec<DirectoryProvider>, String> {
             let kind = match provider["npm"].as_str() {
                 Some("@ai-sdk/openai-compatible" | "@ai-sdk/openai") => Some("openai"),
                 Some("@ai-sdk/anthropic") => Some("anthropic"),
-                Some("@ai-sdk/google") => Some("google"),
+                // The config's vocabulary for this protocol is
+                // `gemini` (`CustomProviderKind`); the npm package
+                // name spells it google.
+                Some("@ai-sdk/google") => Some("gemini"),
                 _ => None,
             };
             Some(DirectoryProvider {
@@ -268,8 +271,7 @@ mod tests {
     use super::{FRESH_FOR, FetchCache, MAX_CACHED, fetch_url, parse, vet};
 
     #[test]
-    fn a_directory_lists_its_tool_calling_models() {
-        let json = r#"{
+    fn a_directory_lists_its_tool_calling_models() {        let json = r#"{
             "lab": {
                 "id": "lab", "name": "Lab", "api": "https://lab/v1", "env": ["LAB_KEY"],
                 "npm": "@ai-sdk/openai-compatible",
@@ -303,6 +305,25 @@ mod tests {
         assert_eq!(bravo.input, ["text", "image"]);
         assert_eq!(bravo.cost.as_ref().unwrap().cache_read, Some(0.1));
         assert!(parse("[]").is_err());
+    }
+
+    #[test]
+    fn every_directory_kind_names_a_configurable_protocol() {
+        let json = r#"{
+            "lab": {"id": "lab", "name": "Lab", "npm": "@ai-sdk/openai-compatible",
+                    "models": {"m": {"id": "m", "name": "M", "tool_call": true}}},
+            "ant": {"id": "ant", "name": "Ant", "npm": "@ai-sdk/anthropic",
+                    "models": {"m": {"id": "m", "name": "M", "tool_call": true}}},
+            "goo": {"id": "goo", "name": "Goo", "npm": "@ai-sdk/google",
+                    "models": {"m": {"id": "m", "name": "M", "tool_call": true}}}
+        }"#;
+        for provider in parse(json).unwrap() {
+            let kind = provider.kind.expect("a known npm name carries a kind");
+            serde_json::from_value::<kage_core::config::CustomProviderKind>(
+                serde_json::Value::String(kind.clone()),
+            )
+            .unwrap_or_else(|e| panic!("kind {kind} is not a `[providers.custom]` kind: {e}"));
+        }
     }
 
     #[test]

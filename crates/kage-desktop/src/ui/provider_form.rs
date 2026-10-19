@@ -170,7 +170,7 @@ impl ProviderForm {
             display: text("display_name"),
             protocol: match text("kind").as_str() {
                 "anthropic" => "anthropic",
-                "gemini" => "gemini",
+                "gemini" | "google" => "gemini",
                 _ => "openai",
             }
             .to_owned(),
@@ -998,6 +998,24 @@ mod tests {
         assert_eq!(value["headers"]["X-Team"], "<redacted>");
         assert_eq!(value["models"][0]["cost"]["output"], 2.0);
         assert_eq!(value["models"][0]["context"], 1000);
+    }
+
+    #[test]
+    fn an_imported_google_kind_saves_the_gemini_protocol() {
+        let form = ProviderForm::new(
+            Target::Picked(
+                "goo".into(),
+                json!({
+                    "kind": "google",
+                    "base_url": "https://generativelanguage.googleapis.com",
+                    "models": [{"id": "m1", "name": "One"}],
+                }),
+            ),
+            &snapshot(),
+        );
+        let (path, value) = form.entry().unwrap();
+        assert_eq!(path, ["providers", "custom", "goo"]);
+        assert_eq!(value.unwrap()["kind"], "gemini");
     }
 
     #[test]
