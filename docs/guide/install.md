@@ -5,18 +5,17 @@ from crates.io, or build it from source.
 
 ## release downloads
 
-kage and its desktop and web client release apart, each with its own
+kage, its desktop client and its web client release together at one
 version. A `v<version>` [GitHub release](https://github.com/QaidVoid/kage/releases)
 carries the `kage` binary for each platform, as
 `kage-<platform>.tar.xz` with the man page, the license and the
-readme. A `kage-desktop-v<version>` release carries the
-[desktop client](#desktop-client) and the browser client.
+readme, beside the [desktop client](#desktop-client) and the browser
+client.
 
-`<platform>` is `x86_64-linux`, `aarch64-linux` or `aarch64-macos`.
-The Linux binaries are static, so they run on any distribution. For
-Windows the archive is `kage-x86_64-windows.zip`, holding `kage.exe`;
-unpack it and put its folder on your `PATH`. The latest release is
-always a `kage` one, so the link below fetches the newest `kage`.
+`<platform>` is `x86_64-linux`, `aarch64-linux`, `x86_64-macos` or
+`aarch64-macos`. The Linux binaries are static, so they run on any
+distribution. For Windows the archive is `kage-x86_64-windows.zip`,
+holding `kage.exe`; unpack it and put its folder on your `PATH`.
 
 ```bash
 curl -fsSL https://github.com/QaidVoid/kage/releases/latest/download/kage-x86_64-linux.tar.xz | tar -xJ
@@ -24,10 +23,10 @@ mkdir -p ~/.local/bin
 install -m 755 kage-x86_64-linux/kage ~/.local/bin/kage
 ```
 
-For `kage serve` to hand out the browser client, take
-`kage-web.tar.xz` from the newest desktop release. `kage serve` finds
-its `web/` folder beside the executable with no flag, or anywhere
-with `--web-dir`. [remote](/editors/remote#web-client) has the rest.
+For `kage serve` to hand out the browser client, run it once with
+`--fetch-web`. That downloads the `kage-web.tar.xz` of your `kage`'s
+own release into `~/.local/share/kage/web`, where `kage serve` looks
+with no flag. [remote](/editors/remote#web-client) has the rest.
 
 Every archive carries a build provenance attestation, which the
 GitHub CLI checks:
@@ -43,7 +42,15 @@ cargo install kage-cli --locked
 ```
 
 This builds `kage` with your own toolchain, at Rust 1.89 or newer, and
-needs a C compiler. It carries no browser client.
+needs a C compiler. `kage serve --fetch-web` adds the browser client.
+
+The desktop client installs the same way, at Rust 1.95 or newer. A
+build from crates.io carries no `kage` of its own, so it runs the one
+on your `PATH`:
+
+```bash
+cargo install kage-desktop --locked
+```
 
 ## from source
 
@@ -75,8 +82,9 @@ On Windows, the same build runs in PowerShell and the binary lands at
 ## desktop client
 
 `kage-desktop` is a window onto the same engine: it starts `kage rpc`
-and shows its sessions. It ships in the `kage-desktop-v<version>`
-releases on the [releases page](https://github.com/QaidVoid/kage/releases):
+and shows its sessions. It ships in every release on the
+[releases page](https://github.com/QaidVoid/kage/releases), with that
+release's `kage` inside:
 
 | Platform | Files |
 | --- | --- |
@@ -92,12 +100,14 @@ chmod +x kage-desktop-x86_64-linux.onelf
 ./kage-desktop-x86_64-linux.onelf --onelf-integrate
 ```
 
-The Linux `.tar.xz` holds the bare binary, which loads the system's
-display libraries and needs glibc 2.35 or newer, beside a `share/`
-folder with a `kage.desktop` entry and the hicolor icons; copy that
-`share/` into `~/.local/share/` to add the client to your app menu.
-The macOS `.tar.xz` unpacks to a `kage-desktop-<arch>-macos` folder
-holding `Kage.app` beside the license and readme; move `Kage.app`
+The Linux `.tar.xz` holds the bare `kage-desktop` binary, which loads
+the system's display libraries and needs glibc 2.35 or newer, and
+`kage` beside it, with a `share/` folder holding a `kage.desktop`
+entry and the hicolor icons; copy that `share/` into
+`~/.local/share/` to add the client to your app menu. Keep `kage`
+next to `kage-desktop` wherever you put them. The macOS `.tar.xz`
+unpacks to a `kage-desktop-<arch>-macos` folder holding `Kage.app`,
+with `kage` inside, beside the license and readme; move `Kage.app`
 wherever you keep applications. The builds are not signed yet, so
 clear the quarantine flag on the extracted folder once (browser
 downloads arrive quarantined, `curl` downloads do not):
@@ -106,11 +116,12 @@ downloads arrive quarantined, `curl` downloads do not):
 xattr -dr com.apple.quarantine kage-desktop-aarch64-macos
 ```
 
-The desktop client needs `kage` itself: it runs the one on your
-`PATH`, or the one Settings > Connection > kage binary names. When
-neither exists, the setup screen offers to download the newest
-release, verify it against its published checksum and install it to
-your user bin (`~/.local/bin`, else `%LOCALAPPDATA%\Programs\kage` on
+The desktop client runs the `kage` shipped beside it, so the two are
+always the same version, and an update from Settings > About replaces
+both. A build with no `kage` beside it runs the one on your `PATH`, or
+the one the setup screen picked. When neither exists, the setup
+screen offers to download the newest release and install it to your
+user bin (`~/.local/bin`, else `%LOCALAPPDATA%\Programs\kage` on
 Windows). Its settings are in [desktop and web client](/guide/desktop).
 
 ## verify
