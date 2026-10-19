@@ -393,9 +393,13 @@ across tool calls:
   field get the current turn's reasoning in that field. Earlier turns
   leave it out.
 
-Anthropic and Gemini cannot verify thinking another model produced, so
-they get it as `<thinking>` text. Custom providers of `kind =
-"anthropic"` or `"gemini"` follow the same rules.
+Anthropic-compatible gateways serving non-Claude models get thinking
+another model produced back as an unsigned native block, which those
+backends need on a tool-call turn. Claude models reject unsigned
+blocks, so their unsigned thinking is dropped. Gemini cannot verify
+thinking another model produced, so it gets it as `<thinking>` text.
+Custom providers of `kind = "anthropic"` or `"gemini"` follow the
+same rules.
 
 ## base urls
 

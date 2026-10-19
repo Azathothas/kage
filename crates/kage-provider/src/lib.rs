@@ -90,9 +90,9 @@ pub trait Provider: Send + Sync + std::fmt::Debug {
     /// Whether this provider sends `Content::Thinking` blocks back to
     /// its upstream itself. When `true`, the loop skips the
     /// flatten-to-`<thinking>` rewrite and the provider decides per
-    /// block: native with the signature its model produced, or as
-    /// text. Default is `false` for providers that drop or reject
-    /// thinking blocks.
+    /// block: native with the signature its model produced, native
+    /// without one where the backend needs it, or dropped. Default is
+    /// `false` for providers that drop or reject thinking blocks.
     fn preserves_thinking(&self) -> bool {
         false
     }

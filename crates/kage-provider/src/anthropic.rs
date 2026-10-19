@@ -291,8 +291,9 @@ fn convert_user_blocks(blocks: &[Content]) -> Vec<Value> {
 }
 
 /// Assistant blocks on the wire. Thinking `model` signed goes back
-/// unchanged, as the API asks; other thinking cannot be verified and
-/// goes as `<thinking>` text.
+/// unchanged, as the API asks. Unsigned thinking goes back as a native
+/// block for Anthropic-compatible models that require it on a tool-call
+/// turn, and is dropped for Claude models, which reject unsigned blocks.
 fn convert_assistant_blocks(blocks: &[Content], model: &str) -> Vec<Value> {
     blocks
         .iter()
@@ -314,8 +315,8 @@ fn convert_assistant_blocks(blocks: &[Content], model: &str) -> Vec<Value> {
                 "thinking": text,
                 "signature": sig.data,
             })),
-            Content::Thinking { text, .. } => Content::flattened_thinking(text)
-                .map(|text| serde_json::json!({"type":"text","text":text})),
+            Content::Thinking { text, .. } => (!is_claude_model(model))
+                .then(|| serde_json::json!({"type": "thinking", "thinking": text})),
             Content::ToolCall { id, name, input } => Some(serde_json::json!({
                 "type":"tool_use",
                 "id": id.0,
@@ -325,6 +326,19 @@ fn convert_assistant_blocks(blocks: &[Content], model: &str) -> Vec<Value> {
             _ => None,
         })
         .collect()
+}
+
+/// Whether `model` names a Claude model. Claude rejects unsigned
+/// thinking blocks. Anthropic-compatible gateways serving other models
+/// stream thinking without a signature and reject a tool-call turn whose
+/// thinking is gone, so those blocks must be preserved.
+fn is_claude_model(model: &str) -> bool {
+    const FAMILIES: [&str; 5] = ["opus", "sonnet", "haiku", "fable", "mythos"];
+    let model = model.to_ascii_lowercase();
+    model.contains("claude")
+        || model
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .any(|token| FAMILIES.contains(&token))
 }
 
 fn convert_tool_result_blocks(blocks: &[Content]) -> Vec<Value> {
@@ -368,8 +382,9 @@ impl Provider for AnthropicProvider {
         self.models.clone()
     }
 
-    /// Thinking this model signed goes back as native blocks, and other
-    /// thinking as `<thinking>` text, see `build_request_body`.
+    /// Thinking goes back as native blocks: signed as the API asks, and
+    /// unsigned for non-Claude models that need it. See
+    /// `build_request_body`.
     fn preserves_thinking(&self) -> bool {
         true
     }

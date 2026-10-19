@@ -109,14 +109,56 @@ fn redacted_thinking_goes_back_as_redacted_block() {
 }
 
 #[test]
-fn thinking_another_model_signed_goes_as_text_and_drops_budget_thinking() {
+fn unsigned_thinking_is_dropped_for_claude_and_drops_budget_thinking() {
     let req = continuation(thinking_tool_call("plan", signed("gemini-3", "sig", false)));
     let body = build_request_body(&req, true);
     assert!(body.get("thinking").is_none());
     let blocks = body["messages"][1]["content"].as_array().unwrap();
-    assert_eq!(blocks[0]["type"], "text");
-    assert_eq!(blocks[0]["text"], "<thinking>\nplan\n</thinking>");
+    assert_eq!(blocks.len(), 1);
+    assert_eq!(blocks[0]["type"], "tool_use");
+}
+
+#[test]
+fn unsigned_thinking_goes_back_native_for_an_anthropic_compatible_model() {
+    let mut req = continuation(thinking_tool_call("plan", signed("gemini-3", "sig", false)));
+    req.model = "deepseek-v4-1-flash".to_owned();
+    let body = build_request_body(&req, true);
+    let blocks = body["messages"][1]["content"].as_array().unwrap();
+    assert_eq!(
+        blocks[0],
+        serde_json::json!({"type": "thinking", "thinking": "plan"})
+    );
     assert!(blocks[0].get("signature").is_none());
+    assert_eq!(blocks[1]["type"], "tool_use");
+}
+
+#[test]
+fn empty_unsigned_thinking_is_preserved_for_an_anthropic_compatible_model() {
+    let mut req = continuation(thinking_tool_call("", signed("gemini-3", "sig", false)));
+    req.model = "deepseek-v4-1-flash".to_owned();
+    let body = build_request_body(&req, true);
+    let blocks = body["messages"][1]["content"].as_array().unwrap();
+    assert_eq!(
+        blocks[0],
+        serde_json::json!({"type": "thinking", "thinking": ""})
+    );
+}
+
+#[test]
+fn claude_models_are_recognized_by_name() {
+    for model in [
+        "claude-x",
+        "claude-sonnet-5-5",
+        "sonnet-5-5",
+        "5-5-sonnet",
+        "opus-4-6",
+        "claude-mythos-preview",
+    ] {
+        assert!(is_claude_model(model), "{model}");
+    }
+    for model in ["deepseek-v4-1-flash", "glm-5.3", "kimi-k3", "gpt-6-luna"] {
+        assert!(!is_claude_model(model), "{model}");
+    }
 }
 
 #[test]
