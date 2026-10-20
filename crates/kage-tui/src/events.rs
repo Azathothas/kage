@@ -323,7 +323,7 @@ pub fn populate_from_history(
     timeline: &[TimelineItem],
     tool_durations: &ToolDurations,
 ) {
-    for item in timeline {
+    for item in &timeline[tail_start(timeline)..] {
         match item {
             TimelineItem::Compaction(record) => {
                 let tokens = match (record.before, record.after) {
@@ -344,6 +344,29 @@ pub fn populate_from_history(
         }
     }
     buf.interrupt_running_tools();
+}
+
+/// Where a replay starts rendering. The buffer keeps at most
+/// [`MAX_BLOCKS`](crate::buffer::MAX_BLOCKS) blocks, so a long session
+/// renders only a generous tail of messages instead of building blocks
+/// the first trim throws away. The start never lands on a tool result,
+/// whose call would be cut off.
+fn tail_start(timeline: &[TimelineItem]) -> usize {
+    let keep = 2 * crate::buffer::MAX_BLOCKS;
+    let mut messages = 0;
+    let mut start = timeline.len();
+    while start > 0 && messages < keep {
+        start -= 1;
+        if matches!(timeline[start], TimelineItem::Message(_)) {
+            messages += 1;
+        }
+    }
+    while start > 0
+        && matches!(&timeline[start], TimelineItem::Message(m) if m.role == Role::ToolResult)
+    {
+        start -= 1;
+    }
+    start
 }
 
 /// Translate one replayed message into its blocks. The live event path
@@ -1419,6 +1442,52 @@ mod tests {
             blocks[4].as_ref(),
             Block::ToolResult { output, .. } if output == "a.rs\nb.rs"
         ));
+    }
+
+    /// A long replay builds only the tail the buffer keeps, starting on
+    /// a call rather than on the result it answers.
+    #[test]
+    fn a_long_replay_renders_only_its_tail() {
+        let mut history = Vec::new();
+        for n in 0..3_000 {
+            let id = ToolCallId::new(format!("c{n}"));
+            history.push(Arc::new(Message::new(
+                Role::Assistant,
+                vec![Content::ToolCall {
+                    id: id.clone(),
+                    name: "ls".into(),
+                    input: serde_json::json!({}),
+                }],
+                None,
+            )));
+            history.push(Arc::new(Message::new(
+                Role::ToolResult,
+                vec![Content::ToolResultBlock {
+                    call_id: id,
+                    output: format!("out {n}"),
+                    is_error: false,
+                }],
+                None,
+            )));
+        }
+        let timeline = timeline_of(&history);
+        let start = tail_start(&timeline);
+        assert!(timeline.len() - start <= 2 * crate::buffer::MAX_BLOCKS + 1);
+        assert!(timeline.len() - start >= 2 * crate::buffer::MAX_BLOCKS);
+        assert!(matches!(&timeline[start], TimelineItem::Message(m) if m.role == Role::Assistant));
+
+        let mut buf = Buffer::new();
+        populate_from_history(&mut buf, &timeline, &std::collections::HashMap::new());
+        assert!(matches!(
+            buf.blocks().last().map(AsRef::as_ref),
+            Some(Block::ToolResult { output, .. }) if output == "out 2999"
+        ));
+        assert!(buf.blocks().len() <= 2 * crate::buffer::MAX_BLOCKS + 1);
+        assert_eq!(
+            tail_start(&timeline[..10]),
+            0,
+            "a short replay renders whole"
+        );
     }
 
     #[test]

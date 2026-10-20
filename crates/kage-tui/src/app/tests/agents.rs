@@ -473,7 +473,7 @@ fn the_working_row_reports_swarm_batch_progress() {
         &events,
         children[1],
         vec![
-            HostEvent::RunStarted.into(),
+            kage_core::protocol::HostEvent::RunStarted.into(),
             run_ended(kage_core::protocol::RunOutcome::Completed),
         ],
     );
@@ -1959,4 +1959,75 @@ fn shift_x_in_the_agents_overlay_stops_every_live_agent() {
         ]
     );
     assert!(app.agents_overlay.is_some());
+}
+
+/// A stored transcript with one user prompt, as the loader reads it.
+fn stored_prompt(text: &str) -> crate::app::StoredAgent {
+    crate::app::StoredAgent {
+        messages: vec![std::sync::Arc::new(kage_core::Message::new(
+            kage_core::Role::User,
+            vec![kage_core::Content::Text { text: text.into() }],
+            None,
+        ))],
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_finished_agent_off_screen_gives_its_buffer_back() {
+    let (mut app, _rx, events) = app_with_events();
+    app.set_agent_loader(Box::new(|_| Some(stored_prompt("read back from disk"))));
+    let child = spawn_agent(&mut app, &events, "a1", "explore");
+    send_to(
+        &mut app,
+        &events,
+        child,
+        vec![kage_core::protocol::HostEvent::RunStarted.into()],
+    );
+    assert!(
+        app.agent_buffers.contains_key(&child),
+        "a running agent keeps its buffer"
+    );
+
+    send_to(
+        &mut app,
+        &events,
+        child,
+        vec![run_ended(kage_core::protocol::RunOutcome::Completed)],
+    );
+    assert!(!app.agent_buffers.contains_key(&child));
+
+    app.focus_agent(child);
+    assert_eq!(app.focus, Some(child));
+    assert!(lock(&app.buffer).blocks().iter().any(
+        |b| matches!(b.as_ref(), crate::buffer::Block::User { text } if text == "read back from disk")
+    ));
+
+    send_to(
+        &mut app,
+        &events,
+        child,
+        vec![kage_core::protocol::HostEvent::RunStarted.into()],
+    );
+    app.leave_agent();
+    assert!(
+        app.agent_buffers.contains_key(&child),
+        "an agent running again keeps its buffer off screen"
+    );
+}
+
+#[test]
+fn without_a_loader_every_agent_keeps_its_buffer() {
+    let (mut app, _rx, events) = app_with_events();
+    let child = spawn_agent(&mut app, &events, "a1", "explore");
+    send_to(
+        &mut app,
+        &events,
+        child,
+        vec![
+            kage_core::protocol::HostEvent::RunStarted.into(),
+            run_ended(kage_core::protocol::RunOutcome::Completed),
+        ],
+    );
+    assert!(app.agent_buffers.contains_key(&child));
 }

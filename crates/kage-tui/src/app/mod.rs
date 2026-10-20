@@ -965,8 +965,12 @@ pub struct App {
     /// The transcript of each agent in [`Self::agents`], fed by that
     /// agent's loop events.
     agent_buffers: std::collections::HashMap<kage_core::SessionId, SharedBuffer>,
-    /// Reads the stored transcript of an agent of a resumed session.
-    /// `None` leaves such agents listed but closed.
+    /// Finished agents whose buffer was dropped to free memory. Opening
+    /// one reads its transcript back through [`Self::agent_loader`].
+    evicted_agents: std::collections::HashSet<kage_core::SessionId>,
+    /// Reads the stored transcript of an agent of a resumed session, or
+    /// of a finished agent whose buffer was dropped. `None` leaves such
+    /// agents listed but closed, and keeps every live agent's buffer.
     agent_loader: Option<AgentLoader>,
     /// The drafts of the views off screen, by session (`None` for the
     /// main view). The draft on screen lives in [`Self::input`].

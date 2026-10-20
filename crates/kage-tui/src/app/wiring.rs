@@ -99,6 +99,7 @@ impl App {
             active_session: None,
             agents: kage_core::protocol::AgentTree::default(),
             agent_buffers: std::collections::HashMap::new(),
+            evicted_agents: std::collections::HashSet::new(),
             agent_loader: None,
             drafts: std::collections::HashMap::new(),
             approval_panel: None,

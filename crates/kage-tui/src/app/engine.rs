@@ -338,9 +338,12 @@ impl App {
     /// the card shows.
     fn apply_agent_envelope(&mut self, envelope: Envelope) {
         let session = envelope.session;
-        if let Event::Host(HostEvent::AgentSpawned { .. }) = &envelope.event {
+        let reopened = self.evicted_agents.contains(&session)
+            && matches!(envelope.event, Event::Host(HostEvent::RunStarted));
+        if matches!(&envelope.event, Event::Host(HostEvent::AgentSpawned { .. })) || reopened {
             self.agent_buffers
                 .insert(session, crate::events::shared_buffer());
+            self.evicted_agents.remove(&session);
         }
         let Some(buffer) = self.agent_buffers.get(&session).map(Arc::clone) else {
             return;
@@ -373,6 +376,35 @@ impl App {
         lock(&buffer).trim_scrollback();
         if card {
             self.update_card(session);
+        }
+        self.evict_finished_agents();
+    }
+
+    /// Drop the buffers of finished agents off screen. A busy session
+    /// would otherwise hold every agent's whole transcript in memory;
+    /// opening one reads it back from its session file. Without a
+    /// loader nothing could read it back, so every buffer stays.
+    fn evict_finished_agents(&mut self) {
+        if self.agent_loader.is_none() {
+            return;
+        }
+        let finished: Vec<SessionId> = self
+            .agent_buffers
+            .keys()
+            .copied()
+            .filter(|session| Some(*session) != self.focus)
+            .filter(|session| {
+                self.agents.get(*session).is_some_and(|node| {
+                    matches!(
+                        node.state,
+                        AgentState::Done | AgentState::Failed | AgentState::Cancelled
+                    )
+                })
+            })
+            .collect();
+        for session in finished {
+            self.agent_buffers.remove(&session);
+            self.evicted_agents.insert(session);
         }
     }
 
@@ -528,7 +560,8 @@ impl App {
     /// An agent of a resumed session first loads its stored transcript.
     pub(crate) fn focus_agent(&mut self, session: SessionId) {
         if !self.agent_buffers.contains_key(&session)
-            && self.agents.get(session).is_some_and(|n| n.restored)
+            && (self.evicted_agents.contains(&session)
+                || self.agents.get(session).is_some_and(|n| n.restored))
         {
             let Some(crate::app::StoredAgent { messages, .. }) =
                 self.agent_loader.as_ref().and_then(|load| load(session))
@@ -549,6 +582,7 @@ impl App {
             }
             self.annotate_edits(&buffer);
             self.agent_buffers.insert(session, buffer);
+            self.evicted_agents.remove(&session);
         }
         if self.agent_buffers.contains_key(&session) {
             self.set_focus(Some(session));
@@ -562,8 +596,11 @@ impl App {
             .focus
             .and_then(|session| self.agents.get(session))
             .map(|node| node.parent)
-            .filter(|parent| self.agent_buffers.contains_key(parent));
-        self.set_focus(parent);
+            .filter(|parent| self.agents.get(*parent).is_some());
+        match parent {
+            Some(parent) => self.focus_agent(parent),
+            None => self.set_focus(None),
+        }
     }
 
     /// Show agent `focus`, or the main session for `None` (or an unknown
@@ -585,6 +622,7 @@ impl App {
         self.buffer = target.map_or_else(|| Arc::clone(&self.root_buffer), |(_, b)| b);
         self.draw_snapshot = None;
         lock(&self.buffer).invalidate_all_heights();
+        self.evict_finished_agents();
     }
 
     /// Drop the per-view UI state a switch or a resume must not
@@ -894,6 +932,7 @@ impl App {
         self.pending.clear();
         self.agents.clear();
         self.agent_buffers.clear();
+        self.evicted_agents.clear();
         self.swarm_oneshot = None;
         self.pending_compaction_before = None;
         let messages: Vec<std::sync::Arc<kage_core::Message>> = timeline
