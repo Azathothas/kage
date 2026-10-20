@@ -21,6 +21,12 @@
 //! - `completions` and the hidden `gen-manpage` generate shell and man
 //!   page files.
 
+/// mimalloc hands freed memory back to the system. glibc's allocator
+/// keeps the peak of a long session's resume for the life of the
+/// process, and musl's is slow.
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod acp_glue;
 mod agents;
 mod auth;
