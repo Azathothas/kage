@@ -125,8 +125,11 @@ impl super::Dispatcher {
         let from = &self.sessions[&parent];
         let def = setup.defs.get(&agent).expect("checked by spawn_setup");
         let def = AgentDef {
-            model: spawn.model.or_else(|| def.model.clone()),
-            thinking: spawn.thinking.or(def.thinking),
+            model: spawn
+                .model
+                .or_else(|| def.model.clone())
+                .or_else(|| setup.model.clone()),
+            thinking: spawn.thinking.or(def.thinking).or(setup.thinking),
             ..def.clone()
         };
 
@@ -1419,6 +1422,8 @@ mod tests {
             max_turns: 0,
             timeout: None,
             budget: 0,
+            model: None,
+            thinking: None,
         }
     }
 

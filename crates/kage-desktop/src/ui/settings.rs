@@ -951,6 +951,7 @@ fn agents(ui: &mut egui::Ui, store: &Store, palette: &Palette, events: &mut Vec<
             &[
                 ("agent_max_depth", "Max depth"),
                 ("agent_max_running", "Max running"),
+                ("agent_thinking", "Thinking"),
                 ("agent_max_turns", "Turn limit"),
                 ("agent_timeout", "Run timeout"),
                 ("agent_budget", "Token budget"),

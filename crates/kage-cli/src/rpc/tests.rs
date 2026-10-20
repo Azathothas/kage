@@ -338,6 +338,8 @@ fn default_agents() -> AgentSetup {
         max_turns: 0,
         timeout: None,
         budget: 0,
+        thinking: None,
+        model: None,
     }
 }
 

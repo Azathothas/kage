@@ -390,8 +390,8 @@ impl Default for LoopSettings {
 
 /// Subagent limits persisted under `[agents]`. The option registry
 /// validates the ranges (`agent_max_depth`, `agent_max_running`,
-/// `swarm_max_items`, `swarm_timeout_ms`, `agent_max_turns`,
-/// `agent_timeout`, `agent_budget`).
+/// `swarm_max_items`, `swarm_timeout_ms`, `agent_model`,
+/// `agent_thinking`, `agent_max_turns`, `agent_timeout`, `agent_budget`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentsConfig {
@@ -405,6 +405,12 @@ pub struct AgentsConfig {
     pub swarm_max_items: u32,
     /// Milliseconds one swarm child may run, from its run start.
     pub swarm_timeout_ms: u64,
+    /// Model agents run when neither the call nor the definition names
+    /// one, as `provider/model`. `inherit` uses the parent's model.
+    pub model: String,
+    /// Thinking level agents run with when neither the call nor the
+    /// definition names one. `inherit` uses the parent's level.
+    pub thinking: String,
     /// Turns one agent run may take. 0 means no limit.
     pub max_turns: u32,
     /// Seconds one agent run may take. 0 means no limit.
@@ -421,6 +427,8 @@ impl Default for AgentsConfig {
             max_running: 4,
             swarm_max_items: 32,
             swarm_timeout_ms: 7_200_000,
+            model: "inherit".to_owned(),
+            thinking: "inherit".to_owned(),
             max_turns: 0,
             timeout: 0,
             budget: 0,

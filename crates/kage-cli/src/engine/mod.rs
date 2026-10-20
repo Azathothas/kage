@@ -112,6 +112,12 @@ pub(crate) struct AgentSetup {
     /// Whether the main session may start background agents, and what
     /// it does with their results while idle.
     pub background: Background,
+    /// Model agents run when neither the call nor the definition names
+    /// one. `None` uses the parent's.
+    pub model: Option<String>,
+    /// Thinking level agents run with when neither the call nor the
+    /// definition names one. `None` uses the parent's.
+    pub thinking: Option<ThinkingLevel>,
     /// Turns one agent run may take, unless its definition says. 0
     /// means no limit.
     pub max_turns: u32,
@@ -151,6 +157,12 @@ impl AgentSetup {
         background: Background,
     ) -> Self {
         let int = |name: &str| options.get(name).and_then(OptionValue::as_int).unwrap_or(0);
+        let text = |name: &str| {
+            options
+                .get(name)
+                .and_then(OptionValue::as_str)
+                .filter(|value| *value != "inherit")
+        };
         let timeout = u64::try_from(int("agent_timeout")).unwrap_or(0);
         Self {
             defs: Arc::new(defs),
@@ -159,6 +171,8 @@ impl AgentSetup {
             swarm_max_items: usize::try_from(int("swarm_max_items")).unwrap_or(32),
             swarm_timeout_ms: u64::try_from(int("swarm_timeout_ms")).unwrap_or(7_200_000),
             background,
+            model: text("agent_model").map(kage_core::canonical_model),
+            thinking: text("agent_thinking").and_then(ThinkingLevel::parse),
             max_turns: u32::try_from(int("agent_max_turns")).unwrap_or(0),
             timeout: (timeout > 0).then(|| Duration::from_secs(timeout)),
             budget: u64::try_from(int("agent_budget")).unwrap_or(0),

@@ -1826,6 +1826,8 @@ fn agent_setup(max_depth: u8, max_running: usize) -> AgentSetup {
         max_turns: 0,
         timeout: None,
         budget: 0,
+        model: None,
+        thinking: None,
     }
 }
 
@@ -2461,6 +2463,8 @@ fn swarm_setup(max_running: usize, timeout_ms: u64) -> AgentSetup {
         max_turns: 0,
         timeout: None,
         budget: 0,
+        model: None,
+        thinking: None,
     }
 }
 
@@ -2591,6 +2595,33 @@ fn an_agent_call_overrides_the_child_model_and_thinking() {
     assert_eq!(requests[0].level, None);
     assert_eq!(requests[1].model, "other");
     assert_eq!(requests[1].level, Some(ThinkingLevel::High));
+}
+
+#[test]
+fn the_agents_model_and_thinking_fill_in_for_the_parent() {
+    let mock = MockProvider::sequence(vec![
+        agent_turn(&[("call_a", task("find it"))]),
+        text_turn("child reply"),
+        text_turn("parent done"),
+    ]);
+    let h = harness(mock.clone());
+    let parent_id = SessionId::new();
+    h.engine.open(SessionSpec {
+        agents: Some(AgentSetup {
+            model: Some("mock/other".into()),
+            thinking: Some(ThinkingLevel::Low),
+            ..agent_setup(1, 1)
+        }),
+        ..h.spec(parent_id)
+    });
+    prompt(&h.engine, parent_id, "go", Delivery::Steer);
+    until_runs_end(&h.events, 2);
+    h.engine.shutdown();
+
+    let requests = mock.requests();
+    assert_eq!(requests[0].model, "m");
+    assert_eq!(requests[1].model, "other");
+    assert_eq!(requests[1].level, Some(ThinkingLevel::Low));
 }
 
 #[test]

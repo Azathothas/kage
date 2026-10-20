@@ -117,6 +117,13 @@ swarm_max_items = 32
 # milliseconds one swarm child may run, from its run start (1000 to
 # 86400000). on deadline the child is cancelled.
 swarm_timeout_ms = 7200000
+# model agents run when neither the agent call nor the agent's
+# definition names one, as provider/model. "inherit" uses the parent's.
+model = "inherit"
+# thinking level agents run with when neither the call nor the
+# definition names one: inherit, off, minimal, low, medium, high, xhigh
+# or max.
+thinking = "inherit"
 # turns with tool calls one agent run may take (0 to 10000, 0 for no
 # limit). the agent gets one warning turn to reply first.
 max_turns = 0

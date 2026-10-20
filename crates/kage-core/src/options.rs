@@ -75,6 +75,12 @@ const THINKING_LEVELS: &[&str] = &[
     "", "off", "minimal", "low", "medium", "high", "xhigh", "max",
 ];
 
+/// Values [`OptionKind::Choice`] accepts for `agent_thinking`: the
+/// thinking ladder, or `inherit` for the parent's level.
+const AGENT_THINKING_LEVELS: &[&str] = &[
+    "inherit", "off", "minimal", "low", "medium", "high", "xhigh", "max",
+];
+
 /// Every option.
 pub const OPTIONS: &[OptionDef] = &[
     OptionDef {
@@ -228,6 +234,23 @@ pub const OPTIONS: &[OptionDef] = &[
             default: 7_200_000,
         },
         doc: "Milliseconds one swarm child may run, measured from its run start (not while queued). On deadline the child is cancelled and renders as cancelled in the aggregate.",
+        live: false,
+    },
+    OptionDef {
+        name: "agent_model",
+        toml: "agents.model",
+        kind: OptionKind::Str { default: "inherit" },
+        doc: "Model agents run, as provider/model, when neither the call nor the agent's definition names one. `inherit` uses the parent's current model.",
+        live: false,
+    },
+    OptionDef {
+        name: "agent_thinking",
+        toml: "agents.thinking",
+        kind: OptionKind::Choice {
+            values: AGENT_THINKING_LEVELS,
+            default: "inherit",
+        },
+        doc: "Thinking level agents run with when neither the call nor the agent's definition names one. `inherit` uses the parent's current level.",
         live: false,
     },
     OptionDef {
@@ -624,6 +647,8 @@ fn config_value(name: &str, config: &Config) -> Option<OptionValue> {
         "swarm_timeout_ms" => {
             OptionValue::Int(i64::try_from(config.agents.swarm_timeout_ms).unwrap_or(i64::MAX))
         }
+        "agent_model" => OptionValue::Str(config.agents.model.clone()),
+        "agent_thinking" => OptionValue::Str(config.agents.thinking.clone()),
         "agent_max_turns" => OptionValue::Int(i64::from(config.agents.max_turns)),
         "agent_timeout" => OptionValue::Int(i64::from(config.agents.timeout)),
         "agent_budget" => OptionValue::Int(i64::try_from(config.agents.budget).unwrap_or(i64::MAX)),
@@ -752,6 +777,12 @@ mod tests {
             ("agent_max_running", "8", OptionValue::Int(8)),
             ("swarm_max_items", "64", OptionValue::Int(64)),
             ("swarm_timeout_ms", "60000", OptionValue::Int(60_000)),
+            (
+                "agent_model",
+                "\"zai/glm-5\"",
+                OptionValue::Str("zai/glm-5".into()),
+            ),
+            ("agent_thinking", "\"low\"", OptionValue::Str("low".into())),
             ("agent_max_turns", "60", OptionValue::Int(60)),
             ("agent_timeout", "600", OptionValue::Int(600)),
             ("agent_budget", "2000000", OptionValue::Int(2_000_000)),

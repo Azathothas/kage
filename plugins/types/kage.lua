@@ -549,6 +549,8 @@
 ---@field agent_max_running integer How many agents run at once. Further agents wait until one finishes.
 ---@field swarm_max_items integer Most items one swarm call may run, one child agent per item.
 ---@field swarm_timeout_ms integer Milliseconds one swarm child may run, measured from its run start (not while queued). On deadline the child is cancelled and renders as cancelled in the aggregate.
+---@field agent_model string Model agents run, as provider/model, when neither the call nor the agent's definition names one. `inherit` uses the parent's current model.
+---@field agent_thinking "inherit"|"off"|"minimal"|"low"|"medium"|"high"|"xhigh"|"max" Thinking level agents run with when neither the call nor the agent's definition names one. `inherit` uses the parent's current level.
 ---@field agent_max_turns integer Turns one agent run may take. The agent gets one warning turn to reply, then stops. 0 means no limit.
 ---@field agent_timeout integer Seconds one agent run may take before it is stopped. 0 means no limit.
 ---@field agent_budget integer Tokens (input plus output) all agents of a session may use between two of your prompts. Past it, they stop. 0 means no limit.

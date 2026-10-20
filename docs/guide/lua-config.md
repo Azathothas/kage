@@ -125,6 +125,8 @@ value)` is the same as assigning.
 | `agent_max_running` | `agents.max_running` | integer, 1 to 16 | `4` | at startup |
 | `swarm_max_items` | `agents.swarm_max_items` | integer, 2 to 128 | `32` | at startup |
 | `swarm_timeout_ms` | `agents.swarm_timeout_ms` | integer milliseconds, 1,000 to 86,400,000 | `7200000` | at startup |
+| `agent_model` | `agents.model` | `"provider/model"` or `"inherit"` | `"inherit"` | at startup |
+| `agent_thinking` | `agents.thinking` | `"inherit"`, `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` or `"max"` | `"inherit"` | at startup |
 | `agent_max_turns` | `agents.max_turns` | integer, 0 to 10,000 (0 for no limit) | `0` | at startup |
 | `agent_timeout` | `agents.timeout` | integer seconds, 0 to 86,400 (0 for no limit) | `0` | at startup |
 | `agent_budget` | `agents.budget` | integer tokens, 0 to 1,000,000,000 (0 for no limit) | `0` | at startup |

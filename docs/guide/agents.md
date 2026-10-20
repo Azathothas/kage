@@ -23,8 +23,9 @@ agent definition, a short description you see, and the whole task:
 `agent` defaults to `general` when the call leaves it out. A call may
 also set `model` (`provider/model`) and `thinking` (a level name) for
 this one child. They override the definition's `model` and `thinking`;
-left out, the definition decides, and without a definition value the
-parent's current model and level apply. The call
+left out, the definition decides, then `[agents] model` and
+`[agents] thinking` (see [limits](#limits)), and otherwise the parent's
+current model and level apply. The call
 waits until the agent's run ends, then returns the text of the agent's
 last reply, wrapped in an element that names the agent, its session
 and how the run ended:
@@ -406,8 +407,8 @@ asks on the next start.
 
 | Aspect | The agent gets |
 | --- | --- |
-| Model | the call's `model`, else the definition's, else the parent's current model |
-| Thinking | the call's `thinking`, else the definition's, else the parent's current level |
+| Model | the call's `model`, else the definition's, else `agent_model`, else the parent's current model |
+| Thinking | the call's `thinking`, else the definition's, else `agent_thinking`, else the parent's current level |
 | Tools | the parent's tools narrowed by `tools`, including plugin and MCP tools, plus `agent` while the depth limit allows it |
 | Permissions | the parent's rules, permission mode and session approvals, shared live (see [permissions](/guide/permissions#agents)) |
 | Asking | it asks you when the parent can ask. Print mode refuses its asks, like the main session's. |
@@ -429,6 +430,8 @@ covers every agent of the session.
 | `agent_max_running` | `agents.max_running` | 1 to 16 | `4` | How many agents run at once. Further agents wait in a queue and start in order as others finish. |
 | `swarm_max_items` | `agents.swarm_max_items` | 2 to 128 | `32` | Most members one `swarm` call may run: items plus resumed children together. |
 | `swarm_timeout_ms` | `agents.swarm_timeout_ms` | 1,000 to 86,400,000 | `7,200,000` | Milliseconds one swarm child may run, measured from its run start (not while queued). On deadline the child is cancelled and renders as cancelled in the aggregate. |
+| `agent_model` | `agents.model` | `provider/model` or `inherit` | `inherit` | Model agents run when neither the call nor the definition names one. `inherit` uses the parent's current model. |
+| `agent_thinking` | `agents.thinking` | a thinking level or `inherit` | `inherit` | Thinking level agents run with when neither the call nor the definition names one. `inherit` uses the parent's current level. |
 | `agent_max_turns` | `agents.max_turns` | 0 to 10,000 | `0` | Turns with tool calls one agent run may take. `0` means no limit. |
 | `agent_timeout` | `agents.timeout` | 0 to 86,400 | `0` | Seconds one agent run may take. `0` means no limit. |
 | `agent_budget` | `agents.budget` | 0 to 1,000,000,000 | `0` | Tokens (input plus output) all agents of a session may use between two of your prompts. `0` means no limit. |
