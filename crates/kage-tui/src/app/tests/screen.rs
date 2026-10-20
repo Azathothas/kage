@@ -360,7 +360,7 @@ fn the_activity_row_shows_while_working_with_elapsed_seconds() {
     );
     lock(&buffer).set_tool_phase("c1", crate::view::tool_view::ToolPhase::Running);
     let expected = format!(
-        "  / Running cargo test ({}s, ctrl+c to interrupt)",
+        "  / Running ({}s, ctrl+c to interrupt)",
         app.run_started.unwrap().elapsed().as_secs()
     );
     let rows = snapshot_rows(&render_app(&mut app));
@@ -482,7 +482,7 @@ fn the_footer_opens_with_the_mode_and_holds_the_facts_at_60_columns() {
 }
 
 #[test]
-fn the_working_row_cuts_the_command_before_its_time_and_key() {
+fn the_working_row_names_the_verb_and_leaves_the_command_to_the_call_row() {
     let buffer = shared_buffer();
     lock(&buffer).push_user("hello");
     let (tx, _rx) = mpsc::channel();
@@ -494,12 +494,7 @@ fn the_working_row_cuts_the_command_before_its_time_and_key() {
     lock(&buffer).set_tool_phase("c1", crate::view::tool_view::ToolPhase::Running);
     let secs = app.run_started.unwrap().elapsed().as_secs();
     let label = app.activity_label(&lock(&buffer), 80).unwrap();
-    assert!(label.starts_with("Running for i in"), "{label}");
-    assert!(
-        label.ends_with(&format!("... ({secs}s, esc to interrupt)")),
-        "{label}"
-    );
-    assert_eq!(label.len(), 78, "{label}");
+    assert_eq!(label, format!("Running ({secs}s, esc to interrupt)"));
 }
 
 #[test]

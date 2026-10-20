@@ -372,8 +372,9 @@ impl App {
 
     /// What the current run is doing, from the newest blocks back to
     /// the prompt that started it: running a tool, thinking, waiting
-    /// for its live agents, or just working. A running `swarm` call
-    /// reports batch progress instead of a plain tool label.
+    /// for its live agents, or just working. A running tool shows only
+    /// its verb, since the call row above already names the target. A
+    /// running `swarm` call reports batch progress instead.
     fn current_work(&self, buffer: &crate::Buffer) -> String {
         use crate::view::tool_view::{ToolPhase, describe, plural};
         if self.focus.is_none()
@@ -412,12 +413,7 @@ impl App {
                     input,
                     phase: ToolPhase::Running,
                     ..
-                } => {
-                    let label = describe(name, input);
-                    return format!("{} {}", label.verb_live, label.target)
-                        .trim_end()
-                        .to_owned();
-                }
+                } => return describe(name, input).verb_live.to_owned(),
                 crate::Block::Thinking { live: true, .. } if self.live_agents() == 0 => {
                     return "Thinking".to_owned();
                 }
