@@ -236,7 +236,7 @@ pub const OPTIONS: &[OptionDef] = &[
         kind: OptionKind::Int {
             min: 0,
             max: 10_000,
-            default: 100,
+            default: 0,
         },
         doc: "Turns one agent run may take. The agent gets one warning turn to reply, then stops. 0 means no limit.",
         live: false,

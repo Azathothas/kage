@@ -349,7 +349,7 @@ impl super::Dispatcher {
         };
         let reopened = !self.sessions.contains_key(&id);
         if reopened {
-            match self.reopen_agent(parent, id) {
+            match self.reopen_agent(parent, id, false) {
                 Ok(warnings) => self.warn_all(id, warnings),
                 Err(text) => return fail(text),
             }
@@ -383,14 +383,20 @@ impl super::Dispatcher {
         self.launch_agent(id, setup.max_running, content);
     }
 
-    /// Host the swarm child `id` of the hosted session `parent` again
-    /// from its session file, for a swarm resume. Agents are dropped
-    /// once their result is delivered, and a resumed session hosts
-    /// none. The child keeps its definition, history and model, appends
-    /// to its own file and owes no call a result until the caller arms
-    /// one. Returns the warnings to show on it.
-    fn reopen_agent(&mut self, parent: SessionId, id: SessionId) -> Result<Vec<String>, String> {
-        let no_session = || format!("session {id} is not a swarm child of this session");
+    /// Host the agent `id` of the hosted session `parent` again from
+    /// its session file, for a swarm resume or a message. Agents are
+    /// dropped once their result is delivered, and a resumed session
+    /// hosts none. The child keeps its definition, history and model,
+    /// appends to its own file and owes no call a result until the
+    /// caller arms one. A `background` child outlives the parent's run.
+    /// Returns the warnings to show on it.
+    fn reopen_agent(
+        &mut self,
+        parent: SessionId,
+        id: SessionId,
+        background: bool,
+    ) -> Result<Vec<String>, String> {
+        let no_session = || format!("session {id} is not an agent of this session");
         let path = self
             .sessions
             .get(&parent)
@@ -441,17 +447,93 @@ impl super::Dispatcher {
             depth: depth_of(from) + 1,
             batch_id,
             report: None,
-            background: false,
+            background,
             lazy_history: None,
             inherited_until: None,
             tools: def.tools.clone(),
             worktree: None,
         };
-        let cancel = from.cancel.child();
+        let cancel = child_cancel(from, background);
         self.open(spec, cancel, Some(link));
         let mut warnings: Vec<String> = note.into_iter().collect();
         warnings.extend(missing.iter().map(missing_tool));
         Ok(warnings)
+    }
+
+    /// Let the finished agent `id` take a message from `from`: host it
+    /// again from its session file when it was dropped, and send the
+    /// result of the run the message starts to its parent's inbox, as
+    /// a background agent's. It must belong to `from`'s conversation.
+    pub(super) fn resume_for_message(
+        &mut self,
+        from: SessionId,
+        id: SessionId,
+    ) -> Result<(), String> {
+        let not_ours = || format!("session {id} is not an agent of this conversation");
+        if !self.sessions.contains_key(&id) {
+            let path = self
+                .sessions
+                .get(&from)
+                .and_then(|s| s.path.as_deref())
+                .and_then(Path::parent)
+                .map(|dir| crate::build_session_path(dir, id))
+                .ok_or_else(not_ours)?;
+            let marker = agent_marker(&path).ok_or_else(not_ours)?;
+            let text = |key: &str| {
+                marker
+                    .get(key)
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default()
+                    .to_owned()
+            };
+            let parent = ulid::Ulid::from_string(&text("parent"))
+                .map(SessionId)
+                .map_err(|_| not_ours())?;
+            if !self.sessions.contains_key(&parent) {
+                return Err(format!(
+                    "the session that started {id} is closed, so it cannot take its result"
+                ));
+            }
+            if self.root_of(parent) != self.root_of(from) {
+                return Err(not_ours());
+            }
+            let warnings = self.reopen_agent(parent, id, true)?;
+            self.warn_all(id, warnings);
+            let batch = text("batch_id");
+            let number = |key: &str| {
+                marker
+                    .get(key)
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|n| u32::try_from(n).ok())
+                    .unwrap_or_default()
+            };
+            self.publish_agent_opened(Opened {
+                id,
+                parent,
+                tool_call_id: ToolCallId::new(text("tool_call_id")),
+                agent: text("agent"),
+                description: text("description"),
+                swarm: (!batch.is_empty()).then(|| SwarmMember {
+                    batch: Some(ToolCallId::new(batch)),
+                    item: text("item"),
+                    index: number("index"),
+                    total: number("total"),
+                }),
+                background: true,
+            });
+        } else if self.root_of(id) != self.root_of(from) {
+            return Err(not_ours());
+        }
+        let session = self.sessions.get_mut(&id).expect("hosted above");
+        let Some(link) = session.link.as_mut() else {
+            return Err(not_ours());
+        };
+        if !link.background {
+            link.background = true;
+            session.cancel = CancelFlag::new();
+        }
+        link.report = Some(Report::Message);
+        Ok(())
     }
 
     /// Show each of `warnings` on session `id`.

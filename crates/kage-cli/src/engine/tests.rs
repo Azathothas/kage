@@ -3412,7 +3412,9 @@ fn a_message_to_a_missing_target_or_parent_is_refused() {
     let stranger = tool_output(&events, parent, "call_m2");
     assert!(stranger.is_error);
     assert!(
-        stranger.text.contains("is not running"),
+        stranger
+            .text
+            .contains("is not an agent of this conversation"),
         "{}",
         stranger.text
     );
@@ -4897,42 +4899,66 @@ fn cancelling_an_idle_session_leaves_its_agents_free_to_run() {
 }
 
 #[test]
-fn a_message_to_a_finished_agent_is_refused() {
+fn a_message_resumes_a_finished_agent() {
+    let dir = tempfile::tempdir().unwrap();
     let mock = MockProvider::sequence(vec![
         agent_turn(&[("call_a", task("first"))]),
         text_turn("a done"),
         text_turn("parent done"),
     ]);
     let h = harness_on(ProviderRegistry::new().with(Arc::new(mock.clone())));
-    let parent = h.open_parent(
-        None,
-        PermissionGate::new(PermissionsConfig::default()),
-        Some(agent_setup(1, 1)),
-    );
+    let parent = SessionId::new();
+    let (recorder, _) = recorder_in(dir.path(), parent);
+    h.engine.open(SessionSpec {
+        recorder: Some(recorder),
+        agents: Some(agent_setup(1, 1)),
+        ..h.spec(parent)
+    });
     prompt(&h.engine, parent, "go", Delivery::Steer);
     let events = until_runs_end(&h.events, 2);
     let (first, _) = spawned(&events)[0].clone();
 
-    mock.push_script(agent_turn(&[("call_b", task("second"))]));
     mock.push_script(send_message_turn(
         "call_m",
         &first.to_string(),
-        "over to you",
+        "one more thing",
     ));
-    mock.push_script(text_turn("b done"));
-    mock.push_script(text_turn("ok"));
+    // A parent still running when the result lands reads it with one
+    // more turn, so either order takes a spare reply.
+    for _ in 0..3 {
+        mock.push_script(text_turn("reply"));
+    }
     prompt(&h.engine, parent, "again", Delivery::Steer);
     let events = until_runs_end(&h.events, 2);
-    h.engine.shutdown();
 
-    let (second, _) = spawned(&events)[0].clone();
-    let refused = tool_output(&events, second, "call_m");
-    assert!(refused.is_error);
-    assert!(refused.text.contains("is not running"), "{}", refused.text);
-    assert_eq!(
-        outcome_of(&events, first),
-        [],
-        "the finished agent stays put"
+    let sent = tool_output(&events, parent, "call_m");
+    assert!(!sent.is_error, "{}", sent.text);
+    assert!(sent.text.contains("which had finished"), "{}", sent.text);
+    assert_eq!(outcome_of(&events, first), [RunOutcome::Completed]);
+    assert!(
+        events.iter().any(|e| e.session == first
+            && matches!(
+                e.event,
+                Event::Host(HostEvent::AgentSpawned {
+                    background: true,
+                    ..
+                })
+            )),
+        "the reopened agent is announced as a background agent"
+    );
+
+    mock.push_script(text_turn("seen"));
+    prompt(&h.engine, parent, "next", Delivery::Steer);
+    until_runs_end(&h.events, 1);
+    h.engine.shutdown();
+    let head = format!("<agent name=\"general\" session=\"{first}\"");
+    assert!(
+        mock.requests()
+            .iter()
+            .flat_map(|r| &r.messages)
+            .flat_map(|m| &m.content)
+            .any(|c| matches!(c, Content::Text { text } if text.contains(&head))),
+        "the resumed agent's result reaches its parent"
     );
 }
 

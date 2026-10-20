@@ -234,13 +234,17 @@ a question without blocking on an answer:
 {"to": "01K62W8Q3T9V5M2C7X4B1N0R6S", "message": "Also run the doc tests, then reply with both results."}
 ```
 
-`to` is `parent` or the session id of another running session of the
-same conversation, such as an agent's id from its `started` result or
-a sibling still at work. A session under another main session refuses
-the message, and so does an agent that has finished: its result
-already reached its parent, so a reply or a change it made would never
-get there. Continue a finished swarm child with a `swarm` resume
-instead, whose result does come back.
+`to` is `parent` or the session id of another session of the same
+conversation, such as an agent's id from its `started` result or a
+sibling. A session under another main session refuses the message.
+
+An agent that has finished resumes to read it. kage reopens it from its
+session file with its history, definition and model, and it runs as a
+background agent: its new result arrives in its parent's inbox as an
+`<agent>` message, and stopping the parent's run leaves it running. A
+parent that has closed cannot take the result, so the message is
+refused. An agent that worked in a worktree cannot resume, since its
+checkout is gone.
 
 A running target reads the message at its next turn boundary, wrapped
 so it knows who sent it:
@@ -425,7 +429,7 @@ covers every agent of the session.
 | `agent_max_running` | `agents.max_running` | 1 to 16 | `4` | How many agents run at once. Further agents wait in a queue and start in order as others finish. |
 | `swarm_max_items` | `agents.swarm_max_items` | 2 to 128 | `32` | Most members one `swarm` call may run: items plus resumed children together. |
 | `swarm_timeout_ms` | `agents.swarm_timeout_ms` | 1,000 to 86,400,000 | `7,200,000` | Milliseconds one swarm child may run, measured from its run start (not while queued). On deadline the child is cancelled and renders as cancelled in the aggregate. |
-| `agent_max_turns` | `agents.max_turns` | 0 to 10,000 | `100` | Turns with tool calls one agent run may take. `0` means no limit. |
+| `agent_max_turns` | `agents.max_turns` | 0 to 10,000 | `0` | Turns with tool calls one agent run may take. `0` means no limit. |
 | `agent_timeout` | `agents.timeout` | 0 to 86,400 | `0` | Seconds one agent run may take. `0` means no limit. |
 | `agent_budget` | `agents.budget` | 0 to 1,000,000,000 | `0` | Tokens (input plus output) all agents of a session may use between two of your prompts. `0` means no limit. |
 

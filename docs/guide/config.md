@@ -119,7 +119,7 @@ swarm_max_items = 32
 swarm_timeout_ms = 7200000
 # turns with tool calls one agent run may take (0 to 10000, 0 for no
 # limit). the agent gets one warning turn to reply first.
-max_turns = 100
+max_turns = 0
 # seconds one agent run may take (0 to 86400, 0 for no limit).
 timeout = 0
 # tokens all agents of a session may use between two of your prompts

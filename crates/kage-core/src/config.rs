@@ -421,7 +421,7 @@ impl Default for AgentsConfig {
             max_running: 4,
             swarm_max_items: 32,
             swarm_timeout_ms: 7_200_000,
-            max_turns: 100,
+            max_turns: 0,
             timeout: 0,
             budget: 0,
         }

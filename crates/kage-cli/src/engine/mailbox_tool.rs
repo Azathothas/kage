@@ -46,10 +46,11 @@ impl MailboxTool {
              waiting. A running target reads it at its next turn boundary. The answer is \
              not this call's result: an agent you started covers it in its own result, \
              and any other session can message you back.\n\n\
-             `to` is `parent` (the session that started you) or the session id of a \
-             running agent, such as one you started in the background or a sibling still \
-             at work. An agent that has finished takes no messages; start a new agent \
-             instead. Your own id is {from}.\n\n\
+             `to` is `parent` (the session that started you) or the session id of an \
+             agent of this conversation, such as one you started or a sibling. A running \
+             agent reads it at its next turn boundary. A finished agent resumes with its \
+             history to read it, and its new result arrives in its parent's inbox like a \
+             background agent's. Your own id is {from}.\n\n\
              Use it to steer an agent you started, hand findings to a sibling or ask the \
              parent a question mid-task. For work you must wait on, make an `agent` call \
              instead."
@@ -175,9 +176,9 @@ impl super::Dispatcher {
             .get(&from)
             .and_then(|s| s.link.as_ref())
             .map_or_else(|| "kage".to_owned(), |l| l.agent.clone());
-        // A finished agent already delivered its result, so a reply to
-        // a later message, and anything it changed, would never reach
-        // its parent.
+        // A finished agent already delivered its result, so it resumes
+        // with a new one owed to its parent, or the reply to this
+        // message would never reach anyone.
         let finished = self.sessions.get(&to).is_none_or(|target| {
             target
                 .link
@@ -185,12 +186,8 @@ impl super::Dispatcher {
                 .is_some_and(|link| link.report.is_none())
         });
         if finished {
-            return Err(format!(
-                "session {to} is not running. A finished agent takes no messages; start a \
-                 new agent, or continue a swarm child with a swarm resume"
-            ));
-        }
-        if self.root_of(to) != self.root_of(from) {
+            self.resume_for_message(from, to)?;
+        } else if self.root_of(to) != self.root_of(from) {
             return Err(format!(
                 "session {to} belongs to another conversation; message sessions of your own"
             ));
@@ -210,6 +207,13 @@ impl super::Dispatcher {
         if self.waiting.contains(&to) {
             return Ok(format!(
                 "Delivered to session {to}. It reads the message when it starts."
+            ));
+        }
+        if finished {
+            self.wake(to);
+            return Ok(format!(
+                "Delivered to session {to}, which had finished. It resumes with its history to \
+                 read the message, and its new result arrives in its parent's inbox."
             ));
         }
         Ok(if self.wake(to) {
