@@ -183,7 +183,12 @@ impl Provider for OpenAiProvider {
         let interleaved = self.interleaved(&req.model);
         let body = build_request_body(&req, true, interleaved, self.dialect);
         let url = format!("{}/chat/completions", self.base_url);
-        let headers = self.request_headers();
+        let mut headers = self.request_headers();
+        headers.extend(crate::headers::opencode_headers(
+            &self.base_url,
+            req.session.as_deref(),
+            &self.extra_headers,
+        ));
         let (response, kill) = crate::http::send(cancel, url, move |agent, url| {
             let mut request = agent.post(url);
             for (name, value) in &headers {

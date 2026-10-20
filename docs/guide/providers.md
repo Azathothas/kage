@@ -180,6 +180,12 @@ It reads `OPENCODE_API_KEY`, or the key saved with
 `kage auth login opencode-go`. Models are addressed as
 `opencode-go/grok-4.7`.
 
+Every request to an `opencode.ai` endpoint, including a custom provider
+pointed there, carries the `x-opencode-session` and `x-opencode-client`
+headers OpenCode routes by. The session header holds the kage session
+id. A header of the same name under the provider's `headers` replaces
+it.
+
 ## credentials
 
 A provider registers when a key is reachable from either source, first

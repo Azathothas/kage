@@ -1612,6 +1612,18 @@ fn a_manual_compaction_shows_its_estimate_before_the_next_turn() {
 }
 
 #[test]
+fn a_run_tells_the_provider_its_session() {
+    let mock = MockProvider::replaying(text_turn("ok"));
+    let h = harness(mock.clone());
+    let id = SessionId::new();
+    h.open(id, None);
+    prompt(&h.engine, id, "hi", Delivery::Steer);
+    until_runs_end(&h.events, 1);
+    let request = mock.requests().pop().unwrap();
+    assert_eq!(request.session, Some(id.to_string()));
+}
+
+#[test]
 fn compact_without_history_is_a_no_op() {
     let h = harness(MockProvider::replaying(text_turn("ok")));
     let id = SessionId::new();

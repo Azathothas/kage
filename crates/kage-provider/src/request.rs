@@ -56,6 +56,11 @@ pub struct StreamRequest {
     /// provider's generic mapping.
     #[serde(default, skip_serializing_if = "is_unknown")]
     pub reasoning: Reasoning,
+    /// Id of the conversation the request belongs to, for gateways
+    /// that route or cache per conversation. `None` for one-off
+    /// requests outside a session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
 }
 
 fn is_unknown(reasoning: &Reasoning) -> bool {
@@ -75,6 +80,7 @@ impl StreamRequest {
             thinking: None,
             level: None,
             reasoning: Reasoning::Unknown,
+            session: None,
         }
     }
 }

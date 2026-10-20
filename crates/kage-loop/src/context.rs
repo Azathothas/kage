@@ -104,6 +104,10 @@ pub struct AgentContext {
     pub confine_paths: bool,
     /// Running token totals.
     pub budget: TokenBudget,
+    /// Id of the session this conversation belongs to, forwarded on
+    /// every [`kage_provider::StreamRequest`] for gateways that route
+    /// by conversation. `None` outside a session.
+    pub session: Option<String>,
 }
 
 impl AgentContext {
@@ -128,6 +132,7 @@ impl AgentContext {
             reasoning: kage_core::Reasoning::Unknown,
             confine_paths: true,
             budget: TokenBudget::default(),
+            session: None,
         }
     }
 

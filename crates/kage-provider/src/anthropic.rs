@@ -400,6 +400,11 @@ impl Provider for AnthropicProvider {
         let body = build_request_body(&req, true);
         let url = format!("{}/v1/messages", self.base_url);
         let mut headers = self.request_headers();
+        headers.extend(crate::headers::opencode_headers(
+            &self.base_url,
+            req.session.as_deref(),
+            &self.extra_headers,
+        ));
         if body["thinking"]["type"] == "enabled" {
             add_beta(&mut headers, INTERLEAVED_THINKING_BETA);
         }

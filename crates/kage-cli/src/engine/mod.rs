@@ -1238,6 +1238,7 @@ impl Dispatcher {
             link.inherited_until = cx.history.last().map(|m| m.id);
         }
         cx.model = bare_model;
+        cx.session = Some(id.to_string());
         fit_context(&mut cx, &self.registry, &model);
         if std::mem::take(&mut session.thinking_changed) {
             cx.thinking_level = session.state.thinking;
@@ -2045,6 +2046,7 @@ fn clone_shallow(cx: &AgentContext) -> AgentContext {
         reasoning: cx.reasoning,
         confine_paths: cx.confine_paths,
         budget: cx.budget,
+        session: None,
     }
 }
 
