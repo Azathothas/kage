@@ -2,8 +2,6 @@
 //! document in both themes, and the parse discipline holds (only the
 //! streaming entry is parsed per frame).
 
-use std::collections::HashMap;
-
 use egui_kittest::Harness;
 use kage_desktop::ui::transcript::markdown::{Pipeline, THEME_DAWN, THEME_SHADOW};
 
@@ -132,11 +130,31 @@ fn the_pipeline_parses_only_the_streaming_entry_per_frame() {
 }
 
 #[test]
-fn the_pipeline_forgets_the_entries_that_are_gone() {
-    let mut pipeline = Pipeline::new();
-    pipeline.retain(&[]);
-    assert_eq!(pipeline.parses.count("done"), 0);
-    let _: HashMap<String, usize> = HashMap::new();
+fn a_cleared_pipeline_parses_its_entries_again() {
+    #[derive(Default)]
+    struct State {
+        pipeline: Pipeline,
+    }
+    let mut harness = Harness::builder()
+        .with_size(egui::Vec2::new(600.0, 400.0))
+        .build_ui_state(
+            |ui, state: &mut State| {
+                testutil::install_theme(ui.ctx(), "kage-shadow");
+                state.pipeline.show("done", "# done", false, ui);
+            },
+            State::default(),
+        );
+    harness.run();
+    harness.run();
+    assert_eq!(harness.state().pipeline.parses.count("done"), 1);
+    harness.state_mut().pipeline.clear();
+    assert_eq!(harness.state().pipeline.parses.count("done"), 0);
+    harness.run();
+    assert_eq!(
+        harness.state().pipeline.parses.count("done"),
+        1,
+        "the cleared entry is parsed afresh, not served from a kept cache"
+    );
 }
 
 #[test]

@@ -93,6 +93,9 @@ pub struct TranscriptView {
     scroll_to: Option<RowKey>,
     /// The rows the last frame built, for the vim cursor's methods.
     rows: Vec<Row>,
+    /// The rail's ticks, kept while the row signatures they were built
+    /// from still hold.
+    rail: RailTicks,
     /// When this view was built, the clock the constellation twinkles
     /// on, so a repaint from a state change continues the animation
     /// instead of restarting it.
@@ -137,6 +140,7 @@ impl TranscriptView {
             revise: PlanRevise::default(),
             scroll_to: None,
             rows: Vec::new(),
+            rail: RailTicks::default(),
             born,
         }
     }
@@ -182,6 +186,7 @@ impl TranscriptView {
             self.vim_cursor = None;
             self.reveal.clear();
             self.revealed.clear();
+            self.pipeline.clear();
             return;
         };
         self.swap_session(self.target(store));
@@ -328,7 +333,10 @@ impl TranscriptView {
         // seek. The seek rides the same path a jump button takes, so
         // it detaches the follow the same way.
         if store.prefs().rail && self.pinned.is_none() {
-            let seek = draw_rail(ui, session, rows, offset, content, viewport);
+            self.rail.refresh(&signatures, || {
+                rows.iter().map(|row| rail_tick(session, row)).collect()
+            });
+            let seek = draw_rail(ui, rows, &self.rail.ticks, offset, content, viewport);
             if let Some(key) = seek {
                 self.scroll_to = Some(key);
             }
@@ -355,6 +363,7 @@ impl TranscriptView {
         self.vim_cursor = None;
         self.reveal.clear();
         self.revealed.clear();
+        self.pipeline.clear();
     }
 
     /// Advances the pace of the streamed text this frame: a live reply
@@ -528,10 +537,34 @@ const RAIL_THUMB_MIN: f32 = 18.0;
 /// subtle track, the viewport's thumb, and a tick per marked row:
 /// hovering a tick names it, a click scrolls to it, and a press or
 /// drag anywhere on the rail scrolls there.
+/// The rail's ticks and the row signatures they were built from.
+#[derive(Debug, Default)]
+struct RailTicks {
+    signatures: Vec<u64>,
+    ticks: Vec<Option<(Tick, String)>>,
+}
+
+impl RailTicks {
+    /// Rebuild the ticks with `build` when `signatures` changed since
+    /// the last build, and report whether it did.
+    fn refresh(
+        &mut self,
+        signatures: &[u64],
+        build: impl FnOnce() -> Vec<Option<(Tick, String)>>,
+    ) -> bool {
+        if self.signatures == signatures {
+            return false;
+        }
+        self.ticks = build();
+        self.signatures = signatures.to_vec();
+        true
+    }
+}
+
 fn draw_rail(
     ui: &mut egui::Ui,
-    session: &Session,
     rows: &[Row],
+    ticks: &[Option<(Tick, String)>],
     offset: f32,
     content: f32,
     viewport: f32,
@@ -586,8 +619,8 @@ fn draw_rail(
         seek = rows.get(ix).map(Row::key);
     }
 
-    for (ix, row) in rows.iter().enumerate() {
-        let Some((tick, label)) = rail_tick(session, row) else {
+    for (ix, (row, tick)) in rows.iter().zip(ticks).enumerate() {
+        let Some((tick, label)) = tick else {
             continue;
         };
         let at = (ix as f32 + 0.5) / count as f32;
@@ -610,7 +643,7 @@ fn draw_rail(
         if response.clicked() {
             seek = Some(row.key());
         }
-        response.on_hover_text(label);
+        response.on_hover_text(label.as_str());
         painter.rect_filled(rect, egui::CornerRadius::same(round), color);
     }
     seek
@@ -1078,6 +1111,35 @@ mod tests {
         assert!(view.smooth(&store), "the default pace is on");
         store.update_prefs(|prefs| prefs.smooth_stream = false);
         assert!(!view.smooth(&store), "the toggle shows a reply whole");
+    }
+
+    #[test]
+    fn the_rail_rebuilds_only_when_the_rows_change() {
+        let mut rail = RailTicks::default();
+        let mut builds = 0;
+        let mut build = || {
+            builds += 1;
+            vec![Some((Tick::Turn, "You: hi".to_owned()))]
+        };
+        assert!(rail.refresh(&[1], &mut build));
+        assert!(!rail.refresh(&[1], &mut build));
+        assert!(!rail.refresh(&[1], &mut build));
+        assert!(rail.refresh(&[1, 2], &mut build));
+        assert_eq!(builds, 2);
+    }
+
+    #[test]
+    fn swapping_sessions_forgets_the_markdown_caches() {
+        let mut harness = egui_kittest::Harness::builder().build_ui_state(
+            |ui, view: &mut TranscriptView| {
+                view.pipeline.show("assistant-0", "hello", false, ui);
+            },
+            TranscriptView::default(),
+        );
+        harness.run();
+        assert_eq!(harness.state().pipeline.parses.count("assistant-0"), 1);
+        harness.state_mut().swap_session(Some("b".to_owned()));
+        assert_eq!(harness.state().pipeline.parses.count("assistant-0"), 0);
     }
 
     #[test]

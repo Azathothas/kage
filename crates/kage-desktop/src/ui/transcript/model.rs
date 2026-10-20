@@ -1279,6 +1279,7 @@ fn item_fingerprint(session: &Session, ix: usize, hasher: &mut impl std::hash::H
                 session.items.len().hash(hasher);
             }
             format!("{:?}", call.status).hash(hasher);
+            call.title.hash(hasher);
             call.content.len().hash(hasher);
             call.text().len().hash(hasher);
             call.raw_output.is_some().hash(hasher);

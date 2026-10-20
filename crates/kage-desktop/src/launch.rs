@@ -244,6 +244,9 @@ pub struct Shell {
     smoke_deadline: Option<(web_time::Instant, Duration)>,
     /// Whether the engine has been asked for its themes and config.
     themes_asked: bool,
+    /// The settings page and active session the config snapshot was
+    /// last asked for, so an open page asks once instead of per frame.
+    config_asked: Option<(crate::ui::settings::Section, Option<String>)>,
     /// Synthetic chunks appended, for the 30 Hz stream measurement.
     streamed: usize,
     /// The store changes the frame's absorbed frames produced, raised
@@ -344,6 +347,7 @@ impl Shell {
             smoke_deadline: None,
             streamed: 0,
             themes_asked: false,
+            config_asked: None,
             changes: Vec::new(),
             exported: None,
             notices: crate::ui::toasts::NoticeWatch::default(),
@@ -1422,7 +1426,14 @@ impl ShellApp {
                 | crate::ui::settings::SettingsEvent::Directory(_) => {}
             }
         }
-        if self.shell.settings.is_open() && self.shell.settings.section().reads_config() {
+        let page = (self.shell.settings.is_open() && self.shell.settings.section().reads_config())
+            .then(|| {
+                (
+                    self.shell.settings.section(),
+                    self.shell.store.active_id().map(str::to_owned),
+                )
+            });
+        if newly_wanted(&mut self.shell.config_asked, page) {
             self.shell.store.ask_config();
         }
     }
@@ -2914,9 +2925,17 @@ pub fn run() {
     .expect("failed to open the window");
 }
 
+/// Whether `now` asks for something `asked` did not, remembering it.
+/// `None` asks for nothing and forgets, so the next visit asks again.
+fn newly_wanted<T: PartialEq>(asked: &mut Option<T>, now: Option<T>) -> bool {
+    let wanted = now.is_some() && *asked != now;
+    *asked = now;
+    wanted
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Launch, Wire, away_toast};
+    use super::{Launch, Wire, away_toast, newly_wanted};
     use crate::ui::sidebar::RowState;
 
     fn parse(args: &[&str]) -> Launch {
@@ -2968,6 +2987,16 @@ mod tests {
             dispatch(Context::Shell, &ctrl(egui::Key::K)),
             Some(Action::OpenPalette)
         );
+    }
+
+    #[test]
+    fn an_open_page_asks_for_config_once_per_visit() {
+        let mut asked = None;
+        let asks: Vec<bool> = [Some(1), Some(1), Some(1), Some(2), None, Some(2)]
+            .into_iter()
+            .map(|now| newly_wanted(&mut asked, now))
+            .collect();
+        assert_eq!(asks, [true, false, false, true, false, true]);
     }
 
     #[test]

@@ -570,13 +570,16 @@ impl ProviderForm {
 
     /// The key source fields.
     fn key_fields(&mut self, ui: &mut egui::Ui, palette: &Palette, edit: &mut Edit) {
-        let mut choices: Vec<(&'static str, &'static str)> =
-            vec![("env", "Environment variable"), ("paste", "Paste a key")];
-        if !self.registered() {
-            choices.push(("none", "None"));
-        }
-        let choices: &'static [(&'static str, &'static str)] =
-            Box::leak(choices.into_boxed_slice());
+        const CHOICES: &[(&str, &str)] = &[
+            ("env", "Environment variable"),
+            ("paste", "Paste a key"),
+            ("none", "None"),
+        ];
+        let choices = if self.registered() {
+            &CHOICES[..2]
+        } else {
+            CHOICES
+        };
         let current = match self.key_from {
             KeyFrom::Env => "env",
             KeyFrom::Paste => "paste",

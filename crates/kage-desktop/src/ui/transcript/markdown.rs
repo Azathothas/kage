@@ -68,11 +68,11 @@ impl Pipeline {
         Self::default()
     }
 
-    /// Drops the entries whose ids are gone, so a long session does not
-    /// accumulate caches for rows that scrolled away and were rebuilt.
-    pub fn retain(&mut self, live: &[String]) {
-        self.entries.retain(|id, _| live.contains(id));
-        self.parses.per_entry.retain(|id, _| live.contains(id));
+    /// Drops every entry. Ids are row indexes, so the entries of one
+    /// session mean nothing to the next one.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.parses.per_entry.clear();
     }
 
     /// Renders one entry's markdown. `streaming` marks the entry still
@@ -360,12 +360,14 @@ mod tests {
     }
 
     #[test]
-    fn retain_drops_the_entries_that_are_gone() {
+    fn clear_forgets_every_entry() {
         let mut pipeline = Pipeline::new();
         pipeline.parses.record("a");
-        pipeline.parses.record("b");
-        pipeline.retain(&["a".to_owned()]);
-        assert_eq!(pipeline.parses.count("a"), 1);
-        assert_eq!(pipeline.parses.count("b"), 0, "the gone entry is dropped");
+        pipeline
+            .entries
+            .insert("a".to_owned(), super::Entry::default());
+        pipeline.clear();
+        assert_eq!(pipeline.parses.count("a"), 0);
+        assert!(pipeline.entries.is_empty());
     }
 }

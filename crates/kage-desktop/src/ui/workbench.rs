@@ -319,6 +319,18 @@ pub struct FetchEntry {
     pub text: String,
 }
 
+/// How many remote fetches the transcript holds, without building
+/// their reader text.
+#[must_use]
+pub fn fetch_count(items: &[TranscriptItem]) -> usize {
+    items
+        .iter()
+        .filter(
+            |item| matches!(item, TranscriptItem::ToolCall(call) if call.kind == ToolKind::Fetch),
+        )
+        .count()
+}
+
 /// The remote fetches the transcript holds, in transcript order.
 #[must_use]
 pub fn fetch_entries(items: &[TranscriptItem]) -> Vec<FetchEntry> {
@@ -679,7 +691,7 @@ pub fn show(
     let mut events = Vec::new();
     ui.spacing_mut().item_spacing = egui::Vec2::ZERO;
     head(ui, workbench, store, palette, &mut events);
-    let Some(session) = store.active_session() else {
+    if store.active_session().is_none() {
         empty_block(
             ui,
             crate::icons::Icon::PanelRight,
@@ -687,11 +699,7 @@ pub fn show(
             palette,
         );
         return events;
-    };
-    // The panes read the session by value, so the store stays free
-    // for the panes that write to it.
-    let items = session.items.clone();
-    let agents = session.agents.clone();
+    }
     if workbench.agent_on() {
         agent_detail(ui, workbench, store, palette, &mut events);
         return events;
@@ -706,9 +714,18 @@ pub fn show(
             match workbench.tab() {
                 Tab::Changes => changes_pane(ui, workbench, store, palette, &mut events),
                 Tab::Files => files_pane(ui, workbench, store, palette, &mut events),
-                Tab::Agents => agents_pane(ui, workbench, store, palette, &agents, &mut events),
+                Tab::Agents => {
+                    let store = &*store;
+                    if let Some(session) = store.active_session() {
+                        agents_pane(ui, workbench, store, palette, &session.agents, &mut events);
+                    }
+                }
                 Tab::Terminal => terminal_pane(ui, workbench, store, palette),
-                Tab::Browser => browser_pane(ui, palette, &items),
+                Tab::Browser => {
+                    if let Some(session) = store.active_session() {
+                        browser_pane(ui, palette, &session.items);
+                    }
+                }
             }
             ui.add_space(16.0);
         });
@@ -764,8 +781,8 @@ fn head(
                 (runs > 0).then(|| runs.to_string())
             }
             Tab::Browser => {
-                let pages = fetch_entries(&session.items);
-                (!pages.is_empty()).then(|| pages.len().to_string())
+                let pages = fetch_count(&session.items);
+                (pages > 0).then(|| pages.to_string())
             }
         }
     };
@@ -2234,8 +2251,8 @@ mod tests {
     }
 
     use super::{
-        ChangeEntry, Filter, Tab, TermEntry, bytes, change_entries, change_path, fetch_entries,
-        strip_ansi, term_entries,
+        ChangeEntry, Filter, Tab, TermEntry, bytes, change_entries, change_path, fetch_count,
+        fetch_entries, strip_ansi, term_entries,
     };
     use kage_client::wire::{
         DiffContent, FsEntry, FsKind, ToolCallContent, ToolCallStatus, ToolKind,
@@ -2415,6 +2432,17 @@ mod tests {
         let (short, hidden) = super::tail("one\ntwo");
         assert_eq!(hidden, 0);
         assert_eq!(short, "one\ntwo");
+    }
+
+    #[test]
+    fn the_browser_count_takes_only_fetches() {
+        let items = vec![
+            TranscriptItem::ToolCall(call("c1", ToolKind::Fetch, "https://a.test")),
+            TranscriptItem::ToolCall(call("c2", ToolKind::Execute, "ls")),
+            TranscriptItem::ToolCall(call("c3", ToolKind::Fetch, "https://b.test")),
+        ];
+        assert_eq!(fetch_count(&items), 2);
+        assert_eq!(fetch_count(&items), fetch_entries(&items).len());
     }
 
     #[test]
