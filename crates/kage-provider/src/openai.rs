@@ -1679,12 +1679,7 @@ mod thinking_tests {
             &[Effort::None, Effort::Low, Effort::High, Effort::Max],
             false,
         );
-        let body = build_request_body(
-            &request(r, ThinkingLevel::XHigh),
-            true,
-            None,
-            Dialect::OpenAi,
-        );
+        let body = build_request_body(&request(r, ThinkingLevel::Max), true, None, Dialect::OpenAi);
         assert_eq!(body["reasoning_effort"], "max");
         let body = build_request_body(&request(r, ThinkingLevel::Off), true, None, Dialect::OpenAi);
         assert_eq!(body["reasoning_effort"], "none");
@@ -1716,7 +1711,7 @@ mod thinking_tests {
     #[test]
     fn zai_effort_models_send_thinking_and_their_own_effort() {
         let r = effort(&[Effort::Low, Effort::High, Effort::Max], false);
-        let body = build_request_body(&request(r, ThinkingLevel::XHigh), true, None, Dialect::Zai);
+        let body = build_request_body(&request(r, ThinkingLevel::Max), true, None, Dialect::Zai);
         assert_eq!(
             body["thinking"],
             serde_json::json!({"type": "enabled", "clear_thinking": false})

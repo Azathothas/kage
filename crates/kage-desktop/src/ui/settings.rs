@@ -1022,7 +1022,7 @@ fn option_control(
 fn choice_label(value: &str) -> String {
     match value {
         "" => "Auto".to_owned(),
-        "xhigh" => "Max".to_owned(),
+        "xhigh" => "XHigh".to_owned(),
         other => {
             let mut word = other.to_owned();
             if let Some(first) = word.get_mut(0..1) {

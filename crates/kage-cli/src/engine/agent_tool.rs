@@ -98,7 +98,9 @@ pub(super) fn parse_overrides(
     let thinking = thinking
         .map(|level| {
             ThinkingLevel::parse(level).ok_or_else(|| {
-                format!("thinking {level:?} is not one of off, minimal, low, medium, high or xhigh")
+                format!(
+                    "thinking {level:?} is not one of off, minimal, low, medium, high, xhigh or max"
+                )
             })
         })
         .transpose()?;
@@ -166,7 +168,7 @@ impl AgentTool {
                 },
                 "thinking": {
                     "type": "string",
-                    "enum": ["off", "minimal", "low", "medium", "high", "xhigh"],
+                    "enum": ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
                     "description": "Thinking level for this agent. Overrides the agent definition's thinking."
                 }
             },

@@ -116,7 +116,7 @@ value)` is the same as assigning.
 | `editor` | `ui.editor` | `"vim"` or `"modeless"` | `"modeless"` | immediately |
 | `input_min_lines` | `ui.input_min_lines` | integer, 1 to 64 | `1` | immediately |
 | `input_max_lines` | `ui.input_max_lines` | integer, 1 to 64 | `8` | immediately |
-| `thinking_level` | `ui.thinking_level` | `""`, `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"` or `"xhigh"` | `""` | next session |
+| `thinking_level` | `ui.thinking_level` | `""`, `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"` or `"max"` | `""` | next session |
 | `transcript_on_exit` | `ui.transcript_on_exit` | `"full"`, `"last"` or `"none"` | `"full"` | at exit |
 | `compaction_threshold` | `loop.compaction_threshold` | number, 0 to 1 (0 turns compaction off) | `0.8` | next session |
 | `leader` | `keybindings.leader` | one key, such as `","` or `"<Space>"` | `"\\"` (backslash) | mappings set after it |

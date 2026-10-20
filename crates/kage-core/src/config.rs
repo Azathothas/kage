@@ -729,7 +729,7 @@ pub struct UiConfig {
     pub input_max_lines: u16,
     /// Default thinking level for new sessions: one of the
     /// `ThinkingLevel` ladder strings (`off`, `minimal`, `low`,
-    /// `medium`, `high`, `xhigh`). Unset means automatic: high, or the
+    /// `medium`, `high`, `xhigh`, `max`). Unset means automatic: high, or the
     /// nearest level the model accepts. Parsed and seeded at session
     /// start; the Shift+Tab cycle still overrides it per session. Kept
     /// as a raw string so the option registry can validate it.

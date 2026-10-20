@@ -37,7 +37,7 @@ editor = "modeless"
 input_min_lines = 1
 input_max_lines = 8
 # default thinking level for new sessions: off, minimal, low,
-# medium, high, or xhigh. left unset, kage uses high, or the nearest
+# medium, high, xhigh, or max. left unset, kage uses high, or the nearest
 # level the model accepts, and shows it as "high (auto)". alt+t
 # still cycles it per session.
 # thinking_level = "medium"

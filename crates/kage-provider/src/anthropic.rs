@@ -798,7 +798,7 @@ mod thinking_tests {
     #[test]
     fn effort_models_get_adaptive_thinking_and_their_effort() {
         let r = effort(&[Effort::Low, Effort::High, Effort::Max], false);
-        let body = build_request_body(&request(r, ThinkingLevel::XHigh), false);
+        let body = build_request_body(&request(r, ThinkingLevel::Max), false);
         assert_eq!(body["thinking"]["type"], "adaptive");
         assert_eq!(body["output_config"]["effort"], "max");
     }

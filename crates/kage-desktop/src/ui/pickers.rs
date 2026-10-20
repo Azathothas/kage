@@ -177,13 +177,13 @@ pub fn fallback_groups(
     groups
 }
 
-/// A level's segment label: `Auto` for the engine's default, `Max`
-/// for its top effort, else the option's name capitalized.
+/// A level's segment label: `Auto` for the engine's default, `XHigh`
+/// for `xhigh`, else the option's name capitalized.
 #[must_use]
 pub fn level_label(value: &SessionConfigSelectOption) -> String {
     match value.value.as_str() {
         "default" => "Auto".to_owned(),
-        "xhigh" => "Max".to_owned(),
+        "xhigh" => "XHigh".to_owned(),
         _ => {
             let mut chars = value.name.chars();
             chars.next().map_or_else(String::new, |first| {
@@ -580,7 +580,8 @@ mod tests {
     #[test]
     fn levels_read_as_the_segment_labels() {
         assert_eq!(level_label(&value("default", "auto")), "Auto");
-        assert_eq!(level_label(&value("xhigh", "xhigh")), "Max");
+        assert_eq!(level_label(&value("xhigh", "xhigh")), "XHigh");
+        assert_eq!(level_label(&value("max", "max")), "Max");
         assert_eq!(level_label(&value("low", "low")), "Low");
     }
 
@@ -642,7 +643,7 @@ mod tests {
                 category: None,
                 kind: kage_client::wire::SessionConfigKind::Select,
                 current_value: "default".to_owned(),
-                options: vec![value("default", "Auto"), value("xhigh", "Max")],
+                options: vec![value("default", "Auto"), value("max", "max")],
             });
         assert_eq!(thinking_rows(&session, "").len(), 2);
         assert_eq!(thinking_rows(&session, "max").len(), 1);

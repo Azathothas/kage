@@ -218,7 +218,7 @@ pub enum RunRequest {
     /// fires the `thinking_level_select` plugin event.
     CycleThinkingLevel,
     /// Set the thinking level to an explicit ladder string (`off`,
-    /// `minimal`, `low`, `medium`, `high`, `xhigh`) from the
+    /// `minimal`, `low`, `medium`, `high`, `xhigh`, `max`) from the
     /// `:settings` dialog. The level rides as a raw string because
     /// kage-tui is provider-free; the worker parses it and applies
     /// exactly what [`RunRequest::CycleThinkingLevel`] applies,

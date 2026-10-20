@@ -71,7 +71,9 @@ pub struct OptionDef {
 
 /// Values [`OptionKind::Choice`] accepts for `thinking_level`: the
 /// thinking ladder, or empty for the automatic level.
-const THINKING_LEVELS: &[&str] = &["", "off", "minimal", "low", "medium", "high", "xhigh"];
+const THINKING_LEVELS: &[&str] = &[
+    "", "off", "minimal", "low", "medium", "high", "xhigh", "max",
+];
 
 /// Every option.
 pub const OPTIONS: &[OptionDef] = &[

@@ -361,7 +361,7 @@ run.
 ## thinking
 
 A session's thinking level is one of `off`, `minimal`, `low`,
-`medium`, `high` and `xhigh`, or automatic. Automatic is the default:
+`medium`, `high`, `xhigh` and `max`, or automatic. Automatic is the default:
 it sends `high`, or the nearest level the model accepts when it has no
 `high` (the higher one on a tie). A level you choose with
 `alt+t`, the settings dialog or `[ui] thinking_level` is fitted the
@@ -376,8 +376,8 @@ level onto it:
 
 | model takes        | kage sends |
 | ------------------ | ---------- |
-| effort values      | the effort named like the level. `none` is `off`. `max` stands in for `xhigh` on a model without `xhigh` (a model with both sends `xhigh`, so `max` is not reachable). |
-| a token budget     | the level's budget (`minimal` 1024 to `xhigh` 32768 tokens), kept within the model's bounds |
+| effort values      | the effort named like the level. `none` is `off`. |
+| a token budget     | the level's budget (`minimal` 1024 to `max` 65536 tokens), kept within the model's bounds |
 | an on/off switch   | on for any level other than `off`, shown as `high` |
 | nothing to set     | no thinking setting |
 

@@ -5,7 +5,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// Unified thinking effort the host requests for one turn.
 ///
-/// A six-step ladder the user cycles through with `Shift+Tab`. [`Reasoning::resolve`] fits a level to
+/// A seven-step ladder the user cycles through with `Shift+Tab`. [`Reasoning::resolve`] fits a level to
 /// what the model accepts, and providers translate it to their shape
 /// (an effort value, a thinking token budget, or an on/off switch).
 ///
@@ -28,21 +28,25 @@ pub enum ThinkingLevel {
     Medium,
     /// Heavier reasoning. `OpenAI` maps to `reasoning_effort=high`.
     High,
-    /// Maximum supported reasoning. `OpenAI` keeps `high`; providers
-    /// with budget-based thinking allocate their largest tier.
+    /// Heavier than high. `OpenAI` keeps `high` on a model without an
+    /// effort list; budget-based providers allocate a large tier.
     #[serde(rename = "xhigh")]
     XHigh,
+    /// The most the model offers: its `max` effort, or the largest
+    /// budget tier.
+    Max,
 }
 
 impl ThinkingLevel {
     /// Every level, lowest first.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Off,
         Self::Minimal,
         Self::Low,
         Self::Medium,
         Self::High,
         Self::XHigh,
+        Self::Max,
     ];
 
     /// The level after `current` in `levels` (lowest first), wrapping to
@@ -70,6 +74,7 @@ impl ThinkingLevel {
             Self::Medium => "medium",
             Self::High => "high",
             Self::XHigh => "xhigh",
+            Self::Max => "max",
         }
     }
 
@@ -93,6 +98,7 @@ impl ThinkingLevel {
             "medium" => Some(Self::Medium),
             "high" => Some(Self::High),
             "xhigh" => Some(Self::XHigh),
+            "max" => Some(Self::Max),
             _ => None,
         }
     }
@@ -106,8 +112,8 @@ impl ThinkingLevel {
 
     /// Map the level to an `OpenAI` `reasoning_effort` string for a
     /// model without a catalog effort list. Returns `None` for
-    /// [`Self::Off`] (caller should omit the field). `XHigh` collapses
-    /// to `"high"`, the largest value every such model takes.
+    /// [`Self::Off`] (caller should omit the field). `XHigh` and `Max`
+    /// collapse to `"high"`, the largest value every such model takes.
     #[must_use]
     pub fn openai_reasoning_effort(self) -> Option<&'static str> {
         match self {
@@ -115,7 +121,7 @@ impl ThinkingLevel {
             Self::Minimal => Some("minimal"),
             Self::Low => Some("low"),
             Self::Medium => Some("medium"),
-            Self::High | Self::XHigh => Some("high"),
+            Self::High | Self::XHigh | Self::Max => Some("high"),
         }
     }
 
@@ -131,6 +137,7 @@ impl ThinkingLevel {
             Self::Medium => Some(8_192),
             Self::High => Some(16_384),
             Self::XHigh => Some(32_768),
+            Self::Max => Some(65_536),
         }
     }
 }
@@ -139,9 +146,7 @@ impl ThinkingLevel {
 /// lists it.
 ///
 /// Efforts map onto the [`ThinkingLevel`] ladder by name. `none` is
-/// [`ThinkingLevel::Off`]. `max` carries [`ThinkingLevel::XHigh`] on a
-/// model without `xhigh`; a model that accepts both sends `xhigh` and
-/// `max` stays out of reach.
+/// [`ThinkingLevel::Off`].
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Effort {
@@ -231,15 +236,16 @@ impl Efforts {
     /// The effort that carries `level`, if the set has one.
     #[must_use]
     pub fn for_level(self, level: ThinkingLevel) -> Option<Effort> {
-        let wanted: &[Effort] = match level {
-            ThinkingLevel::Off => &[Effort::None],
-            ThinkingLevel::Minimal => &[Effort::Minimal],
-            ThinkingLevel::Low => &[Effort::Low],
-            ThinkingLevel::Medium => &[Effort::Medium],
-            ThinkingLevel::High => &[Effort::High],
-            ThinkingLevel::XHigh => &[Effort::XHigh, Effort::Max],
+        let wanted = match level {
+            ThinkingLevel::Off => Effort::None,
+            ThinkingLevel::Minimal => Effort::Minimal,
+            ThinkingLevel::Low => Effort::Low,
+            ThinkingLevel::Medium => Effort::Medium,
+            ThinkingLevel::High => Effort::High,
+            ThinkingLevel::XHigh => Effort::XHigh,
+            ThinkingLevel::Max => Effort::Max,
         };
-        wanted.iter().copied().find(|e| self.contains(*e))
+        self.contains(wanted).then_some(wanted)
     }
 }
 
@@ -422,15 +428,10 @@ mod tests {
 
     #[test]
     fn level_parse_roundtrips_each_variant() {
-        for lv in [
-            ThinkingLevel::Off,
-            ThinkingLevel::Minimal,
-            ThinkingLevel::Low,
-            ThinkingLevel::Medium,
-            ThinkingLevel::High,
-            ThinkingLevel::XHigh,
-        ] {
+        for lv in ThinkingLevel::ALL {
             assert_eq!(ThinkingLevel::parse(lv.as_str()), Some(lv));
+            let wire = serde_json::to_value(lv).unwrap();
+            assert_eq!(wire, serde_json::json!(lv.as_str()));
         }
         assert_eq!(ThinkingLevel::parse("nope"), None);
     }
@@ -444,6 +445,7 @@ mod tests {
         );
         assert_eq!(ThinkingLevel::High.openai_reasoning_effort(), Some("high"));
         assert_eq!(ThinkingLevel::XHigh.openai_reasoning_effort(), Some("high"));
+        assert_eq!(ThinkingLevel::Max.openai_reasoning_effort(), Some("high"));
     }
 
     #[test]
@@ -465,9 +467,13 @@ mod tests {
             ThinkingLevel::High.default_budget_tokens()
                 < ThinkingLevel::XHigh.default_budget_tokens()
         );
+        assert!(
+            ThinkingLevel::XHigh.default_budget_tokens()
+                < ThinkingLevel::Max.default_budget_tokens()
+        );
     }
 
-    use ThinkingLevel::{High, Low, Medium, Minimal, Off, XHigh};
+    use ThinkingLevel::{High, Low, Max, Medium, Minimal, Off, XHigh};
 
     fn effort(values: &[Effort], toggle: bool) -> Reasoning {
         Reasoning::Effort {
@@ -494,7 +500,7 @@ mod tests {
         assert_eq!(effort(&[Effort::Medium], false).resolve(None), Some(Medium));
         assert_eq!(
             effort(&[Effort::Low, Effort::Max], false).resolve(None),
-            Some(XHigh)
+            Some(Max)
         );
         let tie = effort(&[Effort::Minimal, Effort::Medium, Effort::XHigh], false);
         assert_eq!(tie.resolve(None), Some(XHigh));
@@ -527,10 +533,14 @@ mod tests {
     #[test]
     fn levels_follow_efforts_and_toggle() {
         let r = effort(&[Effort::Low, Effort::High, Effort::Max], true);
-        assert_eq!(r.levels(), vec![Off, Low, High, XHigh]);
-        assert_eq!(r.effort(XHigh), Some(Effort::Max));
+        assert_eq!(r.levels(), vec![Off, Low, High, Max]);
+        assert_eq!(r.effort(Max), Some(Effort::Max));
+        assert_eq!(r.effort(XHigh), None);
+        assert_eq!(r.resolve(Some(XHigh)), Some(Max));
         let both = effort(&[Effort::XHigh, Effort::Max], false);
+        assert_eq!(both.levels(), vec![XHigh, Max]);
         assert_eq!(both.effort(XHigh), Some(Effort::XHigh));
+        assert_eq!(both.effort(Max), Some(Effort::Max));
         assert_eq!(Reasoning::Toggle.levels(), vec![Off, High]);
     }
 
