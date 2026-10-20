@@ -289,9 +289,12 @@ goes back to the model as described under [thinking](#thinking).
 
 Some `anthropic` gateways count cached tokens inside `input_tokens`
 instead of beside it, which makes the context gauge and the cost read
-about double. Set `input_includes_cache = true` on such a provider and
-kage takes the cached tokens back out of the input. `openai` endpoints
-always count this way, so kage corrects them without the key.
+about double. kage notices this by itself: Anthropic reports less input
+than cached tokens on a cache hit, so a response whose `input_tokens`
+covers its cached tokens has them taken back out. Set
+`input_includes_cache = true` to do that for every response of a
+provider. `openai` endpoints always count this way, so kage corrects
+them without the key.
 
 Five optional model keys describe what a model accepts and costs,
 since kage has no catalog entry for it:

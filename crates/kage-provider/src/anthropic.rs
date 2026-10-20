@@ -418,9 +418,7 @@ impl Provider for AnthropicProvider {
 
         let reader: Box<dyn Read + Send> = Box::new(response.into_body().into_reader());
         let mut inner: EventStream = Box::new(AnthropicStream::new(reader, cancel.clone()));
-        if self.input_includes_cache {
-            inner = uncached_input(inner);
-        }
+        inner = uncached_input(inner, self.input_includes_cache);
         Ok(crate::cancelable::make_cancelable(
             inner,
             cancel.clone(),
@@ -429,12 +427,18 @@ impl Provider for AnthropicProvider {
     }
 }
 
-/// `events` with the cached tokens taken out of the final usage's input.
-fn uncached_input(events: EventStream) -> EventStream {
-    Box::new(events.map(|event| match event {
+/// `events` with the cached tokens taken out of the final usage's
+/// input: always when `forced`, otherwise only when the counts show
+/// the endpoint put them there.
+fn uncached_input(events: EventStream, forced: bool) -> EventStream {
+    Box::new(events.map(move |event| match event {
         Ok(ProviderEvent::MessageEnd { stop_reason, usage }) => Ok(ProviderEvent::MessageEnd {
             stop_reason,
-            usage: crate::event::without_cached_input(usage),
+            usage: if forced {
+                crate::event::without_cached_input(usage)
+            } else {
+                crate::event::without_cached_input_if_included(usage)
+            },
         }),
         other => other,
     }))

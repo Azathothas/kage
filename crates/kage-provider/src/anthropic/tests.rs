@@ -559,7 +559,7 @@ fn a_gateway_counting_cache_inside_input_counts_it_once() {
          data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":340412,\"cache_read_input_tokens\":339875,\"cache_creation_input_tokens\":200,\"output_tokens\":1}}}\n\n\
          event: message_stop\n\
          data: {\"type\":\"message_stop\"}\n\n";
-    let usage = uncached_input(Box::new(stream_from_bytes(bytes)))
+    let usage = uncached_input(Box::new(stream_from_bytes(bytes)), true)
         .find_map(|event| match event {
             Ok(ProviderEvent::MessageEnd { usage, .. }) => Some(usage),
             _ => None,
@@ -568,6 +568,42 @@ fn a_gateway_counting_cache_inside_input_counts_it_once() {
     assert_eq!(usage.input, 337);
     assert_eq!(usage.cache_read, 339_875);
     assert_eq!(usage.cache_write, 200);
+}
+
+fn usage_after_correction(input: u64, read: u64, write: u64) -> kage_core::TokenUsage {
+    let body = format!(
+        "event: message_start\n\
+         data: {{\"type\":\"message_start\",\"message\":{{\"usage\":{{\"input_tokens\":{input},\"cache_read_input_tokens\":{read},\"cache_creation_input_tokens\":{write},\"output_tokens\":1}}}}}}\n\n\
+         event: message_stop\n\
+         data: {{\"type\":\"message_stop\"}}\n\n"
+    );
+    uncached_input(
+        Box::new(AnthropicStream::new(
+            Box::new(std::io::Cursor::new(body.into_bytes())),
+            CancelFlag::new(),
+        )),
+        false,
+    )
+    .find_map(|event| match event {
+        Ok(ProviderEvent::MessageEnd { usage, .. }) => Some(usage),
+        _ => None,
+    })
+    .unwrap()
+}
+
+#[test]
+fn an_unflagged_gateway_that_includes_cache_in_input_is_detected() {
+    let usage = usage_after_correction(25_231, 18_901, 0);
+    assert_eq!(usage.input, 6_330);
+    assert_eq!(usage.cache_read, 18_901);
+}
+
+#[test]
+fn an_unflagged_endpoint_with_anthropic_counts_is_left_alone() {
+    let usage = usage_after_correction(2, 33_847, 15_482);
+    assert_eq!(usage.input, 2);
+    let usage = usage_after_correction(5_000, 90_000, 0);
+    assert_eq!(usage.input, 5_000);
 }
 
 #[test]

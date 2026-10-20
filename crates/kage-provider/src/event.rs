@@ -23,6 +23,21 @@ pub(crate) fn without_cached_input(mut usage: TokenUsage) -> TokenUsage {
     usage
 }
 
+/// [`without_cached_input`] for an Anthropic-protocol response whose
+/// endpoint may count either way. Anthropic reports `input_tokens`
+/// beside the cache fields, so a request with a cache hit has less
+/// input than cached tokens. A gateway fronting another model reports
+/// the whole prompt in `input_tokens`, which is never below the cached
+/// tokens it contains. Only the second shape is corrected.
+#[must_use]
+pub(crate) fn without_cached_input_if_included(usage: TokenUsage) -> TokenUsage {
+    if usage.input >= usage.cache_read.saturating_add(usage.cache_write) {
+        without_cached_input(usage)
+    } else {
+        usage
+    }
+}
+
 /// One event in a provider's streaming response.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
