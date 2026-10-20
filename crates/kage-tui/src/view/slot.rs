@@ -845,13 +845,14 @@ fn push_usage(name: &str, u: &SessionUsage, styles: &Styles, out: &mut Vec<Span<
             out.push(Span::styled(spinner_frame().to_owned(), styles.strong));
         }
         "context" => {
+            let about = if u.context_estimated { "~" } else { "" };
             if u.context_window > 0 {
                 #[expect(clippy::cast_precision_loss, reason = "a rounded percentage")]
                 let pct =
                     (u.current_context as f64 / u.context_window as f64 * 100.0).clamp(0.0, 999.9);
                 out.push(Span::styled(
                     format!(
-                        "{pct:.0}% ctx ({}/{})",
+                        "{about}{pct:.0}% ctx ({about}{}/{})",
                         format_token_count(u.current_context),
                         format_token_count(u.context_window)
                     ),
@@ -859,7 +860,7 @@ fn push_usage(name: &str, u: &SessionUsage, styles: &Styles, out: &mut Vec<Span<
                 ));
             } else if u.current_context > 0 {
                 out.push(Span::styled(
-                    format!("{} ctx", format_token_count(u.current_context)),
+                    format!("{about}{} ctx", format_token_count(u.current_context)),
                     styles.text,
                 ));
             }
@@ -1053,6 +1054,14 @@ mod tests {
         };
         let input = InputState::new();
         assert_eq!(painted("context", &usage, &input), "12% ctx (24k/200k)");
+        let estimated = SessionUsage {
+            context_estimated: true,
+            ..usage.clone()
+        };
+        assert_eq!(
+            painted("context", &estimated, &input),
+            "~12% ctx (~24k/200k)"
+        );
         assert_eq!(painted("tokens", &usage, &input), "in 12k out 2k $0.02");
         assert_eq!(painted("thinking", &usage, &input), "thinking high");
         assert_eq!(painted("permission", &usage, &input), " ask mode");

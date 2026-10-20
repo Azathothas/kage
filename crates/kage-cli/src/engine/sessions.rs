@@ -704,6 +704,7 @@ impl super::Dispatcher {
                 .and_then(kage_core::ThinkingLevel::parse);
             session.swarm_mode = replay.swarm_mode.unwrap_or(false);
             session.gate.set_plan(replay.plan_mode.unwrap_or(false));
+            super::fit_context(&mut cx, &self.registry, &session.state.model);
             session.usage = super::usage_of(&cx);
             session.state.thinking = cx.thinking_level;
             super::fit_to_model(&mut session.state, &self.registry);
@@ -853,7 +854,7 @@ impl super::Dispatcher {
         &mut self,
         old: SessionId,
         new: SessionId,
-        cx: kage_loop::AgentContext,
+        mut cx: kage_loop::AgentContext,
         recorder: super::Recorder,
         title: Option<String>,
         timeline: Vec<kage_core::protocol::TimelineItem>,
@@ -865,6 +866,7 @@ impl super::Dispatcher {
         self.swarm_requeues.remove(&old);
         self.bus.forget(old);
         self.report_closed(old);
+        super::fit_context(&mut cx, &self.registry, &session.state.model);
         session.usage = super::usage_of(&cx);
         session.state.thinking = cx.thinking_level;
         super::fit_to_model(&mut session.state, &self.registry);

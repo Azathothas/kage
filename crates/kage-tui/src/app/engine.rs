@@ -246,10 +246,13 @@ impl App {
                     usage.cache_read_tokens = totals.total.cache_read;
                     usage.cache_write_tokens = totals.total.cache_write;
                     usage.current_context = totals.context_used;
+                    usage.context_estimated = totals.context_estimated;
                     usage.context_window = totals.context_window;
                     usage.total_cost = totals.cost;
                 }
-                if let Some(before) = self.pending_compaction_before.take() {
+                if !totals.context_estimated
+                    && let Some(before) = self.pending_compaction_before.take()
+                {
                     self.pair_compaction_tokens(before, totals.context_used);
                 }
             }

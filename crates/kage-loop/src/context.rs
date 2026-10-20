@@ -13,14 +13,14 @@ use serde::{Deserialize, Serialize};
 /// purposes; [`Self::current_context`] is the most recent turn's
 /// `input + output + cache_read + cache_write` and is what the compaction
 /// threshold and the modeline percentage compare against the model's
-/// context window. The two are different because providers report each
-/// turn's `usage.input` as the *full prompt size* for that request - which
-/// already includes the entire prior conversation - so summing across
-/// turns triple-counts history. The `OpenCode` project takes the same
-/// per-turn snapshot approach in `session/overflow.ts`.
+/// context window. The two are different because each turn's prompt
+/// already carries the entire prior conversation, so summing prompt sizes
+/// across turns would count history again on every turn. The `OpenCode`
+/// project takes the same per-turn snapshot approach in
+/// `session/overflow.ts`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct TokenBudget {
-    /// Cumulative input tokens charged across all turns.
+    /// Cumulative uncached input tokens across all turns.
     pub used_input: u64,
     /// Cumulative output tokens emitted across all turns.
     pub used_output: u64,

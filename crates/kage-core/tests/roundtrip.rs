@@ -114,6 +114,7 @@ fn all_loop_events_roundtrip() {
             summarized: 30,
             summary: "[summary of 30 earlier turns]\nfoo".into(),
             before: 150_000,
+            estimate: 0,
         },
         LoopEvent::Error {
             kind: LoopError::Cancelled,

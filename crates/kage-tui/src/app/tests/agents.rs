@@ -346,6 +346,7 @@ fn the_usage_snapshot_follows_the_focused_agent() {
         context_used: 2_000,
         context_window: 100_000,
         cost: 0.05,
+        context_estimated: false,
     };
     send_to(
         &mut app,

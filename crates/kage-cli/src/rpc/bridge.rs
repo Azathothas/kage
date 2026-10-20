@@ -467,6 +467,7 @@ impl Bridge {
             summarized,
             summary,
             before,
+            ..
         } = event
         {
             self.observe_compaction(session, client_id, *kept, *summarized, *before, summary);

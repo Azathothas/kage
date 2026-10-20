@@ -1584,6 +1584,34 @@ fn a_compacted_session_replays_the_live_history() {
 }
 
 #[test]
+fn a_manual_compaction_shows_its_estimate_before_the_next_turn() {
+    let h = harness(MockProvider::sequence(vec![
+        text_turn("one"),
+        text_turn("two"),
+        text_turn("three"),
+        text_turn("summary"),
+    ]));
+    let id = SessionId::new();
+    h.open(id, None);
+    for text in ["one", "two", "three"] {
+        prompt(&h.engine, id, text, Delivery::Steer);
+        until_runs_end(&h.events, 1);
+    }
+    h.engine.send(Command::to(id, CommandKind::Compact));
+    let seen = wait_for(&h.events, |e| {
+        matches!(
+            e.event,
+            Event::Host(HostEvent::UsageUpdated { usage }) if usage.context_estimated
+        )
+    });
+    assert!(
+        seen.iter()
+            .any(|e| matches!(e.event, Event::Loop(LoopEvent::Compaction { .. })))
+    );
+    until_runs_end(&h.events, 1);
+}
+
+#[test]
 fn compact_without_history_is_a_no_op() {
     let h = harness(MockProvider::replaying(text_turn("ok")));
     let id = SessionId::new();
@@ -3934,6 +3962,58 @@ impl kage_provider::Provider for Declared {
     fn models(&self) -> Vec<kage_provider::ProviderModel> {
         vec![self.model.clone()]
     }
+}
+
+fn windowed(mock: MockProvider, context: u64) -> ProviderRegistry {
+    let declared = Declared {
+        mock,
+        model: kage_provider::ProviderModel {
+            id: "m".into(),
+            context: Some(context),
+            ..kage_provider::ProviderModel::default()
+        },
+    };
+    ProviderRegistry::new().with(Arc::new(declared))
+}
+
+fn window_of(event: &Envelope) -> Option<u64> {
+    match &event.event {
+        Event::Host(HostEvent::UsageUpdated { usage }) => Some(usage.context_window),
+        _ => None,
+    }
+}
+
+#[test]
+fn a_model_switch_refreshes_the_context_window() {
+    let h = harness_on(windowed(MockProvider::replaying(text_turn("ok")), 500_000));
+    let id = SessionId::new();
+    h.open(id, None);
+
+    set_model(&h.engine, id, "mock/other");
+    set_model(&h.engine, id, "mock/m");
+    wait_for(&h.events, |e| window_of(e) == Some(500_000));
+}
+
+#[test]
+fn a_loaded_session_reports_its_own_model_window() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = harness_on(windowed(MockProvider::replaying(text_turn("ok")), 500_000));
+    let id = SessionId::new();
+    let (recorder, path) = recorder_in(dir.path(), id);
+    first.open(id, Some(recorder));
+    first.engine.shutdown();
+
+    let h = harness_on(windowed(MockProvider::replaying(text_turn("ok")), 500_000));
+    let fresh = SessionId::new();
+    h.open(fresh, None);
+    set_model(&h.engine, fresh, "mock/other");
+    wait_for(&h.events, |e| window_of(e).is_some());
+    h.engine
+        .send(Command::to(fresh, CommandKind::LoadSession { path }));
+    let seen = wait_for(&h.events, is_session_changed);
+    let loaded = seen.last().unwrap().session;
+    let seen = wait_for(&h.events, |e| e.session == loaded && window_of(e).is_some());
+    assert_eq!(window_of(seen.last().unwrap()), Some(500_000));
 }
 
 #[test]

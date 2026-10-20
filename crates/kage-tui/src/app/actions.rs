@@ -970,8 +970,9 @@ fn usage_body(usage: &crate::usage::SessionUsage) -> String {
             .saturating_mul(100)
             .checked_div(usage.context_window)
             .unwrap_or(100);
+        let about = if usage.context_estimated { "~" } else { "" };
         lines.push(format!(
-            "  {}  {percent}%  ({} / {})",
+            "  {}  {about}{percent}%  ({about}{} / {})",
             usage_bar(usage.current_context, usage.context_window),
             compact_tokens(usage.current_context),
             compact_tokens(usage.context_window),

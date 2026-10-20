@@ -391,11 +391,16 @@ pub enum LoopEvent {
         /// Text of the synthetic message that replaced the summarized turns.
         summary: String,
         /// Context fill in use right before the compaction spliced the
-        /// summary in, from the live budget. The fill after the
-        /// compaction is unknown here: it lands with the next turn's
-        /// real usage. Absent in event streams from older versions.
+        /// summary in, from the live budget. The real fill after the
+        /// compaction lands with the next turn's usage. Absent in event
+        /// streams from older versions.
         #[serde(default)]
         before: u64,
+        /// Rough fill after the splice: `before` less the summarized
+        /// turns plus the summary, by character count. `0` when
+        /// `before` is unknown or in streams from older versions.
+        #[serde(default)]
+        estimate: u64,
     },
     /// History compaction began summarizing: the loop is about to call
     /// the summarizer model, which can take a while. Transient, like

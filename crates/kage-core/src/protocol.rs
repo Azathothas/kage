@@ -496,6 +496,10 @@ pub struct Usage {
     pub context_window: u64,
     /// Cumulative cost in dollars. `0.0` when the model has no pricing.
     pub cost: f64,
+    /// Whether `context_used` is a compaction's estimate rather than a
+    /// turn's reported usage.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub context_estimated: bool,
 }
 
 /// Severity of a [`HostEvent::Notice`].
@@ -984,6 +988,7 @@ mod tests {
                 summarized: 9,
                 summary: "s".into(),
                 before: 150_000,
+                estimate: 40_000,
             },
             LoopEvent::ProviderRetry {
                 attempt: 2,
@@ -1043,6 +1048,7 @@ mod tests {
                     context_used: 900,
                     context_window: 200_000,
                     cost: 0.123_456_789,
+                    context_estimated: true,
                 },
             },
             HostEvent::SessionChanged {

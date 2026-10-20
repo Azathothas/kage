@@ -176,6 +176,7 @@ fn run_compaction<F: FnMut(LoopEvent)>(
     // fallible step below has succeeded, so a failed summary or hook
     // leaves the conversation intact.
     let transcript = serialize_conversation(&cx.history[..split]);
+    let summarized_tokens = estimate_tokens(&transcript);
     let mut prep = CompactionPrep {
         prompt: format!("<conversation>\n{transcript}</conversation>\n\n{SUMMARIZE_INSTRUCTION}"),
         transcript,
@@ -242,6 +243,13 @@ fn run_compaction<F: FnMut(LoopEvent)>(
         ts: chrono::Utc::now(),
     };
     let before = cx.budget.current_context;
+    let estimate = if before == 0 {
+        0
+    } else {
+        before
+            .saturating_sub(summarized_tokens)
+            .saturating_add(estimate_tokens(&summary_body))
+    };
     cx.history
         .splice(..split, std::iter::once(Arc::new(summary_msg)));
     // Zero only the live context snapshot: the cumulative `used_*`
@@ -258,6 +266,7 @@ fn run_compaction<F: FnMut(LoopEvent)>(
         summarized: split,
         summary: summary_body,
         before,
+        estimate,
     });
     Ok(true)
 }
@@ -293,9 +302,9 @@ fn should_compact(cx: &AgentContext, config: LoopConfig) -> bool {
         .saturating_mul(permille)
         .saturating_div(1000);
     // Compare the *most recent* turn's full prompt size to the
-    // window. Summing `used_input` would triple-count history
-    // because each turn's `usage.input` already contains the entire
-    // prior conversation. The reserve guard trips before the
+    // window. Summing per-turn prompts would count history again on
+    // every turn, since each prompt carries the entire prior
+    // conversation. The reserve guard trips before the
     // threshold when the remaining room can no longer hold a full
     // reply, so a long generation cannot overflow the window.
     let reserve = OUTPUT_RESERVE.min(cx.context_window / 2);
@@ -852,6 +861,49 @@ mod tests {
         assert_eq!(cx.budget.used_input, 1_000);
         assert_eq!(cx.budget.used_output, 500);
         assert_eq!(cx.budget.used_cache_read, 40);
+        assert_eq!(cx.budget.current_context, 0);
+    }
+
+    /// The host's estimate trades the summarized turns for the summary,
+    /// while the budget keeps `0` so the estimate never trips another
+    /// compaction before real usage arrives.
+    #[test]
+    fn compaction_estimates_the_fill_it_leaves() {
+        let provider = MockProvider::replaying(vec![
+            Ok(ProviderEvent::TextDelta {
+                delta: "summary".into(),
+            }),
+            Ok(ProviderEvent::MessageEnd {
+                stop_reason: StopReason::EndTurn,
+                usage: TokenUsage::default(),
+            }),
+        ]);
+        let mut cx = loaded_context(1_000, 10);
+        cx.budget.current_context = 150_000;
+        cx.context_window = 200_000;
+        let split = cx.history.len() - KEEP_RECENT;
+        let summarized = estimate_tokens(&serialize_conversation(&cx.history[..split]));
+        let mut events = Vec::new();
+
+        let ran = force_compact(
+            &mut cx,
+            &provider,
+            &CancelFlag::new(),
+            &mut NoopHooks,
+            &mut |e| events.push(e),
+        )
+        .unwrap();
+        assert!(ran);
+        let (estimate, summary) = events
+            .iter()
+            .find_map(|e| match e {
+                LoopEvent::Compaction {
+                    estimate, summary, ..
+                } => Some((*estimate, summary.clone())),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(estimate, 150_000 - summarized + estimate_tokens(&summary));
         assert_eq!(cx.budget.current_context, 0);
     }
 

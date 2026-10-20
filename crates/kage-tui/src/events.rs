@@ -1232,6 +1232,7 @@ mod tests {
             summarized: 12,
             summary: "everyone agrees".into(),
             before: 84_000,
+            estimate: 0,
         });
         let buf = buf.lock().unwrap();
         match buf.blocks()[0].as_ref() {

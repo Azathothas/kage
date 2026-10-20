@@ -242,6 +242,7 @@ impl AgentReport {
                 cost: attr("cost")
                     .and_then(|value| value.parse().ok())
                     .unwrap_or(0.0),
+                ..Usage::default()
             },
             run_ms: attr("run_ms").and_then(|value| value.parse().ok()),
         });
@@ -433,6 +434,7 @@ mod tests {
                     context_used: 4000,
                     context_window: 200_000,
                     cost: 0.012,
+                    context_estimated: false,
                 },
                 run_ms: Some(4200),
             }),

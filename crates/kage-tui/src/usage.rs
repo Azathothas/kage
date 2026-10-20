@@ -42,6 +42,9 @@ pub struct SessionUsage {
     /// for the modeline percentage; left at `0` until the first turn
     /// finishes.
     pub current_context: u64,
+    /// Whether [`Self::current_context`] is a compaction's estimate
+    /// waiting for the next turn's real usage.
+    pub context_estimated: bool,
     /// Effective context window for `model`, in tokens. `0` when
     /// unknown (renderer hides the percentage in that case).
     pub context_window: u64,

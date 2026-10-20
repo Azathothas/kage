@@ -131,6 +131,7 @@ impl Recorder {
                 summarized,
                 summary,
                 before,
+                ..
             } => self.writer()?.append(&SessionEntry::Compaction(Compaction {
                 id: EntryId::new(),
                 ts: Utc::now(),
@@ -264,6 +265,7 @@ mod tests {
                 summarized: 2,
                 summary: "s".into(),
                 before: 9_000,
+                estimate: 0,
             })
             .unwrap();
 

@@ -899,6 +899,8 @@ impl Dispatcher {
                     if let Some(recorder) = idle.recorder.as_mut() {
                         report_write(&self.bus, id, recorder.set_model(&session.state.model));
                     }
+                    fit_context(&mut idle.cx, &self.registry, &session.state.model);
+                    show_window(&self.bus, id, &mut session.usage, idle.cx.context_window);
                 }
                 None => session.model_changed = true,
             }
@@ -1255,7 +1257,7 @@ impl Dispatcher {
         let mcp = mcp_lease(&self.bus, id, session);
         session.limit = None;
 
-        session.usage.context_window = cx.context_window;
+        show_window(&self.bus, id, &mut session.usage, cx.context_window);
         session.cancel.reset();
         session.state.working = true;
         let mut gate = session.gate.clone().with_cancel(session.cancel.clone());
@@ -1999,6 +2001,15 @@ fn notice(bus: &Bus, id: SessionId, level: NoticeLevel, text: String) {
     );
 }
 
+/// Put `window` on `usage` and tell clients when it changed, so the
+/// footer follows a model switch before the next turn reports usage.
+fn show_window(bus: &Bus, id: SessionId, usage: &mut Usage, window: u64) {
+    if usage.context_window != window {
+        usage.context_window = window;
+        bus.publish(id, HostEvent::UsageUpdated { usage: *usage });
+    }
+}
+
 /// Usage totals carried by a context's token budget.
 fn usage_of(cx: &AgentContext) -> Usage {
     Usage {
@@ -2011,6 +2022,7 @@ fn usage_of(cx: &AgentContext) -> Usage {
         context_used: cx.budget.current_context,
         context_window: cx.context_window,
         cost: 0.0,
+        context_estimated: false,
     }
 }
 

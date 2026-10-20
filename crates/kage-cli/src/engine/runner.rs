@@ -246,7 +246,16 @@ impl Run {
                 LoopEvent::MessageEnd { usage, .. } => Some(*usage),
                 _ => None,
             };
+            let compacted = match &event {
+                LoopEvent::Compaction { estimate, .. } if *estimate > 0 => Some(*estimate),
+                _ => None,
+            };
             bus.publish(session, event);
+            if let Some(estimate) = compacted {
+                usage.context_used = estimate;
+                usage.context_estimated = true;
+                bus.publish(session, HostEvent::UsageUpdated { usage });
+            }
             if let Some(turn) = turn_usage {
                 add_turn(&mut usage, &turn, price);
                 bus.publish(session, HostEvent::UsageUpdated { usage });
@@ -413,6 +422,7 @@ fn add_turn(usage: &mut Usage, turn: &TokenUsage, price: Option<ModelCost>) {
     total.cache_read += turn.cache_read;
     total.cache_write += turn.cache_write;
     usage.context_used = turn.input + turn.output + turn.cache_read + turn.cache_write;
+    usage.context_estimated = false;
     if let Some(rate) = price {
         usage.cost += TokenCost::from_usage(
             turn,

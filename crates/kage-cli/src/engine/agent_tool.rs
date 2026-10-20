@@ -492,6 +492,7 @@ mod tests {
             cost: 0.5,
             context_used: 2_160,
             context_window: 200_000,
+            context_estimated: false,
         };
         let out = agent_result(
             id,

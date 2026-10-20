@@ -364,6 +364,28 @@ fn a_compaction_card_gains_its_token_delta_when_the_next_usage_arrives() {
                 summarized: 12,
                 summary: "kept decisions".into(),
                 before: 84_000,
+                estimate: 0,
+            }
+            .into(),
+        ],
+    );
+    assert!(
+        last_block_text(&buffer)
+            .starts_with("Compacted history (12 messages summarized, 4 kept)\n")
+    );
+
+    // The engine's estimate updates the footer but leaves the card
+    // waiting for the real fill.
+    feed(
+        &mut app,
+        &events,
+        vec![
+            kage_core::protocol::HostEvent::UsageUpdated {
+                usage: kage_core::protocol::Usage {
+                    context_used: 15_000,
+                    context_estimated: true,
+                    ..Default::default()
+                },
             }
             .into(),
         ],
