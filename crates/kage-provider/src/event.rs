@@ -29,6 +29,11 @@ pub(crate) fn without_cached_input(mut usage: TokenUsage) -> TokenUsage {
 /// input than cached tokens. A gateway fronting another model reports
 /// the whole prompt in `input_tokens`, which is never below the cached
 /// tokens it contains. Only the second shape is corrected.
+///
+/// This relies on every request ending with a cache breakpoint. Anthropic
+/// then reads or writes the whole prompt up to it, leaving only the few
+/// tokens after it in `input_tokens`. A prompt too short to cache has
+/// no cache tokens, so the correction takes nothing out.
 #[must_use]
 pub(crate) fn without_cached_input_if_included(usage: TokenUsage) -> TokenUsage {
     if usage.input >= usage.cache_read.saturating_add(usage.cache_write) {

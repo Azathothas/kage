@@ -17,9 +17,10 @@ use kage_core::{Inputs, ThinkingLevel};
 /// recent turn's full prompt size (`input + output + cache_*`) and
 /// drives the context-window fill percentage; the cumulative
 /// `*_tokens` fields are session-wide sums for cost / audit
-/// display. They differ because providers report each turn's
-/// `usage.input` as the entire prompt (including all prior history),
-/// so summing across turns triple-counts.
+/// display. They differ because each turn's prompt carries the whole
+/// prior history, so summing prompt sizes across turns would count it
+/// again on every turn. `input_tokens` holds only the uncached part
+/// of each prompt.
 #[derive(Clone, Debug, Default, PartialEq)]
 #[expect(
     clippy::struct_excessive_bools,
@@ -28,7 +29,7 @@ use kage_core::{Inputs, ThinkingLevel};
 pub struct SessionUsage {
     /// Provider-qualified model id (`anthropic:claude-sonnet-4-6`).
     pub model: String,
-    /// Cumulative input tokens charged across every turn.
+    /// Cumulative uncached input tokens across every turn.
     pub input_tokens: u64,
     /// Cumulative output tokens emitted across every turn.
     pub output_tokens: u64,

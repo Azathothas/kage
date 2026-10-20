@@ -249,6 +249,26 @@ fn body_marks_last_message_block_for_caching() {
     assert_eq!(last_block["cache_control"]["type"], "ephemeral");
 }
 
+/// The gateway detection in `uncached_input` assumes every request ends
+/// with a breakpoint, including the tool results of an agent turn.
+#[test]
+fn body_marks_trailing_tool_result_for_caching() {
+    let req = StreamRequest::new(
+        "m",
+        vec![
+            Arc::new(user_msg("go")),
+            Arc::new(assistant_tool_call("t1", "read")),
+            Arc::new(tool_result("t1", "contents")),
+        ],
+    );
+    let body = build_request_body(&req, true);
+    let messages = body["messages"].as_array().unwrap();
+    let blocks = messages[messages.len() - 1]["content"].as_array().unwrap();
+    let last_block = &blocks[blocks.len() - 1];
+    assert_eq!(last_block["type"], "tool_result");
+    assert_eq!(last_block["cache_control"]["type"], "ephemeral");
+}
+
 #[test]
 fn body_does_not_mark_earlier_messages() {
     let req = StreamRequest::new(
