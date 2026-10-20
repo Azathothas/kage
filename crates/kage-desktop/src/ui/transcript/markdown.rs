@@ -38,11 +38,9 @@ impl Parses {
     }
 }
 
-/// One entry's cache and its parse bookkeeping.
+/// One entry's parse bookkeeping.
 #[derive(Debug, Default)]
 pub struct Entry {
-    /// The viewer's own cache: images and scroll state.
-    pub cache: egui_commonmark::CommonMarkCache,
     /// The text this entry last rendered, so a repeat render with no
     /// change is not a parse.
     last_text: Option<String>,
@@ -57,6 +55,10 @@ pub struct Entry {
 pub struct Pipeline {
     /// One entry per transcript item id.
     entries: HashMap<String, Entry>,
+    /// The viewer's cache, shared by every entry: it loads the syntax
+    /// and theme sets, megabytes each, and keys its scroll and image
+    /// state by the viewer's id.
+    cache: egui_commonmark::CommonMarkCache,
     /// The parse counter.
     pub parses: Parses,
 }
@@ -80,7 +82,12 @@ impl Pipeline {
     /// entry is parsed once, when its text first lands, and never
     /// again while the text stands.
     pub fn show(&mut self, id: &str, text: &str, streaming: bool, ui: &mut egui::Ui) {
-        let entry = self.entries.entry(id.to_owned()).or_default();
+        let Self {
+            entries,
+            cache,
+            parses,
+        } = self;
+        let entry = entries.entry(id.to_owned()).or_default();
         let changed = entry.last_text.as_deref() != Some(text);
         if changed || streaming {
             entry.last_text = Some(text.to_owned());
@@ -95,7 +102,7 @@ impl Pipeline {
                     )
                 })
                 .collect();
-            self.parses.record(id);
+            parses.record(id);
         }
         ui.scope(|ui| {
             // Prose sets at the reference's line height, through the
@@ -133,7 +140,7 @@ impl Pipeline {
                             egui_commonmark::CommonMarkViewer::new()
                                 .syntax_theme_light(THEME_DAWN)
                                 .syntax_theme_dark(THEME_SHADOW)
-                                .show(ui, &mut entry.cache, source);
+                                .show(ui, cache, source);
                         };
                         // A table's cells do not wrap, so a wide one
                         // scrolls sideways inside the column instead of
