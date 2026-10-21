@@ -23,7 +23,7 @@ const UI_KEYS: [&str; 2] = ["theme_dark", "theme_light"];
 
 /// Sets the entry at `keys` of the config at `path` to `value`, or
 /// removes it when `value` is `None`.
-pub(super) fn set(path: &Path, keys: &[String], value: Option<&Value>) -> Result<(), RpcError> {
+pub(crate) fn set(path: &Path, keys: &[String], value: Option<&Value>) -> Result<(), RpcError> {
     let invalid = |message: String| RpcError::new(-32602, message);
     let Some(section) = keys.first() else {
         return Err(invalid("name the entry to set".to_owned()));

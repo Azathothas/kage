@@ -117,6 +117,8 @@ Type `:hello` or `/hello`. You should see a transient toast.
   highlight groups and slots, from `init.lua`
 - [Packages](/plugins/packages): multi-file plugins with a
   `plugin.toml` manifest
+- [kura](/plugins/kura): install packages from kage's plugin
+  registry with `kage plugin`
 - [Capabilities](/plugins/capabilities): the opt-in tier for
   subprocesses, file writes, session rewriting, conversation text,
   environment variables and network access

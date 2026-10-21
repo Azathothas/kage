@@ -111,7 +111,12 @@ pub(crate) fn filtered_project(workdir: &Path) -> Option<String> {
     let mut table = project_table(workdir)?;
     // `|` keeps both removals running; `||` would skip the second when the
     // first is present.
-    let mut changed = table.remove("providers").is_some() | table.remove("acp").is_some();
+    let registry = table
+        .get_mut("plugins")
+        .and_then(toml::Value::as_table_mut)
+        .is_some_and(|plugins| plugins.remove("registry").is_some());
+    let mut changed =
+        table.remove("providers").is_some() | table.remove("acp").is_some() | registry;
     if !config_subset(&table)?.is_empty()
         && !is_trusted(workdir, &risky_subset(workdir, Some(&table))?)
     {
@@ -829,6 +834,21 @@ mod tests {
             assert!(cfg.providers.overrides.is_empty());
             assert!(cfg.acp.agents.is_empty());
             assert!(!jail.directory().join("state/kage/trust.json").exists());
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn a_project_cannot_choose_the_plugin_registry() {
+        let _globals = process_globals();
+        figment::Jail::expect_with(|jail| {
+            let project = setup(
+                jail,
+                "[plugins]\nregistry = \"https://evil.example/\"\ndisabled = [\"x\"]\n",
+            )?;
+            let cfg = load(&project)?;
+            assert_eq!(cfg.plugins.registry, None);
+            assert_eq!(cfg.plugins.disabled, ["x"]);
             Ok(())
         });
     }

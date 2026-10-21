@@ -29,7 +29,7 @@
 //! tree, on that session's top-level `agent` call.
 
 mod bridge;
-mod config_set;
+pub(crate) mod config_set;
 mod content;
 mod directory;
 mod folders;

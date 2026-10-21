@@ -3,7 +3,7 @@
 //! script or a package directory (see [`kage_plugin::package`]). A
 //! change loads when the next session opens.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::time::Duration;
 
 use kage_acp::acp::{PluginInstallRequest, PluginRemoveRequest};
@@ -23,19 +23,10 @@ fn check_name(name: &str) -> Result<(), RpcError> {
     package::check_name(name).map_err(invalid)
 }
 
-/// The package directory of plugin `name` in `dir`, when one is there.
-fn package_dir(dir: &Path, name: &str) -> Option<PathBuf> {
+/// Whether a package directory of plugin `name` is in `dir`.
+fn has_package(dir: &Path, name: &str) -> bool {
     let path = dir.join(name);
-    (path.join(package::MANIFEST).is_file() || path.join(package::ENTRY).is_file()).then_some(path)
-}
-
-/// Removes the package directory at `path`. A symlinked package loses
-/// only its link, never the checkout it points at.
-fn remove_package(path: &Path) -> std::io::Result<()> {
-    if path.symlink_metadata()?.is_symlink() {
-        return std::fs::remove_file(path).or_else(|_| std::fs::remove_dir(path));
-    }
-    std::fs::remove_dir_all(path)
+    path.join(package::MANIFEST).is_file() || path.join(package::ENTRY).is_file()
 }
 
 /// Installs the plugin `req` names into `dir` and returns its name.
@@ -55,8 +46,8 @@ pub(super) fn install(dir: &Path, req: &PluginInstallRequest) -> Result<String, 
         .to_owned();
     check_name(&name)?;
     let target = dir.join(format!("{name}.lua"));
-    let package = package_dir(dir, &name);
-    if (target.exists() || package.is_some()) && !req.replace {
+    let package = has_package(dir, &name);
+    if (target.exists() || package) && !req.replace {
         return Err(invalid(format!(
             "a plugin named {name} is already installed"
         )));
@@ -79,8 +70,8 @@ pub(super) fn install(dir: &Path, req: &PluginInstallRequest) -> Result<String, 
     kage_plugin::check_syntax(&text)
         .map_err(|e| invalid(format!("{source} is not a Lua plugin: {e}")))?;
     std::fs::create_dir_all(dir).map_err(|e| RpcError::internal(e.to_string()))?;
-    if let Some(package) = package {
-        remove_package(&package).map_err(|e| RpcError::internal(e.to_string()))?;
+    if package {
+        kage_kura::remove(dir, &name).map_err(|e| RpcError::internal(e.to_string()))?;
     }
     kage_core::fsutil::atomic_write(&target, text.as_bytes())
         .map_err(|e| RpcError::internal(e.to_string()))?;
@@ -88,25 +79,17 @@ pub(super) fn install(dir: &Path, req: &PluginInstallRequest) -> Result<String, 
 }
 
 /// Removes plugin `req.name` from `dir`: its script, its package
-/// directory, or both when both are there.
+/// directory, or both when both are there, and its lock entry.
 pub(super) fn remove(dir: &Path, req: &PluginRemoveRequest) -> Result<(), RpcError> {
     check_name(&req.name)?;
-    let script = dir.join(format!("{}.lua", req.name));
-    let script = script.is_file().then_some(script);
-    let package = package_dir(dir, &req.name);
-    if script.is_none() && package.is_none() {
-        return Err(invalid(format!(
+    match kage_kura::remove(dir, &req.name) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(invalid(format!(
             "no plugin named {} is installed",
             req.name
-        )));
+        ))),
+        Err(e) => Err(RpcError::internal(e.to_string())),
     }
-    if let Some(script) = script {
-        std::fs::remove_file(&script).map_err(|e| RpcError::internal(e.to_string()))?;
-    }
-    if let Some(package) = package {
-        remove_package(&package).map_err(|e| RpcError::internal(e.to_string()))?;
-    }
-    Ok(())
 }
 
 /// The plugin file at `path`, capped at [`MAX_BYTES`] like a fetched

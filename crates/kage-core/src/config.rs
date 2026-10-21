@@ -254,8 +254,9 @@ impl Config {
     ///
     /// The project file's `mcp`, `permissions` and
     /// `plugins.capabilities` tables are dropped unless the project is
-    /// trusted (see [`crate::trust`]). The project file's `providers` and
-    /// `acp` tables never apply: those are only read from the user config.
+    /// trusted (see [`crate::trust`]). The project file's `providers`,
+    /// `acp` and `plugins.registry` never apply: those are only read from
+    /// the user config.
     /// `plugins.disabled` is the union of the user's list and the
     /// winning layer's, so a project can disable a plugin but never
     /// enable one the user disabled.
@@ -817,6 +818,10 @@ pub struct PluginsConfig {
     /// writes `disabled`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub enabled: Vec<String>,
+    /// The index URL of the plugin registry `kage plugin` installs from.
+    /// Unset means kura, kage's own. Read from the user config only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub registry: Option<String>,
     /// Per-plugin elevated capability grants, keyed by plugin file
     /// stem (`[plugins.capabilities] my-plugin = ["session_write"]`).
     /// Plugins get only the sandboxed base surface by default; a

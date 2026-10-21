@@ -180,6 +180,90 @@ The URL the model list is read from, when the endpoint\*(Aqs own will not do \- 
 \fB\-\-save\fR
 Save the fetched models into the saved `[providers.custom.<provider>]` entry: ids it does not list yet are appended as fresh `[[...models]]` tables, listed ones and their comments stay untouched. Needs the entry to exist; registered providers keep their models in the catalog instead
 .TP
+\fBkage plugin\fR
+Manage plugins: list them, install and update packages from the plugin registry (kura unless `[plugins] registry` names another), grant capabilities, and turn plugins on or off
+.TP
+\fBkage plugin list\fR
+List installed plugins: kind, version, where each came from, and whether it is disabled, edited or has an update
+.TP
+\fBkage plugin search\fR
+Search the registry by name, description and tags. Without a query, list every package
+.TP
+\fIQUERY\fR
+Words that must all match
+.TP
+\fB\-\-refresh\fR
+Fetch the index again instead of using the cached one
+.TP
+\fBkage plugin info\fR
+Show a registry package: its releases, capabilities and links
+.TP
+\fINAME\fR
+Package name
+.TP
+\fB\-\-refresh\fR
+Fetch the index again instead of using the cached one
+.TP
+\fBkage plugin install\fR
+Install a package from the registry, checking every file against the index. Lists the capabilities it asks for and offers to grant them
+.TP
+\fIPACKAGE\fR
+`name`, or `name@version` for a given release
+.TP
+\fB\-\-force\fR
+Replace a script or local package of the same name, or discard local changes to an installed one
+.TP
+\fB\-\-grant\fR
+Grant what the package asks for without asking
+.TP
+\fBkage plugin update\fR
+Update packages installed from the registry to their newest release this kage can load
+.TP
+\fINAMES\fR
+Packages to update; every one when none is named
+.TP
+\fB\-\-force\fR
+Discard local changes to a package being updated
+.TP
+\fB\-\-grant\fR
+Grant newly asked\-for capabilities without asking
+.TP
+\fBkage plugin remove\fR
+Remove a plugin, script or package. A linked package loses only its link
+.TP
+\fINAME\fR
+Plugin name
+.TP
+\fBkage plugin grant\fR
+Grant a plugin capabilities in `[plugins.capabilities]`. Without names, grants everything a package\*(Aqs plugin.toml declares
+.TP
+\fINAME\fR
+Plugin name
+.TP
+\fICAPABILITIES\fR
+Capabilities to grant
+.TP
+\fBkage plugin revoke\fR
+Take capabilities back from a plugin; all of them without names
+.TP
+\fINAME\fR
+Plugin name
+.TP
+\fICAPABILITIES\fR
+Capabilities to revoke
+.TP
+\fBkage plugin enable\fR
+Let a disabled plugin load again
+.TP
+\fINAME\fR
+Plugin name
+.TP
+\fBkage plugin disable\fR
+Keep a plugin from loading without removing it, through `[plugins] disabled`
+.TP
+\fINAME\fR
+Plugin name
+.TP
 \fBkage mcp\fR
 Model Context Protocol: expose kage\*(Aqs built\-in tools to another agent over stdio (newline\-delimited JSON\-RPC) with `kage mcp serve`, or log in to remote MCP servers that need OAuth
 .TP

@@ -3072,6 +3072,7 @@ dependencies = [
  "kage-acp",
  "kage-core",
  "kage-jsonrpc",
+ "kage-kura",
  "kage-loop",
  "kage-mcp",
  "kage-plugin",
@@ -3083,6 +3084,7 @@ dependencies = [
  "mimalloc",
  "nix 0.31.3",
  "rpassword",
+ "semver",
  "serde",
  "serde_json",
  "signal-hook 0.4.4",
@@ -3168,6 +3170,24 @@ dependencies = [
  "kage-core",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "kage-kura"
+version = "0.4.0"
+dependencies = [
+ "hex",
+ "kage-core",
+ "kage-plugin",
+ "kage-tools",
+ "semver",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "thiserror 2.0.21",
+ "toml 1.1.6+spec-1.1.0",
+ "ureq 3.4.2",
 ]
 
 [[package]]

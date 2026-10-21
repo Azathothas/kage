@@ -11,7 +11,8 @@
 //! - `auth` manages saved provider credentials, and `init` is the
 //!   first-run setup wizard.
 //! - `doctor` diagnoses the install, and `trust` trusts a project config.
-//! - `models` manages the model catalog.
+//! - `models` manages the model catalog, and `plugin` the plugins
+//!   directory and installs from kura, the plugin registry.
 //! - `rpc` serves the Agent Client Protocol over stdio, and `serve`
 //!   serves it over WebSocket behind a token, so editors and ACP
 //!   clients drive kage locally or over the network; `serve` also
@@ -39,6 +40,7 @@ mod mcp;
 mod mcp_auth;
 mod paths;
 mod permissions;
+mod plugin_cmd;
 mod plugins;
 mod providers;
 mod rpc;
@@ -290,6 +292,14 @@ pub(crate) enum Command {
         #[command(subcommand)]
         action: ModelsAction,
     },
+    /// Manage plugins: list them, install and update packages from the
+    /// plugin registry (kura unless `[plugins] registry` names
+    /// another), grant capabilities, and turn plugins on or off.
+    Plugin {
+        /// Plugin sub-action.
+        #[command(subcommand)]
+        action: PluginAction,
+    },
     /// Model Context Protocol: expose kage's built-in tools to another
     /// agent over stdio (newline-delimited JSON-RPC) with `kage mcp
     /// serve`, or log in to remote MCP servers that need OAuth.
@@ -349,6 +359,88 @@ pub(crate) enum ModelsAction {
         /// catalog instead.
         #[arg(long)]
         save: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub(crate) enum PluginAction {
+    /// List installed plugins: kind, version, where each came from, and
+    /// whether it is disabled, edited or has an update.
+    List,
+    /// Search the registry by name, description and tags. Without a
+    /// query, list every package.
+    Search {
+        /// Words that must all match.
+        query: Vec<String>,
+        /// Fetch the index again instead of using the cached one.
+        #[arg(long)]
+        refresh: bool,
+    },
+    /// Show a registry package: its releases, capabilities and links.
+    Info {
+        /// Package name.
+        name: String,
+        /// Fetch the index again instead of using the cached one.
+        #[arg(long)]
+        refresh: bool,
+    },
+    /// Install a package from the registry, checking every file against
+    /// the index. Lists the capabilities it asks for and offers to grant
+    /// them.
+    Install {
+        /// `name`, or `name@version` for a given release.
+        package: String,
+        /// Replace a script or local package of the same name, or
+        /// discard local changes to an installed one.
+        #[arg(long)]
+        force: bool,
+        /// Grant what the package asks for without asking.
+        #[arg(long)]
+        grant: bool,
+    },
+    /// Update packages installed from the registry to their newest
+    /// release this kage can load.
+    Update {
+        /// Packages to update; every one when none is named.
+        names: Vec<String>,
+        /// Discard local changes to a package being updated.
+        #[arg(long)]
+        force: bool,
+        /// Grant newly asked-for capabilities without asking.
+        #[arg(long)]
+        grant: bool,
+    },
+    /// Remove a plugin, script or package. A linked package loses only
+    /// its link.
+    Remove {
+        /// Plugin name.
+        name: String,
+    },
+    /// Grant a plugin capabilities in `[plugins.capabilities]`. Without
+    /// names, grants everything a package's plugin.toml declares.
+    Grant {
+        /// Plugin name.
+        name: String,
+        /// Capabilities to grant.
+        capabilities: Vec<String>,
+    },
+    /// Take capabilities back from a plugin; all of them without names.
+    Revoke {
+        /// Plugin name.
+        name: String,
+        /// Capabilities to revoke.
+        capabilities: Vec<String>,
+    },
+    /// Let a disabled plugin load again.
+    Enable {
+        /// Plugin name.
+        name: String,
+    },
+    /// Keep a plugin from loading without removing it, through
+    /// `[plugins] disabled`.
+    Disable {
+        /// Plugin name.
+        name: String,
     },
 }
 
@@ -483,6 +575,7 @@ pub(crate) fn run_subcommand(command: Command) -> ExitCode {
                 save,
             ),
         },
+        Command::Plugin { action } => plugin_cmd::run(action),
         Command::Mcp { action } => match action {
             McpAction::Serve { tools } => mcp::run_serve(&tools),
             McpAction::Login { server } => mcp_auth::run_login(&server),

@@ -14,6 +14,7 @@ kage-mcp        (core + jsonrpc + tools)
 kage-acp        (core + jsonrpc + provider + acp-wire)
 kage-client     (core + acp-wire)
 kage-plugin     (core + provider + tools)
+kage-kura       (core + plugin + tools)
 kage-loop       (core + provider + tools)
 kage-remote     (core + tungstenite)
 kage-tui        (core + plugin)
@@ -39,7 +40,8 @@ talks to it over ACP instead.
 | `kage-acp`       | ACP agent (editors drive kage) and ACP client (kage drives another agent as a provider) |
 | `kage-acp-wire`  | The ACP wire schema: serde-only, wasm-clean types (protocol version 1) shared by the agent, the serve host and the browser client |
 | `kage-client`    | The sans-IO client side of ACP: frames in mirrored into a renderable state, commands out as frames, over any transport |
-| `kage-plugin`    | Lua runtime, sandbox, host API surface, embedded stdlib and defaults, `init.lua` loading |
+| `kage-plugin`    | Lua runtime, sandbox, host API surface, embedded stdlib and defaults, `init.lua` loading, package discovery and manifests |
+| `kage-kura`      | The plugin registry client: the cached index, verified installs into the plugins directory, `kura.lock` |
 | `kage-remote`    | The ACP WebSocket transport: request-head parsing and token authorization, the bearer token file, and the frame-to-line pipe that turns one accepted TCP stream into the reader and writer pair the agent serving loop consumes |
 | `kage-tui`       | The interactive TUI, modal input, block renderer    |
 | `kage-cli`       | The binary, CLI flags, the session engine, frontend wiring |

@@ -53,6 +53,7 @@ export default defineConfig({
           { text: "overview", link: "/plugins/" },
           { text: "lua api", link: "/plugins/api" },
           { text: "packages", link: "/plugins/packages" },
+          { text: "kura", link: "/plugins/kura" },
           { text: "capabilities", link: "/plugins/capabilities" },
           { text: "editor setup", link: "/plugins/editor" },
           { text: "examples", link: "/plugins/examples" },

@@ -121,6 +121,21 @@ impl Capability {
             Self::FsWrite => "fs_write",
         }
     }
+
+    /// What holding the capability lets a plugin do, in a few words, for
+    /// a user deciding whether to grant it.
+    pub(crate) fn summary(self) -> &'static str {
+        match self {
+            Self::SessionWrite => "read the session's entries, fork, rewind and inject messages",
+            Self::Exec => "run any program",
+            Self::Env => "read environment variables",
+            Self::Net => "make outbound HTTP requests",
+            Self::Crypto => "use cryptographic primitives",
+            Self::Context => "read the conversation and rewrite what the model sees",
+            Self::Provider => "register an LLM provider",
+            Self::FsWrite => "create and overwrite files in the workdir",
+        }
+    }
 }
 
 /// Resolved per-plugin grants: plugin file stem -> capability set.

@@ -8,6 +8,7 @@ members = [
   "crates/kage-core",
   "crates/kage-desktop",
   "crates/kage-jsonrpc",
+  "crates/kage-kura",
   "crates/kage-loop",
   "crates/kage-mcp",
   "crates/kage-plugin",
@@ -36,6 +37,7 @@ kage-acp-wire = { path = "crates/kage-acp-wire", version = "0.4.0" }
 kage-client = { path = "crates/kage-client", version = "0.4.0" }
 kage-core = { path = "crates/kage-core", version = "0.4.0" }
 kage-jsonrpc = { path = "crates/kage-jsonrpc", version = "0.4.0" }
+kage-kura = { path = "crates/kage-kura", version = "0.4.0" }
 kage-loop = { path = "crates/kage-loop", version = "0.4.0" }
 kage-mcp = { path = "crates/kage-mcp", version = "0.4.0" }
 kage-plugin = { path = "crates/kage-plugin", version = "0.4.0" }

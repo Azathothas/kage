@@ -28,6 +28,15 @@ pub fn check_capability(name: &str) -> Result<(), String> {
     capabilities::Capability::parse(name).map(|_| ())
 }
 
+/// What capability `name` lets a plugin do, in a few words, or `None`
+/// for a name kage does not know.
+#[must_use]
+pub fn capability_summary(name: &str) -> Option<&'static str> {
+    capabilities::Capability::parse(name)
+        .ok()
+        .map(capabilities::Capability::summary)
+}
+
 /// Checks that `source` compiles as a Lua chunk, without running it.
 ///
 /// # Errors

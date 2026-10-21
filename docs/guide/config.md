@@ -54,6 +54,9 @@ transcript_on_exit = "full"
 # project config can add to this list but never shorten it.
 # (`enabled`, an allowlist, still works but is deprecated.)
 disabled = []
+# the plugin registry `kage plugin` installs from (default: kura).
+# read from this file only; a project config cannot set it.
+# registry = "https://kura.kage.qaidvoid.dev/"
 
 [shell]
 # Program the shell tool runs commands with: `bash` (the default on
