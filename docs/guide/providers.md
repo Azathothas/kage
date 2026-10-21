@@ -282,6 +282,13 @@ variable that is unset (and has no saved key) is skipped. With
 `api_key_env = ""` it registers unconditionally, which is what
 keyless local endpoints want.
 
+A model whose `produces` (or catalog entry) includes `image` is asked
+for images and can answer with them: Gemini models through
+`responseModalities`, and `openai`-kind models through the
+`modalities` field OpenRouter and compatible gateways read. The images
+land in the reply and in the session like attached ones, without
+bloating the session file.
+
 A custom id that matches a catalog provider, such as `deepseek`,
 replaces that provider. kage prints a warning at startup naming the
 id, and the picker offers only the models the custom provider declares.

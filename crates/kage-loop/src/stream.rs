@@ -9,8 +9,8 @@
 use std::time::Instant;
 
 use kage_core::{
-    Content, LoopError, LoopEvent, Message, MessageId, Role, ThinkingSignature, TokenUsage,
-    ToolCallId,
+    Content, LoopError, LoopEvent, MediaSource, Message, MessageId, Modality, Role,
+    ThinkingSignature, TokenUsage, ToolCallId,
 };
 use kage_provider::{EventStream, ProviderError, ProviderEvent};
 
@@ -119,6 +119,16 @@ fn handle_event<F: FnMut(LoopEvent)>(
             ensure_started(emit);
             assembler.push_thinking(&delta);
             emit(LoopEvent::ThinkingDelta { id, delta });
+        }
+        ProviderEvent::Media { kind, mime, data } => {
+            ensure_started(emit);
+            assembler.push_media(kind, &mime, &data);
+            emit(LoopEvent::Media {
+                id,
+                kind,
+                mime,
+                data,
+            });
         }
         ProviderEvent::ThinkingSignature { data } => assembler.sign_thinking(data),
         ProviderEvent::RedactedThinking { data } => assembler.push_redacted(data),
@@ -253,6 +263,26 @@ impl Assembler {
             });
         }
         self.thinking_since.get_or_insert_with(Instant::now);
+    }
+
+    /// Append a whole media part. An image becomes an image block; a
+    /// kind kage cannot hold yet becomes a short note in its place, so
+    /// the reply still says something arrived.
+    fn push_media(&mut self, kind: Modality, mime: &str, data: &str) {
+        self.end_thinking();
+        if kind == Modality::Image {
+            self.blocks.push(Content::Image {
+                source: MediaSource::Base64 {
+                    data: data.to_owned(),
+                },
+                mime: mime.to_owned(),
+            });
+        } else {
+            self.push_text(&format!(
+                "\n[{} output ({mime}) is not kept yet]\n",
+                kind.as_str()
+            ));
+        }
     }
 
     fn signature(&self, data: String, redacted: bool) -> ThinkingSignature {
@@ -401,6 +431,49 @@ mod tests {
         ));
         assert!(result.tool_calls.is_empty());
         assert_eq!(result.usage.input, 5);
+    }
+
+    #[test]
+    fn a_media_part_lands_between_the_text_around_it() {
+        let (result, emitted) = run_collect_with_emits(vec![
+            Ok(ProviderEvent::TextDelta {
+                delta: "here: ".into(),
+            }),
+            Ok(ProviderEvent::Media {
+                kind: Modality::Image,
+                mime: "image/png".into(),
+                data: "iVBORw0K".into(),
+            }),
+            Ok(ProviderEvent::Media {
+                kind: Modality::Audio,
+                mime: "audio/wav".into(),
+                data: "UklGRg".into(),
+            }),
+            Ok(ProviderEvent::TextDelta {
+                delta: "done".into(),
+            }),
+            Ok(end_event()),
+        ]);
+        let content = &result.message.content;
+        assert_eq!(content.len(), 3, "{content:?}");
+        assert_eq!(
+            content[1],
+            Content::Image {
+                source: MediaSource::Base64 {
+                    data: "iVBORw0K".into()
+                },
+                mime: "image/png".into(),
+            }
+        );
+        assert!(
+            matches!(&content[2], Content::Text { text }
+                if text == "\n[audio output (audio/wav) is not kept yet]\ndone"),
+            "{content:?}"
+        );
+        assert!(emitted.iter().any(|e| matches!(
+            e,
+            LoopEvent::Media { kind: Modality::Image, mime, .. } if mime == "image/png"
+        )));
     }
 
     #[test]

@@ -45,6 +45,17 @@ pub fn apply_loop_event(buf: &mut Buffer, event: &LoopEvent) {
         }
         LoopEvent::TextDelta { delta, .. } => buf.append_assistant_delta(delta),
         LoopEvent::ThinkingDelta { delta, .. } => buf.append_thinking_delta(delta),
+        LoopEvent::Media {
+            kind, mime, data, ..
+        } => {
+            let bytes = data.len() / 4 * 3;
+            let label = format!(
+                "[{} from the model: {mime}, {}]",
+                kind.as_str(),
+                crate::image::human_bytes(bytes)
+            );
+            buf.push_custom("kage:image", label, false);
+        }
         LoopEvent::ToolCallArgsDelta {
             id,
             name,

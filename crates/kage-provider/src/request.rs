@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 pub use kage_core::ThinkingLevel;
-use kage_core::{Message, Reasoning, ToolSpec};
+use kage_core::{Message, Modalities, Reasoning, ToolSpec};
 use serde::{Deserialize, Serialize};
 
 /// Optional thinking-budget configuration.
@@ -56,6 +56,11 @@ pub struct StreamRequest {
     /// provider's generic mapping.
     #[serde(default, skip_serializing_if = "is_unknown")]
     pub reasoning: Reasoning,
+    /// Media the model produces besides text. A provider asks for image
+    /// output only when this holds [`kage_core::Modality::Image`].
+    /// Empty means text only.
+    #[serde(default, skip_serializing_if = "Modalities::is_empty")]
+    pub produces: Modalities,
     /// Id of the conversation the request belongs to, for gateways
     /// that route or cache per conversation. `None` for one-off
     /// requests outside a session.
@@ -80,6 +85,7 @@ impl StreamRequest {
             thinking: None,
             level: None,
             reasoning: Reasoning::Unknown,
+            produces: Modalities::default(),
             session: None,
         }
     }

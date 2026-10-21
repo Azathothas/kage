@@ -95,6 +95,10 @@ pub struct AgentContext {
     /// the model catalog. [`kage_core::Reasoning::Unknown`] sends a
     /// chosen level unchanged and no automatic level.
     pub reasoning: kage_core::Reasoning,
+    /// Media the active model produces besides text, set by the host
+    /// from the model catalog and forwarded on every request. Empty
+    /// means text only.
+    pub produces: kage_core::Modalities,
     /// Path confinement for the built-in file tools: when `true`, every
     /// [`kage_tools::ToolContext`] the dispatcher builds resolves paths
     /// through escape-checked resolution, so reads and writes stay under
@@ -130,6 +134,7 @@ impl AgentContext {
             max_output_tokens: None,
             thinking_level: None,
             reasoning: kage_core::Reasoning::Unknown,
+            produces: kage_core::Modalities::default(),
             confine_paths: true,
             budget: TokenBudget::default(),
             session: None,

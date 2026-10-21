@@ -3,7 +3,7 @@
 //! Narrower alphabet than [`kage_core::LoopEvent`]: providers report deltas
 //! and stop reasons; the loop is responsible for tool execution outcomes.
 
-use kage_core::{TokenUsage, ToolCallId};
+use kage_core::{Modality, TokenUsage, ToolCallId};
 use serde::{Deserialize, Serialize};
 
 pub use kage_core::StopReason;
@@ -71,6 +71,16 @@ pub enum ProviderEvent {
     /// `redacted_thinking`).
     RedactedThinking {
         /// The encrypted block.
+        data: String,
+    },
+    /// A whole media part the model produced, such as an image. Media
+    /// arrive complete, never in pieces.
+    Media {
+        /// The kind of media.
+        kind: Modality,
+        /// MIME type, such as `image/png`.
+        mime: String,
+        /// The bytes, base64-encoded without a `data:` prefix.
         data: String,
     },
     /// A tool call has begun. Followed by zero or more

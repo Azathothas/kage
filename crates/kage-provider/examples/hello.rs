@@ -101,6 +101,9 @@ fn main() {
             Ok(ProviderEvent::ThinkingDelta { delta }) => {
                 eprint!("\x1b[2m{delta}\x1b[0m");
             }
+            Ok(ProviderEvent::Media { kind, mime, data }) => {
+                eprintln!("\n[{} {mime}, {} base64 chars]", kind.as_str(), data.len());
+            }
             Ok(ProviderEvent::ToolCallStart { name, .. }) => {
                 eprintln!("\n[tool_call_start] {name}(");
             }

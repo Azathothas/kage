@@ -129,6 +129,13 @@ pub enum Content {
 }
 
 impl Content {
+    /// The text an image the model produced stands as when its own
+    /// history goes back to a provider that is not sent the bytes.
+    #[must_use]
+    pub fn produced_media_note(mime: &str) -> String {
+        format!("[you produced an image here: {mime}]")
+    }
+
     /// Thinking `text` framed as `<thinking>` text, the form kage sends
     /// to a provider that cannot take a thinking block natively. A
     /// literal close tag in the text is escaped so the frame cannot end

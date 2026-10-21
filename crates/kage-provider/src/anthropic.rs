@@ -299,6 +299,10 @@ fn convert_assistant_blocks(blocks: &[Content], model: &str) -> Vec<Value> {
         .iter()
         .filter_map(|c| match c {
             Content::Text { text } => Some(serde_json::json!({"type":"text","text":text})),
+            Content::Image { mime, .. } => Some(serde_json::json!({
+                "type": "text",
+                "text": Content::produced_media_note(mime),
+            })),
             Content::Thinking {
                 signature: Some(sig),
                 ..

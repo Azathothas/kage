@@ -284,6 +284,11 @@ fn build_request_body(
         Dialect::OpenAi => apply_reasoning(&mut body, req),
         Dialect::Zai => apply_zai_thinking(&mut body, req),
     }
+    // OpenRouter's convention, which other compatible gateways follow:
+    // a model that can draw does so only when asked to.
+    if dialect == Dialect::OpenAi && req.produces.contains(kage_core::Modality::Image) {
+        body["modalities"] = serde_json::json!(["image", "text"]);
+    }
     if !req.tools.is_empty() {
         body["tools"] = serde_json::to_value(
             req.tools
@@ -400,6 +405,7 @@ fn convert_assistant_message(blocks: &[Content], replay: ThinkingReplay, model: 
     for block in blocks {
         match block {
             Content::Text { text } => text_parts.push(text.clone()),
+            Content::Image { mime, .. } => text_parts.push(Content::produced_media_note(mime)),
             Content::Thinking {
                 text, signature, ..
             } => match replay {
@@ -470,6 +476,14 @@ fn convert_tool_result_messages(blocks: &[Content]) -> Vec<Value> {
             _ => None,
         })
         .collect()
+}
+
+/// The MIME type and base64 payload of a `data:<mime>;base64,<data>`
+/// URL.
+fn data_url(url: &str) -> Option<(&str, &str)> {
+    let (head, data) = url.strip_prefix("data:")?.split_once(',')?;
+    let mime = head.strip_suffix(";base64")?;
+    (!mime.is_empty() && !data.is_empty()).then_some((mime, data))
 }
 
 fn image_to_openai(source: &kage_core::MediaSource, mime: &str) -> Value {
@@ -633,12 +647,49 @@ impl OpenAiStream {
                 delta: content.to_owned(),
             }));
         }
+        if let Some(images) = delta.get("images").and_then(Value::as_array) {
+            self.flush_details();
+            for image in images {
+                self.process_image(image);
+            }
+        }
         let Some(tool_calls) = delta.get("tool_calls").and_then(Value::as_array) else {
             return;
         };
         self.flush_details();
         for tc in tool_calls {
             self.process_tool_call_delta(tc);
+        }
+    }
+
+    /// One entry of a delta's `images`: `{ "image_url": { "url" } }`,
+    /// where the URL is normally a `data:` URL. A link to elsewhere is
+    /// kept as a markdown image in the text rather than fetched.
+    fn process_image(&mut self, image: &Value) {
+        let Some(url) = image
+            .pointer("/image_url/url")
+            .or_else(|| image.get("url"))
+            .and_then(Value::as_str)
+        else {
+            return;
+        };
+        let event = match data_url(url) {
+            Some((mime, data)) => {
+                kage_core::Modality::of_mime(mime).map(|kind| ProviderEvent::Media {
+                    kind,
+                    mime: mime.to_owned(),
+                    data: data.to_owned(),
+                })
+            }
+            None if url.starts_with("https://") || url.starts_with("http://") => {
+                Some(ProviderEvent::TextDelta {
+                    delta: format!("\n![image]({url})\n"),
+                })
+            }
+            None => None,
+        };
+        if let Some(event) = event {
+            self.pending.push_back(Ok(event));
         }
     }
 
@@ -897,6 +948,44 @@ mod tests {
         req.level = Some(crate::ThinkingLevel::Medium);
         let body = build_request_body(&req, false, None, Dialect::OpenAi);
         assert_eq!(body["reasoning_effort"], "medium");
+    }
+
+    #[test]
+    fn body_asks_for_images_only_from_a_model_that_draws() {
+        let mut req = StreamRequest::new("draw", vec![Arc::new(user_msg("a cat"))]);
+        let plain = build_request_body(&req, true, None, Dialect::OpenAi);
+        assert!(plain.get("modalities").is_none());
+        req.produces =
+            kage_core::Modalities::of(&[kage_core::Modality::Text, kage_core::Modality::Image]);
+        let body = build_request_body(&req, true, None, Dialect::OpenAi);
+        assert_eq!(body["modalities"], serde_json::json!(["image", "text"]));
+        let zai = build_request_body(&req, true, None, Dialect::Zai);
+        assert!(zai.get("modalities").is_none());
+    }
+
+    #[test]
+    fn stream_emits_images_from_the_delta() {
+        let bytes: &[u8] = b"data: {\"choices\":[{\"delta\":{\"content\":\"here\"}}]}\n\n\
+            data: {\"choices\":[{\"delta\":{\"images\":[{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,iVBORw0K\"}},{\"type\":\"image_url\",\"image_url\":{\"url\":\"https://cdn.test/a.png\"}},{\"image_url\":{\"url\":\"data:;base64,\"}}]}}]}\n\n\
+            data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+        let events = collect_ok(stream_from_bytes(bytes));
+        let media: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                ProviderEvent::Media { kind, mime, data } => {
+                    Some((*kind, mime.as_str(), data.as_str()))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            media,
+            [(kage_core::Modality::Image, "image/png", "iVBORw0K")]
+        );
+        assert!(events.iter().any(|e| matches!(
+            e,
+            ProviderEvent::TextDelta { delta } if delta.contains("![image](https://cdn.test/a.png)")
+        )));
     }
 
     #[test]

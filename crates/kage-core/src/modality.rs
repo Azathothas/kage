@@ -35,6 +35,21 @@ impl Modality {
         }
     }
 
+    /// The media kind a MIME type names: `image/*`, `audio/*`,
+    /// `video/*` or `application/pdf`. `None` for anything else.
+    #[must_use]
+    pub fn of_mime(mime: &str) -> Option<Self> {
+        let mime = mime.trim().to_ascii_lowercase();
+        let (top, sub) = mime.split_once('/')?;
+        match top {
+            "image" => Some(Self::Image),
+            "audio" => Some(Self::Audio),
+            "video" => Some(Self::Video),
+            "application" if sub == "pdf" => Some(Self::Pdf),
+            _ => None,
+        }
+    }
+
     /// Parse a name produced by [`Self::as_str`].
     #[must_use]
     pub fn parse(s: &str) -> Option<Self> {
@@ -116,6 +131,17 @@ impl<'de> Deserialize<'de> for Modalities {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_mime_type_names_its_kind() {
+        assert_eq!(Modality::of_mime("image/png"), Some(Modality::Image));
+        assert_eq!(Modality::of_mime(" Audio/MPEG"), Some(Modality::Audio));
+        assert_eq!(Modality::of_mime("video/mp4"), Some(Modality::Video));
+        assert_eq!(Modality::of_mime("application/pdf"), Some(Modality::Pdf));
+        assert_eq!(Modality::of_mime("application/json"), None);
+        assert_eq!(Modality::of_mime("text/plain"), None);
+        assert_eq!(Modality::of_mime(""), None);
+    }
 
     #[test]
     fn empty_inputs_lack_nothing() {

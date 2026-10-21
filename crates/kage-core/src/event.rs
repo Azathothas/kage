@@ -300,6 +300,18 @@ pub enum LoopEvent {
         /// Thinking chunk to append.
         delta: String,
     },
+    /// The model produced a whole media part, such as an image, which
+    /// follows the text before it in the current message.
+    Media {
+        /// Id of the message receiving the part.
+        id: MessageId,
+        /// The kind of media.
+        kind: crate::modality::Modality,
+        /// MIME type, such as `image/png`.
+        mime: String,
+        /// The bytes, base64-encoded.
+        data: String,
+    },
     /// The model finished streaming a tool call's arguments. The call
     /// has not started executing: it may still wait for approval or for
     /// earlier calls. [`LoopEvent::ToolExecutionStart`] marks the start

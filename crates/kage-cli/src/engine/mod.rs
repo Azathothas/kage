@@ -2058,6 +2058,7 @@ fn clone_shallow(cx: &AgentContext) -> AgentContext {
         max_output_tokens: cx.max_output_tokens,
         thinking_level: cx.thinking_level,
         reasoning: cx.reasoning,
+        produces: cx.produces,
         confine_paths: cx.confine_paths,
         budget: cx.budget,
         session: None,
@@ -2263,6 +2264,7 @@ fn fit_context(cx: &mut AgentContext, registry: &ProviderRegistry, model: &str) 
     }
     cx.max_output_tokens = crate::runtime_env::max_output_tokens_for(registry, model);
     cx.reasoning = crate::runtime_env::reasoning_for(registry, model);
+    cx.produces = crate::runtime_env::produces_for(registry, model);
 }
 
 /// Refresh the parts of `state` that follow its model and chosen

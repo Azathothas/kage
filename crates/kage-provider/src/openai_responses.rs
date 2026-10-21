@@ -254,6 +254,10 @@ fn convert_assistant_items(blocks: &[Content], model: &str) -> Vec<Value> {
             Content::Text { text } => {
                 text_parts.push(serde_json::json!({"type":"output_text","text":text}));
             }
+            Content::Image { mime, .. } => {
+                let text = Content::produced_media_note(mime);
+                text_parts.push(serde_json::json!({"type":"output_text","text":text}));
+            }
             Content::Thinking {
                 text, signature, ..
             } => {

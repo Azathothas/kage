@@ -583,6 +583,7 @@ fn build_request(
     req.max_output_tokens = cx.max_output_tokens;
     req.level = cx.reasoning.resolve(cx.thinking_level);
     req.reasoning = cx.reasoning;
+    req.produces = cx.produces;
     req.session.clone_from(&cx.session);
     req
 }

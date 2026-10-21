@@ -57,6 +57,13 @@ pub fn reasoning_for(registry: &ProviderRegistry, qualified_model: &str) -> Reas
     model_entry(registry, qualified_model).map_or(Reasoning::Unknown, |m| m.reasoning)
 }
 
+/// Media `qualified_model` produces, from the provider's own model list
+/// or the catalog. Empty when unknown, which means text only.
+#[must_use]
+pub fn produces_for(registry: &ProviderRegistry, qualified_model: &str) -> Modalities {
+    model_entry(registry, qualified_model).map_or_else(Modalities::default, |m| m.produces)
+}
+
 /// Modalities `qualified_model` accepts. Empty when unknown.
 #[must_use]
 pub fn input_for(registry: &ProviderRegistry, qualified_model: &str) -> Modalities {

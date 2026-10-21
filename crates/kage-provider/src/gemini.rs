@@ -200,6 +200,9 @@ pub(crate) fn build_request_body(req: &StreamRequest) -> Value {
     if let Some(config) = thinking_config(req) {
         body["generationConfig"]["thinkingConfig"] = config;
     }
+    if req.produces.contains(kage_core::Modality::Image) {
+        body["generationConfig"]["responseModalities"] = serde_json::json!(["TEXT", "IMAGE"]);
+    }
     if !req.tools.is_empty() {
         body["tools"] = serde_json::json!([{
             "functionDeclarations": req.tools.iter().map(tool_spec_to_gemini).collect::<Vec<_>>(),
@@ -411,6 +414,9 @@ fn convert_assistant_parts(blocks: &[Content], model: &str, placeholder: bool) -
                 first_call = false;
                 parts.push(part);
             }
+            Content::Image { mime, .. } => {
+                parts.push(serde_json::json!({"text": Content::produced_media_note(mime)}));
+            }
             _ => {}
         }
     }
@@ -576,6 +582,22 @@ impl GeminiStream {
     }
 
     fn process_part(&mut self, part: &Value) {
+        if let Some(inline) = part.get("inlineData") {
+            // An image the model drew while thinking is not its answer.
+            let thought = part.get("thought").and_then(Value::as_bool) == Some(true);
+            let mime = inline.get("mimeType").and_then(Value::as_str).unwrap_or("");
+            let data = inline.get("data").and_then(Value::as_str).unwrap_or("");
+            if let Some(kind) =
+                kage_core::Modality::of_mime(mime).filter(|_| !thought && !data.is_empty())
+            {
+                self.pending.push_back(Ok(ProviderEvent::Media {
+                    kind,
+                    mime: mime.to_owned(),
+                    data: data.to_owned(),
+                }));
+            }
+            return;
+        }
         if let Some(text) = part.get("text").and_then(Value::as_str) {
             if !text.is_empty() {
                 self.pending.push_back(Ok(ProviderEvent::TextDelta {
@@ -1058,6 +1080,78 @@ mod tests {
         } else {
             panic!("expected MessageEnd");
         }
+    }
+
+    #[test]
+    fn stream_emits_the_images_a_model_answers_with() {
+        let bytes: &[u8] = b"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"a cat\"},{\"inlineData\":{\"mimeType\":\"image/png\",\"data\":\"draft\"},\"thought\":true},{\"inlineData\":{\"mimeType\":\"image/png\",\"data\":\"iVBORw0K\"}}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n";
+        let events = collect_ok(stream_from_bytes(bytes));
+        let media: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                ProviderEvent::Media { kind, mime, data } => {
+                    Some((*kind, mime.as_str(), data.as_str()))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            media,
+            [(kage_core::Modality::Image, "image/png", "iVBORw0K")],
+            "the image drawn while thinking is left out"
+        );
+    }
+
+    #[test]
+    fn an_image_only_reply_replays_as_a_note() {
+        let msg = |role, content| std::sync::Arc::new(kage_core::Message::new(role, content, None));
+        let text = |t: &str| kage_core::Content::Text { text: t.into() };
+        let req = StreamRequest::new(
+            "draw",
+            vec![
+                msg(kage_core::Role::User, vec![text("a cat")]),
+                msg(
+                    kage_core::Role::Assistant,
+                    vec![kage_core::Content::Image {
+                        source: kage_core::MediaSource::Base64 {
+                            data: "iVBO".into(),
+                        },
+                        mime: "image/png".into(),
+                    }],
+                ),
+                msg(kage_core::Role::User, vec![text("make it blue")]),
+            ],
+        );
+        let body = build_request_body(&req);
+        let contents = body["contents"].as_array().unwrap();
+        assert_eq!(contents.len(), 3, "the reply is not dropped: {contents:?}");
+        assert_eq!(
+            contents[1]["parts"][0]["text"],
+            "[you produced an image here: image/png]"
+        );
+    }
+
+    #[test]
+    fn body_asks_for_images_only_from_a_model_that_draws() {
+        let user = kage_core::Message::new(
+            kage_core::Role::User,
+            vec![kage_core::Content::Text {
+                text: "a cat".into(),
+            }],
+            None,
+        );
+        let mut req = StreamRequest::new("draw", vec![std::sync::Arc::new(user)]);
+        assert!(
+            build_request_body(&req)["generationConfig"]
+                .get("responseModalities")
+                .is_none()
+        );
+        req.produces =
+            kage_core::Modalities::of(&[kage_core::Modality::Text, kage_core::Modality::Image]);
+        assert_eq!(
+            build_request_body(&req)["generationConfig"]["responseModalities"],
+            serde_json::json!(["TEXT", "IMAGE"])
+        );
     }
 
     #[test]
