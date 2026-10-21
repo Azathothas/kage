@@ -574,6 +574,16 @@ impl Command {
     }
 }
 
+/// What [`CommandKind::Image`] does with the image.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageAction {
+    /// Show it in the system's image viewer.
+    Open,
+    /// Write it into the working directory.
+    Save,
+}
+
 /// Everything a client can ask the engine to do.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -693,6 +703,20 @@ pub enum CommandKind {
     /// Render the active session as Markdown.
     Export {
         /// Destination. `None` writes next to the working directory.
+        #[serde(default)]
+        path: Option<PathBuf>,
+    },
+    /// Open or save an image the model produced in the session: the one
+    /// whose bytes hash to `sha256`, else the newest.
+    Image {
+        /// What to do with it.
+        action: ImageAction,
+        /// The sha256 of the image's bytes, lowercase hex.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sha256: Option<String>,
+        /// Where `save` writes. `None` picks a new file under
+        /// `generated/` in the working directory. An existing file is
+        /// never replaced.
         #[serde(default)]
         path: Option<PathBuf>,
     },
@@ -1215,6 +1239,11 @@ mod tests {
                 path: PathBuf::from("/tmp/s.jsonl"),
             },
             CommandKind::Export { path: None },
+            CommandKind::Image {
+                action: ImageAction::Save,
+                sha256: Some("ab".repeat(32)),
+                path: Some(PathBuf::from("art/cat.png")),
+            },
             CommandKind::RestartMcp {
                 server: "srv".into(),
             },

@@ -212,6 +212,13 @@ pub enum RunRequest {
     /// uses the given path. The worker replays the session file (the
     /// source of truth) rather than the rendered buffer.
     ExportSession(Option<std::path::PathBuf>),
+    /// Open or save the newest image the model produced (`/image`).
+    Image {
+        /// What to do with it.
+        action: kage_core::protocol::ImageAction,
+        /// Where a save writes, when given.
+        path: Option<std::path::PathBuf>,
+    },
     /// Advance the active thinking level one step forward (the
     /// `Shift+Tab` cycle). The worker mutates the agent context's
     /// `thinking_level`, persists the change as a session entry, and

@@ -19,38 +19,55 @@ const MAX_H: f32 = 420.0;
 const MAX_W: f32 = 640.0;
 
 /// One media item: the image scaled to the column with its type and
-/// size under it, or that line alone for media egui cannot draw.
-pub fn render_media(ui: &mut egui::Ui, mime: &str, data: &str) -> egui::Response {
+/// size under it and a button to save it into the workspace, or the
+/// line alone for media egui cannot draw. The flag says the button was
+/// pressed.
+pub fn render_media(ui: &mut egui::Ui, mime: &str, data: &str) -> (egui::Response, bool) {
     let palette = Palette::active_of(ui.ctx());
     let caption = format!("{mime}, {}", size_label(data.len() / 4 * 3));
     if !mime.starts_with("image/") {
-        return caption_line(ui, &caption, palette.faint);
+        return (caption_line(ui, &caption, palette.faint), false);
     }
     let uri = media_uri(mime, data);
     let seen = egui::Id::new(("kage-media", &uri));
     if !ui.ctx().data(|d| d.get_temp::<bool>(seen).unwrap_or(false)) {
         let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) else {
-            return caption_line(
+            let line = caption_line(
                 ui,
                 &format!("{caption}: the image data is damaged"),
                 palette.danger,
             );
+            return (line, false);
         };
         ui.ctx().include_bytes(uri.clone(), bytes);
         ui.ctx().data_mut(|d| d.insert_temp(seen, true));
     }
-    ui.vertical(|ui| {
-        let width = ui.available_width().min(MAX_W);
-        ui.add(
-            egui::Image::new(uri)
-                .max_width(width)
-                .max_height(MAX_H)
-                .corner_radius(R_MD),
-        );
-        ui.add_space(SP_1);
-        caption_line(ui, &caption, palette.faint);
-    })
-    .response
+    let mut save = false;
+    let response = ui
+        .vertical(|ui| {
+            let width = ui.available_width().min(MAX_W);
+            ui.add(
+                egui::Image::new(uri)
+                    .max_width(width)
+                    .max_height(MAX_H)
+                    .corner_radius(R_MD),
+            );
+            ui.add_space(SP_1);
+            ui.horizontal(|ui| {
+                caption_line(ui, &caption, palette.faint);
+                save = crate::ui::settings_config::btn_sm(
+                    ui,
+                    "Save to workspace",
+                    Some(crate::icons::Icon::Download),
+                    crate::ui::settings_config::BtnTone::Plain,
+                    palette,
+                )
+                .on_hover_text("Write it under generated/ in the session's folder")
+                .clicked();
+            });
+        })
+        .response;
+    (response, save)
 }
 
 /// A `bytes://` URI that names the image by its content, so two images

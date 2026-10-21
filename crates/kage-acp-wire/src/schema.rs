@@ -1056,6 +1056,20 @@ pub struct RegistryInstallResult {
     pub capabilities: Vec<String>,
 }
 
+/// `_kage/image/save` request params.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageSaveRequest {
+    /// The session the image is in.
+    pub session_id: String,
+    /// The sha256 of the image's bytes, lowercase hex.
+    pub sha256: String,
+    /// Where to write it, relative to the session's directory. Omitted,
+    /// a new file under `generated/`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
 /// `_kage/auth/set` request params.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

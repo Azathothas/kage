@@ -922,7 +922,7 @@ impl super::Dispatcher {
         self.info(new, message);
     }
 
-    fn info(&self, id: SessionId, text: String) {
+    pub(super) fn info(&self, id: SessionId, text: String) {
         self.bus.publish(
             id,
             HostEvent::Notice {
@@ -933,7 +933,7 @@ impl super::Dispatcher {
         );
     }
 
-    fn error(&self, id: SessionId, text: String) {
+    pub(super) fn error(&self, id: SessionId, text: String) {
         super::notice(&self.bus, id, NoticeLevel::Error, text);
     }
 }

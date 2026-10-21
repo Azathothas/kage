@@ -26,17 +26,17 @@ use kage_jsonrpc::{CancelNotice, Inbound, Peer, RpcError, connect_with};
 use crate::acp::{
     AuthSetRequest, CloseSessionRequest, CloseSessionResponse, ConfigGetRequest, ConfigGetResult,
     ConfigSetRequest, ConfigTestRequest, ConfigTestResult, DirectoryRequest, DirectoryResult,
-    FoldersRequest, FoldersResult, FsRequest, FsResult, InitializeRequest, InitializeResponse,
-    KageMeta, ListSessionsRequest, ListSessionsResponse, LoadSessionRequest, LoadSessionResponse,
-    ModelsResponse, NewSessionRequest, NewSessionResponse, OptionSetRequest, OptionsResponse,
-    PermissionOption, PermissionOptionKind, PermissionOutcome, PlanReview, PluginInstallRequest,
-    PluginRemoveRequest, PromptRequest, PromptResponse, QuestionMeta, QuestionPrompt,
-    RegistryInstallRequest, RegistryInstallResult, RegistrySearchRequest, RegistrySearchResult,
-    RequestMeta, RequestPermissionRequest, RequestPermissionResponse, RequestPermissionResult,
-    ResumeSessionRequest, ResumeSessionResponse, SessionExportResponse, SessionForkRequest,
-    SessionForkResponse, SessionNotification, SessionRenameRequest, SessionRequest, SessionUpdate,
-    SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, SwarmResumeRequest,
-    SwarmResumeResponse, ThemesRequest, ThemesResult, ToolCallUpdate,
+    FoldersRequest, FoldersResult, FsRequest, FsResult, ImageSaveRequest, InitializeRequest,
+    InitializeResponse, KageMeta, ListSessionsRequest, ListSessionsResponse, LoadSessionRequest,
+    LoadSessionResponse, ModelsResponse, NewSessionRequest, NewSessionResponse, OptionSetRequest,
+    OptionsResponse, PermissionOption, PermissionOptionKind, PermissionOutcome, PlanReview,
+    PluginInstallRequest, PluginRemoveRequest, PromptRequest, PromptResponse, QuestionMeta,
+    QuestionPrompt, RegistryInstallRequest, RegistryInstallResult, RegistrySearchRequest,
+    RegistrySearchResult, RequestMeta, RequestPermissionRequest, RequestPermissionResponse,
+    RequestPermissionResult, ResumeSessionRequest, ResumeSessionResponse, SessionExportResponse,
+    SessionForkRequest, SessionForkResponse, SessionNotification, SessionRenameRequest,
+    SessionRequest, SessionUpdate, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse,
+    SwarmResumeRequest, SwarmResumeResponse, ThemesRequest, ThemesResult, ToolCallUpdate,
 };
 
 /// The client's answer to a `session/request_permission`.
@@ -627,6 +627,16 @@ pub trait Agent: Send + Sync + 'static {
         Err(RpcError::method_not_found("_kage/plugins/remove"))
     }
 
+    /// Saves an image the model produced into the session's directory
+    /// (`_kage/image/save`). The default rejects.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`RpcError`] if the session is unknown.
+    fn image_save(&self, _req: ImageSaveRequest) -> Result<serde_json::Value, RpcError> {
+        Err(RpcError::method_not_found("_kage/image/save"))
+    }
+
     /// Lists the packages of the plugin registry
     /// (`_kage/registry/search`). The default rejects.
     ///
@@ -958,6 +968,10 @@ fn handle_kage_request<A: Agent>(
         },
         "_kage/plugins/remove" => match parse::<PluginRemoveRequest>(params) {
             Ok(req) => spawn_op(peer, agent, id, move |a| a.plugin_remove(req)),
+            Err(e) => return parse_failed(peer, &id, e),
+        },
+        "_kage/image/save" => match parse::<ImageSaveRequest>(params) {
+            Ok(req) => spawn_op(peer, agent, id, move |a| a.image_save(req)),
             Err(e) => return parse_failed(peer, &id, e),
         },
         "_kage/registry/search" => match parse::<RegistrySearchRequest>(params) {

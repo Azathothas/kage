@@ -52,6 +52,13 @@ impl BlobStore {
         valid.then(|| self.root.join(&sha256[..2]).join(sha256))
     }
 
+    /// The sha256 of `bytes`, lowercase hex: the name they are stored
+    /// under.
+    #[must_use]
+    pub fn digest(bytes: &[u8]) -> String {
+        hex::encode(Sha256::digest(bytes))
+    }
+
     /// Stores `bytes` and returns their sha256. Bytes already stored are
     /// not written again.
     ///
@@ -59,7 +66,7 @@ impl BlobStore {
     ///
     /// The blob cannot be written.
     pub fn put(&self, bytes: &[u8]) -> std::io::Result<String> {
-        let sha256 = hex::encode(Sha256::digest(bytes));
+        let sha256 = Self::digest(bytes);
         let path = self.path(&sha256).expect("a digest is a valid name");
         if !path.is_file() {
             if let Some(dir) = path.parent() {
@@ -74,7 +81,7 @@ impl BlobStore {
     #[must_use]
     pub fn get(&self, sha256: &str) -> Option<Vec<u8>> {
         let bytes = std::fs::read(self.path(sha256)?).ok()?;
-        (hex::encode(Sha256::digest(&bytes)) == sha256).then_some(bytes)
+        (Self::digest(&bytes) == sha256).then_some(bytes)
     }
 
     /// `message` with every inline media of at least [`INLINE_MAX`] bytes

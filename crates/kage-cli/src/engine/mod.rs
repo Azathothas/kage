@@ -12,6 +12,7 @@
 mod agent_tool;
 mod agents;
 mod bus;
+mod images;
 mod mailbox_tool;
 mod mcp;
 mod plan_tool;
@@ -775,6 +776,10 @@ impl Dispatcher {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "a flat dispatch over every engine command"
+    )]
     fn command(&mut self, command: Command) {
         match command.kind {
             CommandKind::Shutdown => {
@@ -858,6 +863,11 @@ impl Dispatcher {
             CommandKind::Clone => self.clone_session(id),
             CommandKind::DeleteSession { path } => self.delete_session(id, &path),
             CommandKind::Export { path } => self.export(id, path),
+            CommandKind::Image {
+                action,
+                sha256,
+                path,
+            } => self.image(id, action, sha256.as_deref(), path.as_deref()),
             CommandKind::SetModel { model } => self.set_model(id, &model),
             CommandKind::SetThinking { level } => self.set_thinking(id, level),
             CommandKind::SetPermissionMode { mode } => self.update_state(id, |s| {

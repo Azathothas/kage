@@ -560,6 +560,33 @@ fn export_uses_the_unquoted_parsed_path() {
 }
 
 #[test]
+fn image_opens_by_default_and_saves_to_a_parsed_path() {
+    use kage_core::protocol::ImageAction;
+    let buffer = shared_buffer();
+    let (tx, rx) = mpsc::channel();
+    let mut app = app_with_defaults(buffer, tx);
+    for (line, want_action, want_path) in [
+        ("image", ImageAction::Open, None),
+        ("image open", ImageAction::Open, None),
+        ("image save", ImageAction::Save, None),
+        (
+            "image save \"art/a cat.png\"",
+            ImageAction::Save,
+            Some(std::path::PathBuf::from("art/a cat.png")),
+        ),
+    ] {
+        let res = app.run_command_validated(line, &builtin_registry());
+        assert!(matches!(res, CommandResult::Done(None)), "{line}");
+        match rx.recv_timeout(Duration::from_millis(100)).unwrap() {
+            RunRequest::Image { action, path } => {
+                assert_eq!((action, path), (want_action, want_path), "{line}");
+            }
+            other => panic!("{line}: expected Image, got {other:?}"),
+        }
+    }
+}
+
+#[test]
 fn slash_missing_argument_restores_the_draft_with_the_reason() {
     let mut app = defaults_app();
     app.set_toasts(crate::toast::shared_toasts());

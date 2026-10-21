@@ -871,7 +871,11 @@ fn render_row(
         },
         Row::Media { ix } => match session.items.get(*ix) {
             Some(TranscriptItem::Media { mime, data }) => {
-                super::media_rows::render_media(ui, mime, data)
+                let (response, save) = super::media_rows::render_media(ui, mime, data);
+                if save {
+                    events.push(RowAction::SaveImage(*ix));
+                }
+                response
             }
             _ => blank_row(ui),
         },

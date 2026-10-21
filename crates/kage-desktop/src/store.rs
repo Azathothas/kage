@@ -1008,6 +1008,28 @@ impl Store {
     /// item's turn; without, all of it. A `through` past the
     /// transcript's end is refused with a note: the row the click
     /// named is gone. Reports whether a request went out.
+    /// Asks the engine to save the image at transcript item `ix` of the
+    /// active session into the session's directory, under `generated/`.
+    /// The engine says where it went as a notice on the session.
+    pub fn save_image(&mut self, ix: usize) {
+        use base64::Engine as _;
+        use sha2::Digest as _;
+
+        let Some(id) = self.active.clone() else {
+            return;
+        };
+        let Some(kage_client::TranscriptItem::Media { data, .. }) =
+            self.state().session(&id).and_then(|s| s.items.get(ix))
+        else {
+            return;
+        };
+        let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(data) else {
+            return;
+        };
+        let sha256 = hex::encode(sha2::Sha256::digest(&bytes));
+        self.client.image_save(&id, &sha256, None);
+    }
+
     pub fn fork(&mut self, through: Option<usize>) -> bool {
         let Some(session) = self.active_session() else {
             return false;

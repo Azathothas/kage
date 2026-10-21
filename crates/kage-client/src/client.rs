@@ -164,6 +164,7 @@ enum Pending {
     Plugins,
     Registry,
     RegistryInstall,
+    ImageSave,
 }
 
 /// The client side of an ACP connection.
@@ -666,6 +667,21 @@ impl Client {
         )
     }
 
+    /// Asks the engine to save the image whose bytes hash to `sha256`
+    /// into session `session_id`'s directory, at `path` or under
+    /// `generated/`. The outcome arrives as a notice on the session.
+    pub fn image_save(&mut self, session_id: &str, sha256: &str, path: Option<&str>) -> u64 {
+        self.request(
+            "_kage/image/save",
+            params(&kage_acp_wire::ImageSaveRequest {
+                session_id: session_id.to_owned(),
+                sha256: sha256.to_owned(),
+                path: path.map(str::to_owned),
+            }),
+            Pending::ImageSave,
+        )
+    }
+
     /// Lists the plugin registry's packages whose name, description or
     /// tags contain every word of `query`; `refresh` fetches the index
     /// again. The answer arrives as [`Change::Registry`].
@@ -1131,6 +1147,7 @@ impl Client {
             | Pending::Plugins
             | Pending::Registry
             | Pending::RegistryInstall
+            | Pending::ImageSave
             | Pending::Models
             | Pending::Options) => settings_answer(id, pending, result),
             Pending::SwarmResume { session_id }
@@ -1672,6 +1689,8 @@ fn settings_answer(id: u64, pending: Pending, result: Value) -> Vec<Change> {
                 options: answer.options,
             }],
         },
+        // `_kage/image/save` answers nothing: the engine reports where the
+        // image went as a session notice.
         _ => Vec::new(),
     }
 }

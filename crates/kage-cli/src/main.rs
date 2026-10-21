@@ -38,6 +38,7 @@ mod history;
 mod init;
 mod mcp;
 mod mcp_auth;
+mod opener;
 mod paths;
 mod permissions;
 mod plugin_cmd;

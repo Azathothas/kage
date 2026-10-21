@@ -325,6 +325,11 @@ impl Host {
             RunRequest::ExportSession(path) => self.send(CommandKind::Export {
                 path: path.map(|path| std::path::absolute(&path).unwrap_or(path)),
             }),
+            RunRequest::Image { action, path } => self.send(CommandKind::Image {
+                action,
+                sha256: None,
+                path,
+            }),
             RunRequest::ForkSessionFile(path) => self.send(CommandKind::ForkFile { path }),
             RunRequest::DeleteSession(path) => self.send(CommandKind::DeleteSession { path }),
             RunRequest::ResumeSession(path) => {

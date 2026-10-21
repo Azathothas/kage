@@ -221,6 +221,16 @@ impl App {
                 self.run_mcp_command(rest);
                 None
             }
+            "image" => {
+                let path = match args.get("file") {
+                    Some(ArgValue::Path(path)) => {
+                        Some(kage_core::fsutil::expand_tilde(std::path::Path::new(path)))
+                    }
+                    _ => None,
+                };
+                self.run_image_command(rest, path);
+                None
+            }
             "tree" => {
                 self.open_session_tree();
                 None
@@ -302,6 +312,25 @@ impl App {
     /// Handle `/mcp`, `/mcp restart <server>` and `/mcp login <server>`.
     /// The argument schema already checked that a subcommand names its
     /// server.
+    /// `/image open` and `/image save [file]`: hand the newest image the
+    /// model produced to the engine, which holds its bytes. `path` is
+    /// the parsed `file` of a save.
+    pub(crate) fn run_image_command(&mut self, rest: &str, path: Option<std::path::PathBuf>) {
+        use kage_core::protocol::ImageAction;
+        let sub = rest.split_whitespace().next().unwrap_or("");
+        let action = match sub {
+            "open" | "" => ImageAction::Open,
+            "save" => ImageAction::Save,
+            other => {
+                self.push_error(format!(
+                    "image: unknown subcommand `{other}` (try open, save)"
+                ));
+                return;
+            }
+        };
+        let _ = self.send_request(RunRequest::Image { action, path });
+    }
+
     pub(crate) fn run_mcp_command(&mut self, rest: &str) {
         let (sub, server) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
         let server = server.trim();

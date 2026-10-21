@@ -59,10 +59,10 @@ use kage_acp::acp::{
     AgentCapabilities, AgentMeta, AuthSetRequest, CloseSessionRequest, CloseSessionResponse,
     ConfigGetRequest, ConfigGetResult, ConfigSetRequest, ConfigTestRequest, ConfigTestResult,
     DirectoryRequest, DirectoryResult, FoldersRequest, FoldersResult, FsRequest, FsResult,
-    Implementation, InitializeRequest, InitializeResponse, InstalledPlugin, KageAgentInfo,
-    ListSessionsRequest, ListSessionsResponse, LoadSessionRequest, LoadSessionResponse,
-    McpCapabilities, ModelsResponse, NewSessionRequest, NewSessionResponse, OptionSetRequest,
-    OptionsResponse, PROTOCOL_VERSION, PluginInstallRequest, PluginRemoveRequest,
+    ImageSaveRequest, Implementation, InitializeRequest, InitializeResponse, InstalledPlugin,
+    KageAgentInfo, ListSessionsRequest, ListSessionsResponse, LoadSessionRequest,
+    LoadSessionResponse, McpCapabilities, ModelsResponse, NewSessionRequest, NewSessionResponse,
+    OptionSetRequest, OptionsResponse, PROTOCOL_VERSION, PluginInstallRequest, PluginRemoveRequest,
     PromptCapabilities, PromptDelivery, PromptRequest, PromptResponse, RegistryInstallRequest,
     RegistryInstallResult, RegistrySearchRequest, RegistrySearchResult, ResumeSessionRequest,
     ResumeSessionResponse, SessionCapabilities, SessionConfigOption, SessionExportResponse,
@@ -731,6 +731,21 @@ impl Agent for CliAcpAgent {
             Config::default_path().ok_or_else(|| RpcError::internal("no user config directory"))?;
         registry::set(&path, &req)?;
         self.options_list(ConfigGetRequest::default())
+    }
+
+    /// Saves an image the model produced. The engine reports where it
+    /// went, or why it could not, as a notice on the session.
+    fn image_save(&self, req: ImageSaveRequest) -> Result<serde_json::Value, RpcError> {
+        let id = self.engine_id(&req.session_id)?;
+        self.host.engine.send(Command::to(
+            id,
+            CommandKind::Image {
+                action: kage_core::protocol::ImageAction::Save,
+                sha256: Some(req.sha256),
+                path: req.path.map(std::path::PathBuf::from),
+            },
+        ));
+        Ok(serde_json::json!({}))
     }
 
     fn session_rename(&self, req: SessionRenameRequest) -> Result<serde_json::Value, RpcError> {
