@@ -13,7 +13,8 @@ them.
 A capability is active only when both sides agree:
 
 1. The user grants it to a named plugin in `config.toml`. The name is
-   the plugin file's stem (`rewind.lua` -> `rewind`).
+   the plugin file's stem (`rewind.lua` -> `rewind`), or a package's
+   directory name.
 
    ```toml
    [plugins.capabilities]
@@ -37,6 +38,11 @@ elevated API is then attached onto that plugin's `kage` alone. Another
 plugin cannot see it, even if it asks. An unknown capability name
 raises rather than silently resolving to `false`, so a config typo is
 loud.
+
+A [package](/plugins/packages) adds a third side: its `plugin.toml`
+lists every capability it may hold. Asking for one it does not list
+raises, whatever the config grants, so what a package declares is all
+it can ever get.
 
 ## the capabilities
 

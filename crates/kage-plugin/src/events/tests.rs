@@ -19,6 +19,7 @@ fn lua_with_kage(sink: SharedHostLog) -> Lua {
         sink,
         Arc::new(Mutex::new(None)),
         Arc::new(std::collections::HashMap::new()),
+        crate::capabilities::Ceilings::default(),
     )
     .unwrap();
     crate::stdlib::install(&lua).unwrap();

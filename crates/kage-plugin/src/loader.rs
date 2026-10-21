@@ -1,21 +1,21 @@
-//! Discover and execute `*.lua` plugin files in a directory.
+//! Discover and execute the plugins in a directory.
 //!
 //! [`load_all`] first evaluates the embedded `_defaults.lua` in its own
-//! environment, then reads every `*.lua` file in the plugins directory
-//! and evaluates it inside the given [`PluginRuntime`], in file-name
-//! order, then applies the `[keybindings]` table from `config.toml`
-//! (see [`crate::PluginRuntimeBuilder::keybindings`]), and finally
-//! evaluates the trusted `init.lua` when the runtime has a user dir
-//! (see the `user` module). Each later layer overrides the earlier ones.
-//! The load ends by firing `color_scheme` for the current theme, so
+//! environment, then every plugin [`crate::package::discover`] finds in
+//! the plugins directory (a `<name>.lua` script or a `<name>/` package),
+//! in file-name order, then applies the `[keybindings]` table from
+//! `config.toml` (see [`crate::PluginRuntimeBuilder::keybindings`]), and
+//! finally evaluates the trusted `init.lua` when the runtime has a user
+//! dir (see the `user` module). Each later layer overrides the earlier
+//! ones. The load ends by firing `color_scheme` for the current theme, so
 //! highlight setups written as autocmds apply.
-//! Each file is loaded independently: a broken plugin, a bad
+//! Each plugin is loaded independently: a broken plugin, a bad
 //! `[keybindings]` entry or a broken `init.lua` logs an error through
 //! the runtime's host log and the load proceeds. The function returns a
-//! summary the host can surface to the user. File stems starting with
-//! `@` are reserved for kage's own environments and are rejected, and
-//! so are stems that are not valid UTF-8: plugins are addressed by
-//! stem in config, so two files could not share the fallback name.
+//! summary the host can surface to the user. Names starting with `@` are
+//! reserved for kage's own environments and are rejected, and so are
+//! names that are not valid UTF-8: plugins are addressed by name in
+//! config, so two entries could not share the fallback name.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -25,16 +25,18 @@ use mlua::Lua;
 
 use crate::api::LogLevel;
 use crate::error::PluginError;
+use crate::package::{self, Found};
 use crate::runtime::{EvalState, PluginRuntime};
 
-/// Outcome of [`load_dir`]: paths that loaded cleanly and ones that did not.
+/// Outcome of [`load_dir`]: plugins (script files or package
+/// directories) that loaded cleanly and ones that did not.
 #[derive(Debug, Default)]
 pub struct LoadReport {
-    /// Plugin files whose chunk evaluated without raising.
+    /// Plugins that evaluated without raising.
     pub loaded: Vec<PathBuf>,
-    /// Plugin files that failed, paired with the error encountered.
+    /// Plugins that failed, paired with the error encountered.
     pub failed: Vec<(PathBuf, String)>,
-    /// Plugin files skipped because a non-empty `[plugins] enabled`
+    /// Plugins skipped because a non-empty `[plugins] enabled`
     /// allowlist did not name them. Reported, never silently dropped.
     pub skipped: Vec<PathBuf>,
     /// Outcome of the trusted `init.lua`, or `None` when there was none
@@ -57,13 +59,14 @@ impl LoadReport {
 
 /// Evaluate every `*.lua` file in `dir` against `runtime`.
 ///
-/// Behavior on each file:
-/// * Read the file from disk (errors logged + recorded, file skipped).
-/// * Evaluate as a Lua chunk (errors logged + recorded, file skipped).
+/// A script is read and evaluated as one chunk; a package is checked
+/// against its manifest and runs its `init.lua` (see
+/// [`crate::package`]). A plugin that fails is logged, recorded and
+/// skipped.
 ///
 /// The whole directory loads as one job on the runtime's Lua owner
-/// thread. Files are processed sorted by file name, so a plugin named
-/// `a.lua` always loads before `b.lua`.
+/// thread. Plugins are processed sorted by file name, so a plugin named
+/// `a.lua` always loads before `b.lua` or `b/`.
 pub fn load_dir(dir: &Path, runtime: &PluginRuntime) -> Result<LoadReport, PluginError> {
     load_all(Some(dir), runtime)
 }
@@ -109,75 +112,53 @@ pub(crate) fn load_on(
 }
 
 fn load_plugins(lua: &Lua, dir: &Path, eval: &EvalState) -> Result<LoadReport, PluginError> {
-    let read_dir = match std::fs::read_dir(dir) {
-        Ok(d) => d,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(LoadReport::default()),
-        Err(err) => {
-            return Err(PluginError::Io {
-                path: dir.to_path_buf(),
-                source: err,
-            });
-        }
-    };
-
-    let mut paths = Vec::new();
-    for entry in read_dir {
-        let entry = entry.map_err(|err| PluginError::Io {
-            path: dir.to_path_buf(),
-            source: err,
-        })?;
-        let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) == Some("lua") {
-            paths.push(path);
-        }
-    }
-    paths.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
-
+    let found = package::discover(dir).map_err(|err| PluginError::Io {
+        path: dir.to_path_buf(),
+        source: err,
+    })?;
     let sink = eval.sink();
     let mut report = LoadReport::default();
-    for path in paths {
-        let Some(name) = path.file_stem().and_then(|s| s.to_str()) else {
-            let err = "plugin file name is not valid UTF-8";
-            lock(sink).log(
-                LogLevel::Error,
-                &format!("plugin '{}': {err}", path.display()),
-            );
-            report.failed.push((path, err.to_owned()));
-            continue;
+    for entry in found {
+        let (path, result) = match entry {
+            Found::Invalid { path, error } => {
+                lock(sink).log(
+                    LogLevel::Error,
+                    &format!("plugin '{}': {error}", path.display()),
+                );
+                report.failed.push((path, error));
+                continue;
+            }
+            Found::Script { name, path } if eval.is_enabled(&name) => {
+                let result = std::fs::read_to_string(&path)
+                    .map_err(|err| format!("read failed: {err}"))
+                    .and_then(|source| {
+                        eval.eval_plugin(lua, &name, &source)
+                            .map(drop)
+                            .map_err(|err| err.to_string())
+                    });
+                (path, result)
+            }
+            Found::Package { name, dir } if eval.is_enabled(&name) => {
+                let result = package::eval_package(lua, eval, &name, &dir);
+                (dir, result)
+            }
+            Found::Script { name, path } | Found::Package { name, dir: path } => {
+                lock(sink).log(
+                    LogLevel::Info,
+                    &format!("plugin '{name}' not in [plugins] enabled allowlist; skipped"),
+                );
+                report.skipped.push(path);
+                continue;
+            }
         };
-        if name.starts_with('@') {
-            let err = "names starting with '@' are reserved";
-            lock(sink).log(
-                LogLevel::Error,
-                &format!("plugin '{}': {err}", path.display()),
-            );
-            report.failed.push((path, err.to_owned()));
-            continue;
-        }
-        if !eval.is_enabled(name) {
-            let mut s = lock(sink);
-            s.log(
-                LogLevel::Info,
-                &format!("plugin '{name}' not in [plugins] enabled allowlist; skipped"),
-            );
-            report.skipped.push(path);
-            continue;
-        }
-        match std::fs::read_to_string(&path) {
-            Ok(source) => match eval.eval_plugin(lua, name, &source) {
-                Ok(_) => report.loaded.push(path),
-                Err(err) => {
-                    let msg = format!("plugin '{}': {err}", path.display());
-                    let mut s = lock(sink);
-                    s.log(LogLevel::Error, &msg);
-                    report.failed.push((path, err.to_string()));
-                }
-            },
+        match result {
+            Ok(()) => report.loaded.push(path),
             Err(err) => {
-                let msg = format!("plugin '{}': read failed: {err}", path.display());
-                let mut s = lock(sink);
-                s.log(LogLevel::Error, &msg);
-                report.failed.push((path, err.to_string()));
+                lock(sink).log(
+                    LogLevel::Error,
+                    &format!("plugin '{}': {err}", path.display()),
+                );
+                report.failed.push((path, err));
             }
         }
     }

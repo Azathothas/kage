@@ -376,6 +376,7 @@ pub(crate) fn install(
     sink: SharedHostLog,
     current: CurrentPlugin,
     grants: crate::capabilities::Grants,
+    ceilings: crate::capabilities::Ceilings,
 ) -> Result<SharedAutocmds, PluginError> {
     let shared = SharedAutocmds::default();
     lua.set_app_data(Arc::clone(&shared));
@@ -383,7 +384,14 @@ pub(crate) fn install(
     let api: Table = lua.globals().get::<Table>("kage")?.get("api")?;
     api.set(
         "autocmd_create",
-        create_fn(lua, Arc::clone(&shared), current, sink.clone(), grants)?,
+        create_fn(
+            lua,
+            Arc::clone(&shared),
+            current,
+            sink.clone(),
+            grants,
+            ceilings,
+        )?,
     )?;
 
     let autocmds = Arc::clone(&shared);
@@ -453,6 +461,7 @@ fn create_fn(
     current: CurrentPlugin,
     sink: SharedHostLog,
     grants: crate::capabilities::Grants,
+    ceilings: crate::capabilities::Ceilings,
 ) -> mlua::Result<Function> {
     lua.create_function(move |lua, (event, opts): (String, Table)| {
         if !is_known(&event) {
@@ -465,7 +474,10 @@ fn create_fn(
             // mirroring `install_trusted`.
             let granted = match owner.as_deref() {
                 None => true,
-                Some(plugin) => grants.get(plugin).is_some_and(|set| set.contains(&cap)),
+                Some(plugin) => {
+                    grants.get(plugin).is_some_and(|set| set.contains(&cap))
+                        && crate::capabilities::declared(&ceilings, plugin, cap)
+                }
             };
             if !granted {
                 let subject = owner.as_deref().unwrap_or("?");

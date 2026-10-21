@@ -3181,20 +3181,23 @@ fn mcp_prompts_are_commands_that_expand_when_sent_back() {
 }
 
 #[test]
-fn installed_plugins_are_the_lua_files_the_allowlist_marks() {
+fn installed_plugins_are_the_scripts_and_packages_the_allowlist_marks() {
     let dir = tempfile::tempdir().unwrap();
     for file in ["b.lua", "a.lua", "@kage.lua", "notes.txt"] {
         std::fs::write(dir.path().join(file), "").unwrap();
     }
+    std::fs::create_dir(dir.path().join("c")).unwrap();
+    std::fs::write(dir.path().join("c/plugin.toml"), "").unwrap();
+    std::fs::create_dir(dir.path().join("data")).unwrap();
     let all = super::installed_plugins(dir.path(), &[]);
     let names: Vec<_> = all.iter().map(|p| (p.name.as_str(), p.enabled)).collect();
-    assert_eq!(names, [("a", true), ("b", true)]);
+    assert_eq!(names, [("a", true), ("b", true), ("c", true)]);
     let only_b = super::installed_plugins(dir.path(), &["b".to_owned()]);
     let names: Vec<_> = only_b
         .iter()
         .map(|p| (p.name.as_str(), p.enabled))
         .collect();
-    assert_eq!(names, [("a", false), ("b", true)]);
+    assert_eq!(names, [("a", false), ("b", true), ("c", false)]);
     assert!(super::installed_plugins(&dir.path().join("missing"), &[]).is_empty());
 }
 

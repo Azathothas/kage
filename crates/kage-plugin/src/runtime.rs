@@ -36,6 +36,7 @@
 //! tier gates the documented elevated surfaces, not every way a plugin
 //! can touch your session - run only plugins you trust.
 
+use std::collections::HashSet;
 pub(crate) use std::collections::{BTreeMap, HashMap};
 pub(crate) use std::path::PathBuf;
 pub(crate) use std::sync::{Arc, Mutex};
@@ -56,6 +57,7 @@ pub(crate) use crate::block_renderers::{
 };
 pub(crate) use crate::bridge::{self, BridgeStep, SharedBridge, shared_bridge};
 pub(crate) use crate::capabilities::{self, CapabilityRegistry, CurrentPlugin};
+use crate::capabilities::{Capability, Ceilings};
 pub(crate) use crate::commands::{self, LuaCommand, RegisteredCommands, registered_commands};
 pub(crate) use crate::crypto;
 pub(crate) use crate::env;
@@ -177,6 +179,8 @@ pub(crate) struct EvalState {
     /// Name of the plugin currently being evaluated, so
     /// `kage.request_capabilities` knows who is asking.
     current_plugin: CurrentPlugin,
+    /// What each package's manifest lets it hold. Rebuilt on every load.
+    ceilings: Ceilings,
     /// Load allowlist by plugin file stem. When non-empty, the loader
     /// evaluates only the listed plugins and skips the rest; empty means
     /// load every discovered plugin.
@@ -215,6 +219,12 @@ impl EvalState {
 
     pub(crate) fn is_enabled(&self, stem: &str) -> bool {
         self.enabled.is_empty() || self.enabled.iter().any(|name| name == stem)
+    }
+
+    /// Cap what plugin `name` may hold at `declared`, its manifest's
+    /// capabilities.
+    pub(crate) fn set_ceiling(&self, name: &str, declared: HashSet<Capability>) {
+        lock(&self.ceilings).insert(name.to_owned(), declared);
     }
 
     /// Evaluate `source` as plugin `name` in its own `_ENV`. See
@@ -285,6 +295,7 @@ impl EvalState {
         for (_, key) in lock(&self.plugin_envs).drain() {
             let _ = lua.remove_registry_value(key);
         }
+        lock(&self.ceilings).clear();
         *lock(&self.current_plugin) = None;
     }
 }

@@ -186,11 +186,13 @@ impl PluginRuntimeBuilder {
             Arc::new(Mutex::new(HashMap::new()));
         let current_plugin: CurrentPlugin = Arc::new(Mutex::new(None));
         let grants = Arc::new(capabilities::parse_grants(&self.capabilities)?);
+        let ceilings: capabilities::Ceilings = Arc::default();
         let autocmds = autocmd::install(
             &lua,
             self.sink.clone(),
             Arc::clone(&current_plugin),
             Arc::clone(&grants),
+            Arc::clone(&ceilings),
         )?;
         schedule::install(
             &lua,
@@ -250,6 +252,7 @@ impl PluginRuntimeBuilder {
             &lua,
             Arc::clone(&current_plugin),
             Arc::clone(&grants),
+            Arc::clone(&ceilings),
             Arc::clone(&plugin_envs),
             Arc::clone(&cap_registry),
         )?;
@@ -320,6 +323,7 @@ impl PluginRuntimeBuilder {
             sink: self.sink.clone(),
             plugin_envs,
             current_plugin,
+            ceilings,
             enabled: self.enabled,
             plugin_config: self.plugin_config,
             state_dir: self.state_dir,

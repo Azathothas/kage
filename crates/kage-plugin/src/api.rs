@@ -43,7 +43,7 @@ use crate::error::PluginError;
 /// with `kage.requires` and fail loudly at load against an
 /// incompatible host instead of erroring deep inside a missing binding.
 /// Exposed to Lua as `kage.api_version()`.
-pub const API_VERSION: i64 = 2;
+pub const API_VERSION: i64 = 3;
 
 /// Severity tier for [`HostLog::log`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

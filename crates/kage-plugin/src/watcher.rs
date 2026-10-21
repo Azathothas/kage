@@ -16,10 +16,13 @@ use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watche
 
 use crate::error::PluginError;
 
-/// Filesystem watcher that flips a flag whenever a watched Lua file is
-/// added, modified, or removed: a `*.lua` file directly in the plugins
-/// directory, the user `init.lua`, or a `*.lua` file anywhere under the
-/// user `lua/` directory.
+/// Filesystem watcher that flips a flag whenever a watched file is
+/// added, modified, or removed: a script directly in the plugins
+/// directory, a package directory there, a `*.lua` file or `plugin.toml`
+/// anywhere inside one, the user `init.lua`, or a `*.lua` file anywhere
+/// under the user `lua/` directory. Entries whose name starts with `.`
+/// are ignored, so a package staged there reloads only once it is
+/// renamed into place.
 pub struct PluginWatcher {
     scope: Scope,
     dirty: Arc<AtomicBool>,
@@ -49,11 +52,10 @@ impl Scope {
     fn matches(&self, path: &Path) -> bool {
         let lua = path.extension().is_some_and(|ext| ext == "lua");
         self.init.as_deref() == Some(path)
-            || lua
-                && self
-                    .plugins
-                    .as_deref()
-                    .is_some_and(|dir| path.parent() == Some(dir))
+            || self
+                .plugins
+                .as_deref()
+                .is_some_and(|dir| in_plugins(dir, path, lua))
             || lua
                 && self
                     .modules
@@ -62,18 +64,39 @@ impl Scope {
     }
 }
 
+/// Whether `path` under the plugins directory `dir` belongs to a plugin:
+/// a script, a package directory, a manifest, or a Lua file inside a
+/// directory that holds one.
+fn in_plugins(dir: &Path, path: &Path, lua: bool) -> bool {
+    let Ok(rest) = path.strip_prefix(dir) else {
+        return false;
+    };
+    let mut parts = rest.components();
+    let Some(top) = parts.next() else {
+        return false;
+    };
+    if top.as_os_str().as_encoded_bytes().starts_with(b".") {
+        return false;
+    }
+    if parts.clone().next().is_none() {
+        return lua || path.extension().is_none();
+    }
+    let manifest = crate::package::MANIFEST;
+    path.file_name().is_some_and(|name| name == manifest)
+        || lua && dir.join(top).join(manifest).is_file()
+}
+
 impl PluginWatcher {
-    /// Begin watching the plugins directory `dir`. The directory is
-    /// watched non-recursively; nested folders are ignored. Returns an
-    /// error if the OS watcher could not start (permission denied, dir
-    /// does not exist, etc.).
+    /// Begin watching the plugins directory `dir`, package directories
+    /// included. Returns an error if the OS watcher could not start
+    /// (permission denied, dir does not exist, etc.).
     pub fn new(dir: PathBuf) -> Result<Self, PluginError> {
         let dir = canonical(dir);
         let scope = Scope {
             plugins: Some(dir.clone()),
             ..Scope::default()
         };
-        Self::start(scope, &[(dir, RecursiveMode::NonRecursive)])
+        Self::start(scope, &[(dir, RecursiveMode::Recursive)])
     }
 
     /// Watch the plugins directory, when given, plus the trusted user
@@ -99,7 +122,7 @@ impl PluginWatcher {
                 .is_some_and(|user| dir.starts_with(user))
         });
         let roots: Vec<_> = [
-            (plugins_root, RecursiveMode::NonRecursive),
+            (plugins_root, RecursiveMode::Recursive),
             (user_dir, RecursiveMode::Recursive),
         ]
         .into_iter()
@@ -277,6 +300,36 @@ mod tests {
         let _ = w.poll();
         fs::write(plugins.join("nested/q.lua"), "-- nested").unwrap();
         assert!(!wait_for_change(&w, Duration::from_millis(300)));
+    }
+
+    #[test]
+    fn detects_changes_inside_a_package() {
+        let dir = tempdir().unwrap();
+        let pkg = dir.path().join("p");
+        fs::create_dir_all(pkg.join("lua/p")).unwrap();
+        fs::write(pkg.join("plugin.toml"), "").unwrap();
+        let w = PluginWatcher::new(dir.path().to_path_buf()).unwrap();
+        let _ = wait_for_change(&w, Duration::from_millis(50));
+        fs::write(pkg.join("lua/p/m.lua"), "return 1").unwrap();
+        assert!(wait_for_change(&w, Duration::from_secs(2)));
+        sleep(Duration::from_millis(200));
+        let _ = w.poll();
+        fs::write(pkg.join("README.md"), "docs").unwrap();
+        assert!(!wait_for_change(&w, Duration::from_millis(300)));
+    }
+
+    #[test]
+    fn ignores_a_package_staged_in_a_dot_dir_until_renamed() {
+        let dir = tempdir().unwrap();
+        let w = PluginWatcher::new(dir.path().to_path_buf()).unwrap();
+        let _ = wait_for_change(&w, Duration::from_millis(50));
+        let staged = dir.path().join(".p.tmp");
+        fs::create_dir_all(staged.join("lua")).unwrap();
+        fs::write(staged.join("plugin.toml"), "").unwrap();
+        fs::write(staged.join("init.lua"), "").unwrap();
+        assert!(!wait_for_change(&w, Duration::from_millis(300)));
+        fs::rename(&staged, dir.path().join("p")).unwrap();
+        assert!(wait_for_change(&w, Duration::from_secs(2)));
     }
 
     #[test]

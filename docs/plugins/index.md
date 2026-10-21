@@ -2,15 +2,18 @@
 
 kage runs Lua plugins inside a sandboxed runtime. Drop any `.lua`
 file into `~/.config/kage/plugins/` (or the directory `plugins.dir`
-names) and kage loads it at startup, in file-name order. In the TUI,
-kage reloads every plugin when a plugin file, `init.lua` or a module
-under `lua/` changes, and `/reload` does the same by hand.
+names) and kage loads it at startup, in file-name order. A plugin that
+grows past one file becomes a [package](/plugins/packages): a
+directory with a `plugin.toml` manifest, an `init.lua` and modules it
+can `require`. In the TUI, kage reloads every plugin when a plugin
+file, a file inside a package, `init.lua` or a module under `lua/`
+changes, and `/reload` does the same by hand.
 Registrations, mappings, autocmds, slots and timers do not carry over
 a reload. Option values and highlight overrides do.
 
 A plugin that fails to load logs an error and the others still load.
 A non-empty `[plugins] enabled` list in `config.toml` loads only the
-plugins it names, by file stem.
+plugins it names, by file stem or package directory.
 
 For your own setup, use `~/.config/kage/init.lua` instead. It uses the
 same API, is trusted, and loads after every plugin, so it has the last
@@ -59,7 +62,8 @@ word. See [lua config](/guide/lua-config).
 - register an LLM provider (`provider`)
 - read environment variables
 - load native shared libraries
-- `require` other files
+- `require` other files (a [package](/plugins/packages) can, from
+  its own `lua/` directory)
 - start background threads (timers run on kage's single Lua thread)
 
 The sandbox strips `os.execute`, the whole `io` library, `load`,
@@ -78,7 +82,7 @@ are closed by default and loud when granted.
 | | plugins | `init.lua` |
 | --- | --- | --- |
 | Capabilities | granted per plugin in `[plugins.capabilities]` | all, without asking |
-| `require` | no | from `~/.config/kage/lua/` |
+| `require` | packages only, from their own `lua/` | from `~/.config/kage/lua/` |
 | Loads | after kage's defaults, sorted by name | last |
 | Runs in | the TUI, print mode and `kage rpc` | the TUI only |
 
@@ -111,6 +115,8 @@ Type `:hello` or `/hello`. You should see a transient toast.
 - [Lua API](/plugins/api): every function exposed under `kage.*`
 - [Lua config](/guide/lua-config): options, keymaps, autocmds,
   highlight groups and slots, from `init.lua`
+- [Packages](/plugins/packages): multi-file plugins with a
+  `plugin.toml` manifest
 - [Capabilities](/plugins/capabilities): the opt-in tier for
   subprocesses, file writes, session rewriting, conversation text,
   environment variables and network access

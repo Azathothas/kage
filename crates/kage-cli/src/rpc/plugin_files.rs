@@ -1,12 +1,14 @@
-//! `_kage/plugins/install` and `_kage/plugins/remove`: plugin files in
-//! the plugin directory. A plugin is one `.lua` file; it loads when the
-//! next session opens.
+//! `_kage/plugins/install` and `_kage/plugins/remove`: plugins in the
+//! plugin directory. Install writes one `.lua` script; remove takes a
+//! script or a package directory (see [`kage_plugin::package`]). A
+//! change loads when the next session opens.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use kage_acp::acp::{PluginInstallRequest, PluginRemoveRequest};
 use kage_jsonrpc::RpcError;
+use kage_plugin::package;
 
 /// The largest plugin read.
 const MAX_BYTES: u64 = 1024 * 1024;
@@ -15,19 +17,25 @@ fn invalid(message: impl Into<String>) -> RpcError {
     RpcError::new(-32602, message.into())
 }
 
-/// Whether `name` may name a plugin file: letters, digits, dashes and
-/// underscores, not starting with `@`, which kage keeps for itself.
+/// Whether `name` may name a plugin: letters, digits, dashes and
+/// underscores, so never `@`, which kage keeps for itself.
 fn check_name(name: &str) -> Result<(), RpcError> {
-    if name.is_empty()
-        || !name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
-        return Err(invalid(format!(
-            "`{name}` is not a plugin name: use letters, digits, dashes or underscores"
-        )));
+    package::check_name(name).map_err(invalid)
+}
+
+/// The package directory of plugin `name` in `dir`, when one is there.
+fn package_dir(dir: &Path, name: &str) -> Option<PathBuf> {
+    let path = dir.join(name);
+    (path.join(package::MANIFEST).is_file() || path.join(package::ENTRY).is_file()).then_some(path)
+}
+
+/// Removes the package directory at `path`. A symlinked package loses
+/// only its link, never the checkout it points at.
+fn remove_package(path: &Path) -> std::io::Result<()> {
+    if path.symlink_metadata()?.is_symlink() {
+        return std::fs::remove_file(path).or_else(|_| std::fs::remove_dir(path));
     }
-    Ok(())
+    std::fs::remove_dir_all(path)
 }
 
 /// Installs the plugin `req` names into `dir` and returns its name.
@@ -47,7 +55,8 @@ pub(super) fn install(dir: &Path, req: &PluginInstallRequest) -> Result<String, 
         .to_owned();
     check_name(&name)?;
     let target = dir.join(format!("{name}.lua"));
-    if target.exists() && !req.replace {
+    let package = package_dir(dir, &name);
+    if (target.exists() || package.is_some()) && !req.replace {
         return Err(invalid(format!(
             "a plugin named {name} is already installed"
         )));
@@ -70,22 +79,34 @@ pub(super) fn install(dir: &Path, req: &PluginInstallRequest) -> Result<String, 
     kage_plugin::check_syntax(&text)
         .map_err(|e| invalid(format!("{source} is not a Lua plugin: {e}")))?;
     std::fs::create_dir_all(dir).map_err(|e| RpcError::internal(e.to_string()))?;
+    if let Some(package) = package {
+        remove_package(&package).map_err(|e| RpcError::internal(e.to_string()))?;
+    }
     kage_core::fsutil::atomic_write(&target, text.as_bytes())
         .map_err(|e| RpcError::internal(e.to_string()))?;
     Ok(name)
 }
 
-/// Removes plugin `req.name` from `dir`.
+/// Removes plugin `req.name` from `dir`: its script, its package
+/// directory, or both when both are there.
 pub(super) fn remove(dir: &Path, req: &PluginRemoveRequest) -> Result<(), RpcError> {
     check_name(&req.name)?;
-    let target = dir.join(format!("{}.lua", req.name));
-    if !target.is_file() {
+    let script = dir.join(format!("{}.lua", req.name));
+    let script = script.is_file().then_some(script);
+    let package = package_dir(dir, &req.name);
+    if script.is_none() && package.is_none() {
         return Err(invalid(format!(
             "no plugin named {} is installed",
             req.name
         )));
     }
-    std::fs::remove_file(&target).map_err(|e| RpcError::internal(e.to_string()))
+    if let Some(script) = script {
+        std::fs::remove_file(&script).map_err(|e| RpcError::internal(e.to_string()))?;
+    }
+    if let Some(package) = package {
+        remove_package(&package).map_err(|e| RpcError::internal(e.to_string()))?;
+    }
+    Ok(())
 }
 
 /// The plugin file at `path`, capped at [`MAX_BYTES`] like a fetched
@@ -181,6 +202,42 @@ mod tests {
         remove(&plugins, &gone).unwrap();
         assert!(!plugins.join("clock.lua").exists());
         assert!(remove(&plugins, &gone).is_err());
+    }
+
+    #[test]
+    fn a_package_is_removed_and_blocks_a_script_of_its_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let plugins = dir.path().join("plugins");
+        std::fs::create_dir_all(plugins.join("web/lua")).unwrap();
+        std::fs::write(plugins.join("web/plugin.toml"), "").unwrap();
+        std::fs::write(plugins.join("web/init.lua"), "").unwrap();
+        let file = dir.path().join("web.lua");
+        std::fs::write(&file, "kage.log('hi')\n").unwrap();
+        let req = PluginInstallRequest {
+            source: file.display().to_string(),
+            ..PluginInstallRequest::default()
+        };
+        let err = install(&plugins, &req).unwrap_err();
+        assert!(err.message.contains("already installed"), "{}", err.message);
+        let gone = PluginRemoveRequest { name: "web".into() };
+        remove(&plugins, &gone).unwrap();
+        assert!(!plugins.join("web").exists());
+        assert!(remove(&plugins, &gone).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn removing_a_linked_package_keeps_its_checkout() {
+        let dir = tempfile::tempdir().unwrap();
+        let checkout = dir.path().join("src/web");
+        std::fs::create_dir_all(&checkout).unwrap();
+        std::fs::write(checkout.join("plugin.toml"), "").unwrap();
+        let plugins = dir.path().join("plugins");
+        std::fs::create_dir_all(&plugins).unwrap();
+        std::os::unix::fs::symlink(&checkout, plugins.join("web")).unwrap();
+        remove(&plugins, &PluginRemoveRequest { name: "web".into() }).unwrap();
+        assert!(!plugins.join("web").exists());
+        assert!(checkout.join("plugin.toml").is_file());
     }
 
     #[test]

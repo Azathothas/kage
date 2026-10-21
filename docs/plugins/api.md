@@ -4,8 +4,8 @@ Every function below is reachable as `kage.<name>` from inside a
 plugin script and from `init.lua`. Types are described in
 TypeScript-ish notation for readability. Lua is dynamically typed.
 
-Plugin files load in file-name order, so `a.lua` always runs before
-`b.lua`. Registrations that replace each other (a header, a block
+Plugins load in file-name order, so `a.lua` always runs before
+`b.lua` or the package `b/`. Registrations that replace each other (a header, a block
 renderer for the same kind, a key mapping) end with the last file's
 value. `config.toml` bindings and `init.lua` load after every plugin.
 See [lua config](/guide/lua-config#load-order-and-reload) for the
@@ -14,10 +14,12 @@ whole load order.
 ## api versions
 
 Every function carries the API generation that introduced it. The
-current generation is 2. A function is available since API 1 unless
-its heading says **since API 2**. The generated editor stub
+current generation is 3. A function is available since API 1 unless
+its heading says **since API 2**. API 3 added
+[packages](/plugins/packages), whose `plugin.toml` states the
+generation they need in `api`. The generated editor stub
 `plugins/types/kage.lua` shows the generation of every function as
-`Since API N`. A plugin that needs API 2 can say so at load time:
+`Since API N`. A script that needs API 2 can say so at load time:
 
 ```lua
 kage.requires({ api = 2 })
@@ -51,7 +53,7 @@ Plugins and `init.lua` share this API but not the same privileges.
 | | plugins | `init.lua` and its `lua/` modules |
 | --- | --- | --- |
 | Capabilities (`session_write`, `exec`, `env`, `net`, `crypto`, `context`, `provider`, `fs_write`) | only when granted in `[plugins.capabilities]` and requested | all, without asking |
-| `require` | not available | confined to `~/.config/kage/lua/` |
+| `require` | packages only, confined to their own `lua/` | confined to `~/.config/kage/lua/` |
 | the `io` library, `os.execute`, `debug` | removed | removed |
 | Loaded by | the TUI, print mode and `kage rpc` | the TUI only |
 

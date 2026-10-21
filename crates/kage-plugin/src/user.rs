@@ -7,11 +7,8 @@
 //! the request handshake. The sandbox removals still apply, so it has no
 //! raw `io`, `os.execute` or `debug`.
 //!
-//! The environment also gets a `require` confined to `<user_dir>/lua/`.
-//! Module names are dot-separated segments of `[A-Za-z0-9_-]`. `a.b`
-//! resolves to `lua/a/b.lua`, then `lua/a/b/init.lua`, and a path that
-//! canonicalizes outside `lua/` (through a symlink) is rejected. Modules
-//! run in the user environment and are cached until the next reload.
+//! The environment also gets a `require` confined to `<user_dir>/lua/`
+//! (see [`crate::require`]).
 //!
 //! The environment is private like every plugin environment, so plugins
 //! cannot reach its capabilities, its `require` or the module cache.
@@ -19,20 +16,17 @@
 use std::path::{Path, PathBuf};
 
 use kage_core::sync::lock;
-use mlua::{Function, Lua, Table};
+use mlua::{Lua, Table};
 
 use crate::api::LogLevel;
 use crate::capabilities;
 use crate::error::PluginError;
+use crate::require::require_fn;
 use crate::runtime::EvalState;
 
 /// Environment name of the trusted user config. The `@` prefix is
 /// reserved, so no plugin file stem can collide with it.
 pub(crate) const USER_ENV: &str = "@user";
-
-/// Source of the `require` wrapper that caches modules and detects
-/// cycles over the Rust searcher.
-const REQUIRE: &str = include_str!("../lua/require.lua");
 
 /// Evaluate `init.lua` from the runtime's user dir. Returns `None` when
 /// no user dir is configured or it holds no `init.lua`. A failure is
@@ -74,55 +68,6 @@ fn user_env(lua: &Lua, eval: &EvalState, modules: PathBuf) -> mlua::Result<Table
     Ok(env)
 }
 
-fn require_fn(lua: &Lua, env: &Table, root: PathBuf) -> mlua::Result<Function> {
-    let find = lua.create_function(move |lua, (name, env): (String, Table)| {
-        let path = resolve(&root, &name).map_err(mlua::Error::external)?;
-        let source = std::fs::read_to_string(&path)
-            .map_err(|err| mlua::Error::external(format!("require: {}: {err}", path.display())))?;
-        lua.load(source)
-            .set_name(format!("@{}", path.display()))
-            .set_environment(env)
-            .into_function()
-    })?;
-    lua.load(REQUIRE)
-        .set_name("=kage/require.lua")
-        .call((find, env.clone()))
-}
-
-/// Resolve module `name` to a file under `root`: `a.b` tries
-/// `a/b.lua`, then `a/b/init.lua`. Invalid names and files whose
-/// canonical path leaves `root` are rejected.
-fn resolve(root: &Path, name: &str) -> Result<PathBuf, String> {
-    let valid = !name.is_empty()
-        && name.split('.').all(|segment| {
-            !segment.is_empty()
-                && segment
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
-        });
-    if !valid {
-        return Err(format!("require: invalid module name '{name}'"));
-    }
-    let not_found = || {
-        format!(
-            "require: module '{name}' not found under {}",
-            root.display()
-        )
-    };
-    let root = root.canonicalize().map_err(|_| not_found())?;
-    let base: PathBuf = name.split('.').collect();
-    for candidate in [base.with_extension("lua"), base.join("init.lua")] {
-        let Ok(path) = root.join(candidate).canonicalize() else {
-            continue;
-        };
-        if !path.starts_with(&root) {
-            return Err(format!("require: module '{name}' resolves outside lua/"));
-        }
-        return Ok(path);
-    }
-    Err(not_found())
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs;
@@ -132,6 +77,7 @@ mod tests {
     use super::*;
     use crate::PluginRuntime;
     use crate::loader::load_all;
+    use crate::require::resolve;
     use crate::testing::{RecordingSink, recording_sink};
 
     fn write(root: &Path, rel: &str, body: &str) {

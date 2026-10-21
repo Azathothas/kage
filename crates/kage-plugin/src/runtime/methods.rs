@@ -95,7 +95,7 @@ impl PluginRuntime {
     /// each other. Reads fall through to the shared, sandboxed
     /// standard library and the base `kage` API; `kage` is a per-plugin
     /// proxy the capability tier later extends. The host loader calls
-    /// this for every `*.lua` file with the file stem as `name`; the
+    /// this for every script with the file stem as `name`; the
     /// environment is created once per name and reused.
     pub fn eval_plugin(&self, name: &str, source: &str) -> Result<mlua::Value, PluginError> {
         let eval = Arc::clone(&self.eval);
@@ -714,7 +714,7 @@ impl PluginRuntime {
     /// Drop every registration that came from Lua (autocmds and groups,
     /// pending schedule, defer and timer callbacks, keymaps, slots, tools,
     /// commands, providers, ACP/MCP declarations), then rerun the
-    /// full load: `_defaults.lua`, every `*.lua` file in `plugins_dir`,
+    /// full load: `_defaults.lua`, every plugin in `plugins_dir`,
     /// the `[keybindings]` table, and the trusted `init.lua` when a
     /// user dir is configured.
     /// Designed for hot reload between turns: a stale plugin snapshot

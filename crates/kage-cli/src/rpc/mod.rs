@@ -75,6 +75,7 @@ use kage_core::protocol::{AgentTree, Command, CommandKind, Delivery, RunOutcome}
 use kage_core::sync::lock;
 use kage_core::{LoopError, SessionId, StopReason as CoreStopReason};
 use kage_jsonrpc::{Peer, RpcError};
+use kage_plugin::package::Found;
 
 use bridge::{Ask, AskSet, Bridge, HeldUpdates};
 use content::prompt_content;
@@ -89,23 +90,21 @@ use crate::engine::{Background, Recorder, SessionSpec, SubscriptionId};
 /// What a redacted config value reads as.
 const REDACTED: &str = "<redacted>";
 
-/// The `*.lua` plugin files in `dir`, by name, each marked with whether
-/// the `enabled` allowlist lets it load. A missing directory has none.
+/// The plugins in `dir`, scripts and packages, by name, each marked
+/// with whether the `enabled` allowlist lets it load. A missing or
+/// unreadable directory has none, and an entry that cannot load is left
+/// out (the load reports it).
 fn installed_plugins(dir: &Path, enabled: &[String]) -> Vec<InstalledPlugin> {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return Vec::new();
-    };
-    let mut plugins: Vec<InstalledPlugin> = entries
-        .filter_map(|entry| {
-            let path = entry.ok()?.path();
-            if path.extension()? != "lua" {
-                return None;
-            }
-            let name = path.file_stem()?.to_str()?.to_owned();
-            (!name.starts_with('@')).then(|| InstalledPlugin {
-                enabled: enabled.is_empty() || enabled.contains(&name),
-                name,
-            })
+    let found = kage_plugin::package::discover(dir).unwrap_or_default();
+    let mut plugins: Vec<InstalledPlugin> = found
+        .into_iter()
+        .filter_map(|entry| match entry {
+            Found::Script { name, .. } | Found::Package { name, .. } => Some(name),
+            Found::Invalid { .. } => None,
+        })
+        .map(|name| InstalledPlugin {
+            enabled: enabled.is_empty() || enabled.contains(&name),
+            name,
         })
         .collect();
     plugins.sort_by(|a, b| a.name.cmp(&b.name));

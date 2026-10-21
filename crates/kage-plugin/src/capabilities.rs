@@ -28,6 +28,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
+use kage_core::sync::lock;
 use mlua::{Lua, RegistryKey, Table, Value};
 
 use crate::error::PluginError;
@@ -125,6 +126,18 @@ impl Capability {
 /// Resolved per-plugin grants: plugin file stem -> capability set.
 pub(crate) type Grants = Arc<HashMap<String, HashSet<Capability>>>;
 
+/// What each package's `plugin.toml` lets it hold, by plugin name. A
+/// plugin with no entry, a script, has no ceiling beyond its grants.
+pub(crate) type Ceilings = Arc<Mutex<HashMap<String, HashSet<Capability>>>>;
+
+/// Whether `plugin` may hold `cap` by its manifest: true for a plugin
+/// with no ceiling.
+pub(crate) fn declared(ceilings: &Ceilings, plugin: &str, cap: Capability) -> bool {
+    lock(ceilings)
+        .get(plugin)
+        .is_none_or(|ceiling| ceiling.contains(&cap))
+}
+
 /// The name of the plugin currently being evaluated, if any. Set by
 /// [`crate::runtime::PluginRuntime::eval_plugin`] for the duration of
 /// that plugin's chunk so `request_capabilities` knows who is asking.
@@ -185,6 +198,7 @@ pub(crate) fn install_request_capabilities(
     lua: &Lua,
     current: CurrentPlugin,
     grants: Grants,
+    ceilings: Ceilings,
     envs: Arc<Mutex<HashMap<String, RegistryKey>>>,
     registry: CapabilityRegistry,
 ) -> Result<(), PluginError> {
@@ -205,6 +219,15 @@ pub(crate) fn install_request_capabilities(
                 .unwrap_or_default();
             for name in &requested {
                 let cap = Capability::parse(name).map_err(mlua::Error::external)?;
+                if let Some(plugin) = plugin.as_deref()
+                    && !declared(&ceilings, plugin, cap)
+                {
+                    return Err(mlua::Error::external(format!(
+                        "{plugin} requested the {} capability, which its plugin.toml \
+                         does not declare",
+                        cap.name()
+                    )));
+                }
                 let ok = granted.contains(&cap);
                 if ok {
                     let installed = registry
@@ -418,6 +441,7 @@ mod tests {
             &lua,
             Arc::new(Mutex::new(Some("p".to_owned()))),
             Arc::new(grants),
+            Ceilings::default(),
             Arc::new(Mutex::new(HashMap::new())),
             capability_registry(),
         )
