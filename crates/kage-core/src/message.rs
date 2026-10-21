@@ -93,8 +93,9 @@ pub enum Content {
     },
     /// An image attached to the message.
     Image {
-        /// Where the image bytes live (URL or inline base64).
-        source: ImageSource,
+        /// Where the image bytes live: a URL, inline base64, or the
+        /// session blob store.
+        source: MediaSource,
         /// MIME type, for example `image/png`.
         mime: String,
     },
@@ -161,10 +162,10 @@ pub struct ThinkingSignature {
     pub redacted: bool,
 }
 
-/// Reference to an image, either remote or inline.
+/// Where the bytes of an image (or other media) live.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ImageSource {
+pub enum MediaSource {
     /// Remote URL.
     Url {
         /// HTTP(S) URL.
@@ -175,6 +176,29 @@ pub enum ImageSource {
         /// Base64 payload, no data: prefix.
         data: String,
     },
+    /// Bytes kept in the session blob store, by content hash. A session
+    /// file holds this instead of large inline bytes; reading the
+    /// session turns it back into [`Self::Base64`]. Left as is only
+    /// when the blob is missing, so consumers treat it as unavailable.
+    Blob {
+        /// The bytes' sha256, lowercase hex.
+        sha256: String,
+        /// The byte count.
+        size: u64,
+    },
+}
+
+impl MediaSource {
+    /// The text that stands in for media whose bytes are gone: a
+    /// [`Self::Blob`] the blob store no longer holds. `None` for a
+    /// source that still names its bytes.
+    #[must_use]
+    pub fn missing_note(&self, mime: &str) -> Option<String> {
+        match self {
+            Self::Blob { size, .. } => Some(format!("[{mime}, {size} bytes, no longer stored]")),
+            Self::Url { .. } | Self::Base64 { .. } => None,
+        }
+    }
 }
 
 /// One turn in the conversation.

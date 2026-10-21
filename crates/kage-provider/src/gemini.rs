@@ -465,19 +465,22 @@ fn tool_name_from_call_id<'a>(id: &'a ToolCallId, declared: &'a [ToolSpec]) -> &
     }
 }
 
-fn image_part(source: &kage_core::ImageSource, mime: &str) -> Value {
+fn image_part(source: &kage_core::MediaSource, mime: &str) -> Value {
     match source {
-        kage_core::ImageSource::Base64 { data } => serde_json::json!({
+        kage_core::MediaSource::Base64 { data } => serde_json::json!({
             "inlineData": {
                 "mimeType": mime,
                 "data": data,
             },
         }),
-        kage_core::ImageSource::Url { url } => serde_json::json!({
+        kage_core::MediaSource::Url { url } => serde_json::json!({
             "fileData": {
                 "mimeType": mime,
                 "fileUri": url,
             },
+        }),
+        kage_core::MediaSource::Blob { .. } => serde_json::json!({
+            "text": source.missing_note(mime),
         }),
     }
 }

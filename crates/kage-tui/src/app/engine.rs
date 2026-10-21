@@ -7,7 +7,7 @@ use super::*;
 use kage_core::protocol::{
     AgentState, Delivery, Envelope, Event, HostEvent, NoticeLevel, RequestId,
 };
-use kage_core::{Content, ImageSource, LoopEvent, Role, SessionId, ToolCallId};
+use kage_core::{Content, LoopEvent, MediaSource, Role, SessionId, ToolCallId};
 
 use crate::view::tool_view::{
     BodyLine, EditDiff, EditSide, LineKind, ToolPhase, agent_stats, describe, file_edit_diff,
@@ -195,8 +195,9 @@ impl App {
                 }
                 Content::Image { source, mime } => {
                     let bytes = match &source {
-                        ImageSource::Base64 { data } => data.len() * 3 / 4,
-                        ImageSource::Url { .. } => 0,
+                        MediaSource::Base64 { data } => data.len() * 3 / 4,
+                        MediaSource::Blob { size, .. } => usize::try_from(*size).unwrap_or(0),
+                        MediaSource::Url { .. } => 0,
                     };
                     self.input.attach_image(crate::image::AttachedImage {
                         source,

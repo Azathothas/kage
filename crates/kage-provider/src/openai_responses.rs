@@ -321,19 +321,23 @@ fn convert_tool_result_items(blocks: &[Content]) -> Vec<Value> {
         .collect()
 }
 
-fn image_part(source: &kage_core::ImageSource, mime: &str) -> Value {
+fn image_part(source: &kage_core::MediaSource, mime: &str) -> Value {
     match source {
-        kage_core::ImageSource::Url { url } => serde_json::json!({
+        kage_core::MediaSource::Url { url } => serde_json::json!({
             "type": "input_image",
             "image_url": url,
         }),
-        kage_core::ImageSource::Base64 { data } => {
+        kage_core::MediaSource::Base64 { data } => {
             let mime = if mime.is_empty() { "image/png" } else { mime };
             serde_json::json!({
                 "type": "input_image",
                 "image_url": format!("data:{mime};base64,{data}"),
             })
         }
+        kage_core::MediaSource::Blob { .. } => serde_json::json!({
+            "type": "input_text",
+            "text": source.missing_note(mime),
+        }),
     }
 }
 
@@ -1143,7 +1147,7 @@ mod tests {
     #[test]
     fn base64_images_forward_their_mime() {
         let image = |mime: &str| Content::Image {
-            source: kage_core::ImageSource::Base64 {
+            source: kage_core::MediaSource::Base64 {
                 data: "QUJD".into(),
             },
             mime: mime.to_owned(),

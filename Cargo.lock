@@ -3280,12 +3280,15 @@ dependencies = [
 name = "kage-session"
 version = "0.4.0"
 dependencies = [
+ "base64 0.23.1",
  "chrono",
  "grep",
+ "hex",
  "kage-core",
  "nix 0.31.3",
  "serde",
  "serde_json",
+ "sha2 0.11.0",
  "tempfile",
  "thiserror 2.0.21",
  "ulid",

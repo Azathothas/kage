@@ -34,7 +34,7 @@ talks to it over ACP instead.
 | `kage-jsonrpc`   | Shared bidirectional JSON-RPC peer over stdio, with an optional cancel notice per connection |
 | `kage-provider`  | LLM provider clients, registry, the bundled model catalog and the optional cache that `kage models refresh` writes |
 | `kage-tools`     | Tool trait, built-in tools, tool registry           |
-| `kage-session`   | Append-only JSONL writer, replay, fork, search      |
+| `kage-session`   | Append-only JSONL writer, replay, fork, search, the media blob store |
 | `kage-loop`      | The agent loop, compaction, hooks                   |
 | `kage-mcp`       | MCP client (tools, resources, prompts, the OAuth protocol, prompt expansion) and MCP server (kage's built-in tools over stdio) |
 | `kage-acp`       | ACP agent (editors drive kage) and ACP client (kage drives another agent as a provider) |
@@ -398,6 +398,21 @@ and the pickers, and `/tree` shows them under their parent.
 Files are append-only: the writer never rewrites prior lines, and an
 advisory lock rejects a second concurrent writer. To branch from an
 existing session, fork instead.
+
+Media bytes do not sit in the file. An image of 16 KiB or more is
+written once to the blob store beside the sessions,
+`blobs/sha256/<first two hex digits>/<sha256>`, and the content block
+names it instead of carrying base64:
+
+```json
+{"type":"image","source":{"kind":"blob","sha256":"...","size":618432},"mime":"image/png"}
+```
+
+Every session in the directory shares the store, so a fork or a
+repeated image costs nothing. Reading a session puts the bytes back,
+and a blob that has gone missing reads as unavailable media rather
+than failing the session. Older files with inline base64 load
+unchanged.
 
 ## the Lua layer
 

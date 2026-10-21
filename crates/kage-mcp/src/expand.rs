@@ -20,7 +20,7 @@
 use std::sync::Arc;
 
 use kage_core::protocol::{McpPrompt, McpServerInfo, McpServerStatus};
-use kage_core::{Content, ImageSource, Role, resource_block};
+use kage_core::{Content, MediaSource, Role, resource_block};
 use serde_json::{Map, Value};
 
 use crate::catalog::{PromptMessage, ResourceContents};
@@ -399,7 +399,7 @@ fn resource_content(server: &str, part: ResourceContents, budget: &mut usize) ->
 
 fn image(data: &str, mime: &str) -> Content {
     Content::Image {
-        source: ImageSource::Base64 {
+        source: MediaSource::Base64 {
             data: data.to_owned(),
         },
         mime: mime.to_owned(),
@@ -561,7 +561,7 @@ mod tests {
     fn a_prompt_command_is_replaced_by_the_prompt_messages() {
         let (clients, catalog, seen) = server();
         let image = Content::Image {
-            source: ImageSource::Base64 {
+            source: MediaSource::Base64 {
                 data: "aGk=".into(),
             },
             mime: "image/png".into(),
@@ -744,7 +744,7 @@ mod tests {
                     2
                 )),
                 Content::Image {
-                    source: ImageSource::Base64 {
+                    source: MediaSource::Base64 {
                         data: "aGk=".into()
                     },
                     mime: "image/png".into(),
@@ -787,7 +787,7 @@ mod tests {
             [
                 text("Assistant: sure"),
                 Content::Image {
-                    source: ImageSource::Base64 {
+                    source: MediaSource::Base64 {
                         data: "aGk=".into()
                     },
                     mime: "image/jpeg".into(),

@@ -13,7 +13,7 @@ use kage_core::config::{McpServer as McpSpec, PluginsConfig};
 use kage_core::permissions::{PermissionAction, PermissionsConfig, ToolPermissionRules};
 use kage_core::protocol::{McpServerInfo, McpServerStatus, Usage};
 use kage_core::{
-    Content, ImageSource, LoopEvent, Message, MessageId, Modalities, Modality, Role, ThinkingLevel,
+    Content, LoopEvent, MediaSource, Message, MessageId, Modalities, Modality, Role, ThinkingLevel,
     TokenUsage, ToolCallId, ToolOutput, ToolUpdate,
 };
 use kage_jsonrpc::{Inbound, Peer};
@@ -1318,7 +1318,7 @@ fn prompt_blocks_reach_the_engine_as_content() {
     let response = h.client.request("session/prompt", params).unwrap();
     assert_eq!(response["stopReason"], "end_turn");
     let image = || Content::Image {
-        source: ImageSource::Base64 {
+        source: MediaSource::Base64 {
             data: "aGk=".into(),
         },
         mime: "image/png".into(),
@@ -1808,7 +1808,7 @@ fn session_fork_names_an_image_only_prompt_without_text() {
     let dir = tempfile::tempdir().unwrap();
     let sessions = dir.path();
     let image = || Content::Image {
-        source: ImageSource::Base64 {
+        source: MediaSource::Base64 {
             data: "AAAA".into(),
         },
         mime: "image/png".into(),

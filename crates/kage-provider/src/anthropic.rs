@@ -360,15 +360,19 @@ fn convert_tool_result_blocks(blocks: &[Content]) -> Vec<Value> {
         .collect()
 }
 
-fn image_to_anthropic(source: &kage_core::ImageSource, mime: &str) -> Value {
+fn image_to_anthropic(source: &kage_core::MediaSource, mime: &str) -> Value {
     match source {
-        kage_core::ImageSource::Url { url } => serde_json::json!({
+        kage_core::MediaSource::Url { url } => serde_json::json!({
             "type":"image",
             "source": {"type":"url", "url": url},
         }),
-        kage_core::ImageSource::Base64 { data } => serde_json::json!({
+        kage_core::MediaSource::Base64 { data } => serde_json::json!({
             "type":"image",
             "source": {"type":"base64", "media_type": mime, "data": data},
+        }),
+        kage_core::MediaSource::Blob { .. } => serde_json::json!({
+            "type": "text",
+            "text": source.missing_note(mime),
         }),
     }
 }

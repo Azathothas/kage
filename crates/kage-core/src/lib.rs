@@ -44,7 +44,7 @@ pub use event::{
     LoopError, LoopEvent, ModelCost, StopReason, TokenCost, TokenUsage, ToolOutput, ToolUpdate,
 };
 pub use message::{
-    Content, ImageSource, MAX_TOOL_RESULT_BYTES, Message, MessageId, Role, ThinkingSignature,
+    Content, MAX_TOOL_RESULT_BYTES, MediaSource, Message, MessageId, Role, ThinkingSignature,
     ToolCallId, cap_tool_result, is_agent_result,
 };
 pub use modality::{Modalities, Modality};

@@ -1011,7 +1011,7 @@ mod tests {
         let path = write_session(dir.path(), "img.jsonl", "with text");
         let mut writer = SessionWriter::open(&path).unwrap();
         let image = Content::Image {
-            source: kage_core::ImageSource::Url {
+            source: kage_core::MediaSource::Url {
                 url: "https://example.com/a.png".into(),
             },
             mime: "image/png".into(),

@@ -4,7 +4,7 @@
 use std::collections::BTreeMap;
 
 use kage_core::{
-    Config, Content, ImageSource, LoopError, LoopEvent, Message, MessageId, Risk, Role, StopReason,
+    Config, Content, LoopError, LoopEvent, MediaSource, Message, MessageId, Risk, Role, StopReason,
     TokenUsage, ToolCallId, ToolOutput,
 };
 
@@ -33,13 +33,13 @@ fn all_content_variants_roundtrip() {
             duration_ms: Some(1_500),
         },
         Content::Image {
-            source: ImageSource::Url {
+            source: MediaSource::Url {
                 url: "https://example.com/x.png".into(),
             },
             mime: "image/png".into(),
         },
         Content::Image {
-            source: ImageSource::Base64 {
+            source: MediaSource::Base64 {
                 data: "AAAA".into(),
             },
             mime: "image/jpeg".into(),

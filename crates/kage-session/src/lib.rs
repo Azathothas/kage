@@ -12,6 +12,7 @@
 //! plain text so it can be inspected with `cat`, searched with `rg`, and
 //! transported by ordinary file copy.
 
+pub mod blobs;
 pub mod entry;
 pub mod error;
 pub mod fork;
@@ -22,6 +23,7 @@ pub mod search;
 pub mod tree;
 pub mod writer;
 
+pub use blobs::BlobStore;
 pub use entry::{
     BranchEntry, Compaction, Custom, EntryId, FORMAT_VERSION, Header, Label, MessageEntry,
     ModelChange, SessionEntry, SessionId, SessionTitle, ThinkingLevelChange,

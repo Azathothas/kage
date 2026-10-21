@@ -10,7 +10,7 @@
 use std::path::Path;
 
 use base64::Engine as _;
-use kage_core::ImageSource;
+use kage_core::MediaSource;
 
 /// Largest image accepted, in bytes. Beyond this the base64 payload
 /// bloats the request and providers reject it anyway; refuse early
@@ -22,7 +22,7 @@ pub const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AttachedImage {
     /// Inline base64 source handed to the provider.
-    pub source: ImageSource,
+    pub source: MediaSource,
     /// Sniffed MIME type (e.g. `image/png`).
     pub mime: String,
     /// Short human label for the input/conversation placeholder
@@ -92,7 +92,7 @@ pub fn from_bytes(bytes: &[u8], label: impl Into<String>) -> Result<AttachedImag
         .ok_or_else(|| "unrecognised image format (need png/jpeg/gif/webp)".to_owned())?;
     let data = base64::engine::general_purpose::STANDARD.encode(bytes);
     Ok(AttachedImage {
-        source: ImageSource::Base64 { data },
+        source: MediaSource::Base64 { data },
         mime: mime.to_owned(),
         label: label.into(),
         bytes: bytes.len(),
@@ -297,13 +297,13 @@ mod tests {
         assert_eq!(att.label, "shot.png");
         assert_eq!(att.bytes, PNG.len());
         match &att.source {
-            ImageSource::Base64 { data } => {
+            MediaSource::Base64 { data } => {
                 let decoded = base64::engine::general_purpose::STANDARD
                     .decode(data)
                     .unwrap();
                 assert_eq!(decoded, PNG);
             }
-            ImageSource::Url { .. } => panic!("expected base64"),
+            MediaSource::Url { .. } | MediaSource::Blob { .. } => panic!("expected base64"),
         }
         assert!(att.placeholder().contains("image/png"));
         assert!(att.placeholder().contains("shot.png"));

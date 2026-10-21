@@ -20,7 +20,7 @@ fn alt_enter() -> KeyEvent {
 
 fn img(label: &str) -> crate::image::AttachedImage {
     crate::image::AttachedImage {
-        source: kage_core::ImageSource::Base64 {
+        source: kage_core::MediaSource::Base64 {
             data: "AAAA".into(),
         },
         mime: "image/png".into(),

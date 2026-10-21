@@ -24,8 +24,10 @@
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufWriter, Seek, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use crate::entry::{FORMAT_VERSION, Header, SessionEntry};
+use crate::blobs::BlobStore;
+use crate::entry::{FORMAT_VERSION, Header, MessageEntry, SessionEntry};
 use crate::error::SessionError;
 
 /// Writes one [`SessionEntry`] per line, fsyncing on every append.
@@ -133,8 +135,23 @@ impl SessionWriter {
         })
     }
 
-    /// Append one entry: serialize, write `<json>\n`, flush, fsync.
+    /// Append one entry: serialize, write `<json>\n`, flush, fsync. A
+    /// message's large media go to the blob store first and the line
+    /// names them (see [`crate::blobs`]).
     pub fn append(&mut self, entry: &SessionEntry) -> Result<(), SessionError> {
+        let stored = match entry {
+            SessionEntry::Message(message) => BlobStore::beside(&self.path)
+                .externalize(&message.message)
+                .map_err(|err| self.io_err(err))?
+                .map(|moved| {
+                    SessionEntry::Message(MessageEntry {
+                        message: Arc::new(moved),
+                        ..message.clone()
+                    })
+                }),
+            _ => None,
+        };
+        let entry = stored.as_ref().unwrap_or(entry);
         let line = serde_json::to_vec(entry).map_err(|err| SessionError::Encode {
             path: self.path.clone(),
             source: err,

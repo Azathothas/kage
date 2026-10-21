@@ -14,7 +14,10 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, Lines};
 use std::path::{Path, PathBuf};
 
-use crate::entry::SessionEntry;
+use std::sync::Arc;
+
+use crate::blobs::BlobStore;
+use crate::entry::{MessageEntry, SessionEntry};
 use crate::error::SessionError;
 
 /// Streaming reader over a session file.
@@ -63,6 +66,21 @@ impl SessionReader {
     pub fn path(&self) -> &Path {
         &self.path
     }
+
+    /// `entry` with the media its message keeps in the blob store put
+    /// back inline.
+    fn hydrated(&self, entry: SessionEntry) -> SessionEntry {
+        let SessionEntry::Message(message) = &entry else {
+            return entry;
+        };
+        match BlobStore::beside(&self.path).hydrate(&message.message) {
+            Some(restored) => SessionEntry::Message(MessageEntry {
+                message: Arc::new(restored),
+                ..message.clone()
+            }),
+            None => entry,
+        }
+    }
 }
 
 impl Iterator for SessionReader {
@@ -94,7 +112,7 @@ impl Iterator for SessionReader {
             }
 
             return match serde_json::from_str::<SessionEntry>(&line) {
-                Ok(entry) => Some(Ok(entry)),
+                Ok(entry) => Some(Ok(self.hydrated(entry))),
                 Err(err) => {
                     if is_trailing && !ends_with_newline(&self.path) {
                         self.torn_trailing = true;

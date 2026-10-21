@@ -1677,7 +1677,7 @@ mod tests {
                     text: resource_block::render_binary("test://img", Some("fix"), "image/png", 70),
                 },
                 Content::Image {
-                    source: kage_core::ImageSource::Base64 { data: "AA".into() },
+                    source: kage_core::MediaSource::Base64 { data: "AA".into() },
                     mime: "image/png".into(),
                 },
                 Content::Text {
@@ -1721,7 +1721,7 @@ mod tests {
                         text: "hello".into(),
                     },
                     Content::Image {
-                        source: kage_core::ImageSource::Base64 { data: "AA".into() },
+                        source: kage_core::MediaSource::Base64 { data: "AA".into() },
                         mime: "image/png".into(),
                     },
                 ],
@@ -1745,7 +1745,7 @@ mod tests {
                     text: "hello".into(),
                 },
                 Content::Image {
-                    source: kage_core::ImageSource::Base64 { data: "AA".into() },
+                    source: kage_core::MediaSource::Base64 { data: "AA".into() },
                     mime: "image/png".into(),
                 },
             ],

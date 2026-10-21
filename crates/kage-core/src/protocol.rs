@@ -895,13 +895,13 @@ mod tests {
                     duration_ms: Some(1_250),
                 },
                 Content::Image {
-                    source: crate::ImageSource::Base64 {
+                    source: crate::MediaSource::Base64 {
                         data: "iVBORw0KGgo=".into(),
                     },
                     mime: "image/png".into(),
                 },
                 Content::Image {
-                    source: crate::ImageSource::Url {
+                    source: crate::MediaSource::Url {
                         url: "https://example.com/a.png".into(),
                     },
                     mime: "image/png".into(),

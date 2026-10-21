@@ -370,7 +370,7 @@ fn steered_image_prompt_is_delivered_at_the_next_turn() {
                 text: "look at this".into(),
             },
             Content::Image {
-                source: kage_core::ImageSource::Base64 {
+                source: kage_core::MediaSource::Base64 {
                     data: "aGk=".to_owned(),
                 },
                 mime: "image/png".to_owned(),
@@ -4098,7 +4098,7 @@ fn thinking_fits_the_model_and_images_skip_text_only_models() {
                     text: "look".into(),
                 },
                 Content::Image {
-                    source: kage_core::ImageSource::Base64 {
+                    source: kage_core::MediaSource::Base64 {
                         data: "AA==".into(),
                     },
                     mime: "image/png".into(),
@@ -4674,7 +4674,7 @@ fn an_image_only_prompt_to_a_text_only_model_ends_the_run_at_once() {
         id,
         CommandKind::Prompt {
             content: vec![Content::Image {
-                source: kage_core::ImageSource::Base64 {
+                source: kage_core::MediaSource::Base64 {
                     data: "AA==".into(),
                 },
                 mime: "image/png".into(),

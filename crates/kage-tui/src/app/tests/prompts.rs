@@ -61,7 +61,7 @@ fn submit_carries_attached_images() {
     let (tx, rx) = mpsc::channel();
     let mut app = app_with_defaults(shared_buffer(), tx);
     app.input.attach_image(crate::image::AttachedImage {
-        source: kage_core::ImageSource::Base64 {
+        source: kage_core::MediaSource::Base64 {
             data: "AAAA".into(),
         },
         mime: "image/png".into(),
@@ -361,7 +361,7 @@ fn recall_pulls_the_newest_pending_prompt_back_into_the_editor() {
                         text: "queued one".into(),
                     },
                     kage_core::Content::Image {
-                        source: kage_core::ImageSource::Base64 {
+                        source: kage_core::MediaSource::Base64 {
                             data: "AAAA".into(),
                         },
                         mime: "image/png".into(),
@@ -522,7 +522,7 @@ fn undo_restores_the_removed_prompt_into_the_editor() {
                         text: "redo me".into(),
                     },
                     kage_core::Content::Image {
-                        source: kage_core::ImageSource::Base64 {
+                        source: kage_core::MediaSource::Base64 {
                             data: "AAAA".into(),
                         },
                         mime: "image/png".into(),

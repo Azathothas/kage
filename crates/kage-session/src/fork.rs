@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 
+use crate::blobs::BlobStore;
 use crate::entry::{EntryId, FORMAT_VERSION, Header, SessionEntry, SessionId};
 use crate::error::SessionError;
 use crate::reader::SessionReader;
@@ -126,6 +127,10 @@ pub struct Snapshot {
     /// Whether the source's tail was torn, so entries after `at` may
     /// have been lost.
     pub truncated: bool,
+    /// The blob store of the source's directory.
+    pub blobs: BlobStore,
+    /// The blobs the kept entries name.
+    pub blob_refs: Vec<String>,
 }
 
 impl Snapshot {
@@ -137,12 +142,24 @@ impl Snapshot {
 
     /// Create the session file `dst` under `header` holding these
     /// entries, with one fsync for all of them, and keep it open for
-    /// appending.
+    /// appending. When `dst` is in another directory, the blobs the
+    /// entries name are copied into its store.
     ///
     /// # Errors
     ///
     /// Errors if `dst` already exists or cannot be written.
     pub fn write(&self, dst: &Path, header: Header) -> Result<SessionWriter, SessionError> {
+        let target = BlobStore::beside(dst);
+        if target != self.blobs {
+            for sha256 in &self.blob_refs {
+                if let Some(bytes) = self.blobs.get(sha256) {
+                    target.put(&bytes).map_err(|err| SessionError::Io {
+                        path: dst.to_path_buf(),
+                        source: err,
+                    })?;
+                }
+            }
+        }
         let mut writer = SessionWriter::create(PathBuf::from(dst), header)?;
         if !self.is_empty() {
             writer.append_lines(&self.lines)?;
@@ -191,6 +208,7 @@ pub fn snapshot(
     };
     let start = offset;
     let mut kept = (header_id, start);
+    let mut refs: Vec<(usize, String)> = Vec::new();
     let mut truncated = false;
     let mut line_no = 1;
     while let Some(line) = lines.next() {
@@ -200,7 +218,10 @@ pub fn snapshot(
             continue;
         }
         match serde_json::from_slice::<SessionEntry>(line) {
-            Ok(entry) if keep(&entry) => kept = (entry.id(), offset),
+            Ok(entry) if keep(&entry) => {
+                kept = (entry.id(), offset);
+                refs.extend(blob_refs(&entry).into_iter().map(|sha| (offset, sha)));
+            }
             Ok(_) => {}
             Err(_) if lines.peek().is_none() => {
                 truncated = true;
@@ -224,7 +245,32 @@ pub fn snapshot(
         at,
         lines,
         truncated,
+        blobs: BlobStore::beside(src),
+        blob_refs: refs
+            .into_iter()
+            .filter(|(at, _)| *at <= end)
+            .map(|(_, sha)| sha)
+            .collect(),
     })
+}
+
+/// The blobs a message entry names.
+fn blob_refs(entry: &SessionEntry) -> Vec<String> {
+    let SessionEntry::Message(message) = entry else {
+        return Vec::new();
+    };
+    message
+        .message
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            kage_core::Content::Image {
+                source: kage_core::MediaSource::Blob { sha256, .. },
+                ..
+            } => Some(sha256.clone()),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Resolve `prefix` against entry ids in `src`. Errors if zero or multiple

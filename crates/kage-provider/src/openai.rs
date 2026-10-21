@@ -472,19 +472,23 @@ fn convert_tool_result_messages(blocks: &[Content]) -> Vec<Value> {
         .collect()
 }
 
-fn image_to_openai(source: &kage_core::ImageSource, mime: &str) -> Value {
+fn image_to_openai(source: &kage_core::MediaSource, mime: &str) -> Value {
     match source {
-        kage_core::ImageSource::Url { url } => serde_json::json!({
+        kage_core::MediaSource::Url { url } => serde_json::json!({
             "type": "image_url",
             "image_url": {"url": url},
         }),
-        kage_core::ImageSource::Base64 { data } => {
+        kage_core::MediaSource::Base64 { data } => {
             let mime = if mime.is_empty() { "image/png" } else { mime };
             serde_json::json!({
                 "type": "image_url",
                 "image_url": {"url": format!("data:{mime};base64,{data}")},
             })
         }
+        kage_core::MediaSource::Blob { .. } => serde_json::json!({
+            "type": "text",
+            "text": source.missing_note(mime),
+        }),
     }
 }
 
@@ -1585,7 +1589,7 @@ data: [DONE]\n\n";
 
     fn image_content(mime: &str) -> Content {
         Content::Image {
-            source: kage_core::ImageSource::Base64 {
+            source: kage_core::MediaSource::Base64 {
                 data: "QUJD".into(),
             },
             mime: mime.to_owned(),
