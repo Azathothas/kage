@@ -137,7 +137,7 @@ pub(crate) fn run(
 ) -> ExitCode {
     kage_core::reaper::start();
     let log: Log = Arc::new(|line| eprintln!("kage serve: {line}"));
-    let host = match Host::start(model, system_role) {
+    let host = match Host::start(model, system_role, false) {
         Ok(host) => host,
         Err(e) => {
             eprintln!("kage: serve: {e}");

@@ -17,7 +17,9 @@ level and mode before it opens one.
 
 A client may send `_meta.kage.unconfiguredTools: "allow"` in its
 `clientCapabilities` to get the TUI's permission rules: tools without
-a config rule run instead of asking. Advertising `subagents` (any
+a config rule run instead of asking. A client that cannot answer any
+permission request starts `kage rpc --yolo` instead, which opens every
+session in allow mode. Advertising `subagents` (any
 value but `false`) turns on `subagent_update` and child sessions.
 
 ## requests

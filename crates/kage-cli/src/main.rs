@@ -236,6 +236,11 @@ pub(crate) enum Command {
         /// System-prompt role override forwarded to the agent loop.
         #[arg(long = "system", default_value = "")]
         system: String,
+        /// Start every session in allow mode: every tool call runs
+        /// without asking, MCP servers included. A configured deny
+        /// still denies, and a client may still change the mode.
+        #[arg(long)]
+        yolo: bool,
     },
     /// Serve the Agent Client Protocol over WebSocket so remote editors
     /// and ACP clients can drive kage over the network. One endpoint
@@ -533,9 +538,11 @@ pub(crate) fn run_subcommand(command: Command) -> ExitCode {
         Command::Doctor => doctor::run(),
         Command::GenManpage { out, check } => run_gen_manpage(&out, check),
         Command::Completions { shell } => run_completions(shell),
-        Command::Rpc { model, system } => {
-            config_error().unwrap_or_else(|| rpc::run(model.as_deref(), &system))
-        }
+        Command::Rpc {
+            model,
+            system,
+            yolo,
+        } => config_error().unwrap_or_else(|| rpc::run(model.as_deref(), &system, yolo)),
         Command::Serve {
             model,
             system,

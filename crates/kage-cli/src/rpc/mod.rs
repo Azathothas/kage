@@ -139,9 +139,9 @@ fn redact_secrets(config: &mut Config) {
 }
 
 /// Entry point for the `Rpc` subcommand.
-pub(crate) fn run(model_override: Option<&str>, system_role: &str) -> ExitCode {
+pub(crate) fn run(model_override: Option<&str>, system_role: &str, yolo: bool) -> ExitCode {
     kage_core::reaper::start();
-    let served = Host::start(model_override, system_role)
+    let served = Host::start(model_override, system_role, yolo)
         .map_err(|e| format!("rpc: {e}"))
         .and_then(|host| {
             host.serve(BufReader::new(std::io::stdin()), std::io::stdout())

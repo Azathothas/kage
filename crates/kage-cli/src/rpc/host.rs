@@ -82,10 +82,12 @@ impl Host {
     /// The host every connection is served on, with the credential and
     /// model checks the subcommand ran before serving. The error is
     /// ready for the caller's `kage: ` line; the caller adds its own
-    /// subcommand prefix.
+    /// subcommand prefix. With `yolo`, every session opens in allow
+    /// mode.
     pub(crate) fn start(
         model_override: Option<&str>,
         system_role: &str,
+        yolo: bool,
     ) -> Result<Arc<Self>, String> {
         let mut registry = crate::build_provider_registry()?;
         let plugin_providers = merge_plugin_providers(&mut registry, model_override, system_role);
@@ -117,7 +119,11 @@ impl Host {
             let system_role = system_role.to_owned();
             Box::new(
                 move |registry: &ProviderRegistry, id, cwd: &str, model: &str, servers| {
-                    session_spec(registry, &system_role, id, cwd, model, servers)
+                    let spec = session_spec(registry, &system_role, id, cwd, model, servers)?;
+                    if yolo {
+                        spec.gate.set_mode(Some(PermissionAction::Allow));
+                    }
+                    Ok(spec)
                 },
             )
         };

@@ -15,6 +15,9 @@ Optional flags:
 
 - `-m, --model <provider/model>` pins the model for the connection.
 - `--system <text>` overrides the system-prompt role.
+- `--yolo` opens every session in allow mode: every tool call runs
+  without asking, while configured denies still deny. Meant for
+  unattended clients that cannot answer a permission request.
 
 Credentials resolve as for the TUI and print mode (OS keyring,
 `kage auth login`, or an API-key env var). With no provider

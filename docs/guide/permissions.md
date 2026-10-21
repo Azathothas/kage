@@ -263,7 +263,9 @@ still deny.
 `/permission allow` at startup: every tool call runs without asking,
 MCP servers included, while configured `deny` patterns still refuse.
 With print mode, `kage -p --yolo "..."` lifts the usual
-non-interactive refusal, so asks run instead of failing. `--yolo` is
+non-interactive refusal, so asks run instead of failing. `kage rpc
+--yolo` opens every ACP session in allow mode, for clients nobody
+watches. A client can still change the mode afterwards. `--yolo` is
 never written to the config file and does not survive the session.
 
 ## validation

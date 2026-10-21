@@ -117,6 +117,9 @@ Provider\-qualified model id (`provider/model`). Defaults the same way as the to
 \fB\-\-system\fR\fI <SYSTEM>\fR
 System\-prompt role override forwarded to the agent loop
 .TP
+\fB\-\-yolo\fR
+Start every session in allow mode: every tool call runs without asking, MCP servers included. A configured deny still denies, and a client may still change the mode
+.TP
 \fBkage serve\fR
 Serve the Agent Client Protocol over WebSocket so remote editors and ACP clients can drive kage over the network. One endpoint (`/acp`) behind a bearer token; every connection shares one engine. The same listener serves the web client bundle at `/`, so a browser needs only the page URL and the token. The startup output on stderr carries the connect URL, the only place the token is ever printed
 .TP
