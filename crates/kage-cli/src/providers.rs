@@ -154,6 +154,9 @@ fn register_openai_family(
         Some(base) => openai_responses::OpenAiResponsesProvider::with_base_url(response_key, base),
         None => openai_responses::OpenAiResponsesProvider::new(response_key),
     };
+    if let Some(o) = rov {
+        responses = responses.with_image_generation(o.image_generation);
+    }
     if let Some(o) = rov
         && !o.headers.is_empty()
     {

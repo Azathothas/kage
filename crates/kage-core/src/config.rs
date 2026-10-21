@@ -728,6 +728,11 @@ pub struct BuiltinProviderOverride {
     /// Extra HTTP headers sent on every request to this provider.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub headers: BTreeMap<String, String>,
+    /// `openai-responses` only: offer `OpenAI`'s hosted image tool to
+    /// every model, so a model can answer with images. The tool runs at
+    /// `OpenAI` and is billed on its own, so it is off unless set.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub image_generation: bool,
 }
 
 /// User interface configuration.
@@ -2175,6 +2180,7 @@ default = "ask"   # keep asking
                     base_url: Some("https://relay.example.com/v1".into()),
                     api_key_env: None,
                     headers: BTreeMap::from([("X-Team".to_owned(), "infra".to_owned())]),
+                    image_generation: false,
                 },
             )]),
         };
@@ -2271,6 +2277,7 @@ default = "ask"   # keep asking
                 base_url: Some("https://relay.example.com/v1".into()),
                 api_key_env: Some("DEEPSEEK_API_KEY".into()),
                 headers: BTreeMap::from([("X-Team".to_owned(), "infra".to_owned())]),
+                image_generation: false,
             },
         );
         let body = toml::to_string(&cfg).unwrap();

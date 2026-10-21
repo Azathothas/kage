@@ -36,6 +36,8 @@ pub struct OpenAiResponsesProvider {
     /// Models advertised from `Provider::models` (custom providers);
     /// empty lets the catalog drive the picker.
     models: Vec<ProviderModel>,
+    /// Whether every model is offered `OpenAI`'s hosted image tool.
+    image_generation: bool,
 }
 
 impl OpenAiResponsesProvider {
@@ -60,7 +62,32 @@ impl OpenAiResponsesProvider {
             },
             extra_headers: BTreeMap::new(),
             models: Vec::new(),
+            image_generation: false,
         }
+    }
+
+    /// The streaming body for `req`, with the hosted image tool offered
+    /// when the provider switch is on.
+    fn request_body(&self, req: &StreamRequest) -> Value {
+        if !self.image_generation {
+            return build_request_body(req, true);
+        }
+        let mut req = req.clone();
+        req.produces = req
+            .produces
+            .iter()
+            .chain([kage_core::Modality::Text, kage_core::Modality::Image])
+            .collect();
+        build_request_body(&req, true)
+    }
+
+    /// Offer `OpenAI`'s hosted image tool to every model, as if each said
+    /// it produces images. It runs at `OpenAI` and is billed on its own,
+    /// so it is opt-in.
+    #[must_use]
+    pub fn with_image_generation(mut self, on: bool) -> Self {
+        self.image_generation = on;
+        self
     }
 
     /// Send `headers` on every request, after the protocol's own headers.
@@ -117,7 +144,7 @@ impl Provider for OpenAiResponsesProvider {
         if cancel.is_cancelled() {
             return Err(ProviderError::Cancelled);
         }
-        let body = build_request_body(&req, true);
+        let body = self.request_body(&req);
         let url = format!("{}/responses", self.base_url);
         let mut headers = self.request_headers();
         headers.extend(crate::headers::opencode_headers(
@@ -177,8 +204,16 @@ pub(crate) fn build_request_body(req: &StreamRequest, stream: bool) -> Value {
         body["reasoning"] = serde_json::json!({ "effort": effort });
         body["include"] = serde_json::json!(["reasoning.encrypted_content"]);
     }
-    if !req.tools.is_empty() {
-        body["tools"] = Value::Array(req.tools.iter().map(tool_spec_to_responses).collect());
+    let mut tools: Vec<Value> = req.tools.iter().map(tool_spec_to_responses).collect();
+    // The Responses API has no image output switch: a model draws by
+    // calling OpenAI's hosted image tool, which runs at OpenAI and
+    // answers with the picture. kage only offers it to a model said to
+    // produce images, since the hosted tool is billed on its own.
+    if req.produces.contains(kage_core::Modality::Image) {
+        tools.push(serde_json::json!({ "type": "image_generation" }));
+    }
+    if !tools.is_empty() {
+        body["tools"] = Value::Array(tools);
     }
     body
 }
@@ -553,6 +588,33 @@ impl ResponsesStream {
         }));
     }
 
+    /// A finished `image_generation_call`: the hosted image tool's
+    /// picture, base64 in `result`, in `output_format` (PNG unless it
+    /// says otherwise).
+    fn on_image(&mut self, value: &Value) {
+        let Some(data) = value
+            .pointer("/item/result")
+            .and_then(Value::as_str)
+            .filter(|data| !data.is_empty())
+        else {
+            return;
+        };
+        let format = value
+            .pointer("/item/output_format")
+            .and_then(Value::as_str)
+            .unwrap_or("png");
+        let mime = if format == "jpg" {
+            "image/jpeg".to_owned()
+        } else {
+            format!("image/{format}")
+        };
+        self.pending.push_back(Ok(ProviderEvent::Media {
+            kind: kage_core::Modality::Image,
+            mime,
+            data: data.to_owned(),
+        }));
+    }
+
     fn on_output_item_done(&mut self, value: &Value) {
         let item_type = value
             .pointer("/item/type")
@@ -567,6 +629,10 @@ impl ResponsesStream {
                     data: data.to_owned(),
                 }));
             }
+            return;
+        }
+        if item_type == "image_generation_call" {
+            self.on_image(value);
             return;
         }
         if item_type != "function_call" {
@@ -727,6 +793,37 @@ mod tests {
         assert_eq!(tool["parameters"]["type"], "object");
         // No nested {"function": {...}} envelope (that's Chat Completions).
         assert!(tool.get("function").is_none());
+    }
+
+    #[test]
+    fn a_model_that_draws_is_offered_the_hosted_image_tool() {
+        let mut req = StreamRequest::new("gpt-5", vec![Arc::new(user_msg("a cat"))]);
+        assert!(build_request_body(&req, true).get("tools").is_none());
+        req.produces =
+            kage_core::Modalities::of(&[kage_core::Modality::Text, kage_core::Modality::Image]);
+        req.tools = vec![ToolSpec {
+            name: "read".into(),
+            description: "read a file".into(),
+            schema: serde_json::json!({"type":"object"}),
+        }];
+        let body = build_request_body(&req, true);
+        let tools = body["tools"].as_array().unwrap();
+        assert_eq!(tools[0]["name"], "read");
+        assert_eq!(tools[1], serde_json::json!({"type": "image_generation"}));
+    }
+
+    #[test]
+    fn the_provider_switch_offers_the_image_tool_to_every_model() {
+        let req = || StreamRequest::new("gpt-5", vec![Arc::new(user_msg("a cat"))]);
+        let plain = OpenAiResponsesProvider::new("k").request_body(&req());
+        assert!(plain.get("tools").is_none());
+        let drawing = OpenAiResponsesProvider::new("k")
+            .with_image_generation(true)
+            .request_body(&req());
+        assert_eq!(
+            drawing["tools"],
+            serde_json::json!([{"type": "image_generation"}])
+        );
     }
 
     #[test]
@@ -973,6 +1070,25 @@ mod tests {
 
     fn stream_from_bytes(bytes: &'static [u8]) -> ResponsesStream {
         ResponsesStream::new(Box::new(std::io::Cursor::new(bytes)), CancelFlag::new())
+    }
+
+    #[test]
+    fn the_hosted_tool_s_image_arrives_as_media() {
+        let bytes: &[u8] = b"event: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"image_generation_call\",\"id\":\"ig_1\",\"status\":\"completed\",\"output_format\":\"webp\",\"result\":\"UklGR\"}}\n\nevent: response.output_item.done\ndata: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":{\"type\":\"image_generation_call\",\"id\":\"ig_2\",\"result\":\"iVBO\"}}\n\n";
+        let media: Vec<_> = stream_from_bytes(bytes)
+            .filter_map(Result::ok)
+            .filter_map(|e| match e {
+                ProviderEvent::Media { mime, data, .. } => Some((mime, data)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            media,
+            [
+                ("image/webp".to_owned(), "UklGR".to_owned()),
+                ("image/png".to_owned(), "iVBO".to_owned()),
+            ]
+        );
     }
 
     #[test]

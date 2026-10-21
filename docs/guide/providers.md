@@ -19,6 +19,14 @@ under `[providers.custom.*]`.
 
 `openai-responses` serves `openai-responses:<model>` addressing on top
 of the same OpenAI credential, and `kage auth login openai` covers both.
+On the Responses API a model draws by calling OpenAI's hosted image
+tool, which runs at OpenAI and is billed on its own. kage offers it
+only when asked:
+
+```toml
+[providers.openai-responses]
+image_generation = true
+```
 `acp` is not an HTTP provider and cannot be overridden here. Its agents
 are configured under `[acp.*]`.
 
