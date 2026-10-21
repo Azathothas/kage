@@ -14,7 +14,7 @@
 
 use std::collections::BTreeMap;
 
-use kage_core::{Effort, Efforts, Input, Inputs, Reasoning, ReasoningField};
+use kage_core::{Effort, Efforts, Modalities, Modality, Reasoning, ReasoningField};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -109,8 +109,10 @@ pub struct SourceModel {
     pub output: Option<u64>,
     /// Thinking settings the model accepts.
     pub reasoning: Reasoning,
-    /// Inputs the model accepts.
-    pub input: Inputs,
+    /// Modalities the model accepts.
+    pub input: Modalities,
+    /// Modalities the model produces.
+    pub produces: Modalities,
     /// Field an OpenAI-compatible model reads its reasoning back from
     /// during a tool loop. `None` for a bare `interleaved: true`,
     /// which names no field.
@@ -158,6 +160,8 @@ struct ApiModel {
 struct ApiModalities {
     #[serde(default)]
     input: Vec<String>,
+    #[serde(default)]
+    output: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -256,12 +260,15 @@ fn model(m: &ApiModel, api_id: &str) -> SourceModel {
             cache_write: c.cache_write,
         })
     });
-    let input = m
-        .modalities
-        .iter()
-        .flat_map(|md| md.input.iter())
-        .filter_map(|s| Input::parse(s))
-        .collect();
+    let parsed = |side: fn(&ApiModalities) -> &Vec<String>| -> Modalities {
+        m.modalities
+            .iter()
+            .flat_map(|md| side(md).iter())
+            .filter_map(|s| Modality::parse(s))
+            .collect()
+    };
+    let input = parsed(|md| &md.input);
+    let produces = parsed(|md| &md.output);
     SourceModel {
         id: m.id.clone(),
         name: if m.name.is_empty() {
@@ -278,6 +285,7 @@ fn model(m: &ApiModel, api_id: &str) -> SourceModel {
             api_id,
         ),
         input,
+        produces,
         interleaved: m
             .interleaved
             .as_ref()
@@ -404,6 +412,7 @@ mod tests {
             }
         );
         assert_eq!(x.input.label(), "text image pdf");
+        assert_eq!(x.produces.label(), "text");
         assert_eq!(x.cost.map(|c| c.output), Some(25.0));
         assert_eq!(
             anthropic.models[0].reasoning,
@@ -417,7 +426,8 @@ mod tests {
 
         let glm = &providers[1].models[0];
         assert_eq!(glm.reasoning, Reasoning::Toggle);
-        assert_eq!(glm.input, Inputs::of(&[Input::Text]));
+        assert_eq!(glm.input, Modalities::of(&[Modality::Text]));
+        assert!(glm.produces.is_empty(), "no output listed is unknown");
         assert_eq!(glm.input_limit, Some(272_000));
         assert_eq!(glm.interleaved, Some(ReasoningField::ReasoningContent));
         assert_eq!(anthropic.models[0].interleaved, None);

@@ -243,6 +243,15 @@ fn model_of(key: &str, model: &Value) -> DirectoryModel {
         context: model["limit"]["context"].as_u64(),
         output: model["limit"]["output"].as_u64(),
         reasoning: model["reasoning"].as_bool().unwrap_or(false),
+        produces: model["modalities"]["output"]
+            .as_array()
+            .map(|output| {
+                output
+                    .iter()
+                    .filter_map(|kind| kind.as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default(),
         input: model["modalities"]["input"]
             .as_array()
             .map(|input| {
@@ -279,7 +288,7 @@ mod tests {
                 "models": {
                     "b": {"id": "b", "name": "Bravo", "tool_call": true, "reasoning": true,
                           "limit": {"context": 128000, "output": 8192},
-                          "modalities": {"input": ["text", "image"]},
+                          "modalities": {"input": ["text", "image"], "output": ["text", "image"]},
                           "cost": {"input": 1.0, "output": 2.0, "cache_read": 0.1}},
                     "a": {"id": "a", "name": "Alpha", "tool_call": true},
                     "c": {"id": "c", "name": "Chat only", "tool_call": false}
@@ -304,6 +313,8 @@ mod tests {
         assert_eq!((bravo.context, bravo.output), (Some(128_000), Some(8192)));
         assert!(bravo.reasoning);
         assert_eq!(bravo.input, ["text", "image"]);
+        assert_eq!(bravo.produces, ["text", "image"]);
+        assert!(lab.models[0].produces.is_empty());
         assert_eq!(bravo.cost.as_ref().unwrap().cache_read, Some(0.1));
         assert!(parse("[]").is_err());
     }

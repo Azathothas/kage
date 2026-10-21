@@ -704,7 +704,7 @@ fn save_fetched_models(
     provider: &str,
     fetched: &[kage_acp::acp::ProbeModel],
 ) -> Result<(usize, usize), String> {
-    use kage_core::modality::Input;
+    use kage_core::modality::Modality;
     use kage_core::thinking::Effort;
     use serde_json::{Value, json};
     let keys = ["providers", "custom", provider];
@@ -746,10 +746,19 @@ fn save_fetched_models(
                 .input
                 .iter()
                 .map(String::as_str)
-                .filter(|kind| Input::parse(kind).is_some())
+                .filter(|kind| Modality::parse(kind).is_some())
                 .collect();
             if !input.is_empty() {
                 row["input"] = json!(input);
+            }
+            let produces: Vec<&str> = model
+                .produces
+                .iter()
+                .map(String::as_str)
+                .filter(|kind| Modality::parse(kind).is_some())
+                .collect();
+            if produces.iter().any(|kind| *kind != "text") {
+                row["produces"] = json!(produces);
             }
             let efforts: Vec<&str> = model
                 .efforts
@@ -1582,6 +1591,7 @@ efforts = ["max"]
                 max_output: Some(64),
                 reasoning: Some(true),
                 input: vec!["text".into(), "image".into(), "hologram".into()],
+                produces: vec!["text".into(), "image".into()],
                 efforts: vec!["low".into(), "xhigh".into(), "madeup".into()],
             },
         ];
@@ -1599,6 +1609,7 @@ efforts = ["max"]
         assert!(at("input = [") < at("efforts = ["), "{row}");
         assert!(at("efforts = [") < at("reasoning = true"), "{row}");
         assert!(text.contains("input = [\"text\", \"image\"]"), "{text}");
+        assert!(text.contains("produces = [\"text\", \"image\"]"), "{text}");
         assert!(text.contains("efforts = [\"low\", \"xhigh\"]"), "{text}");
         assert!(!text.contains("hologram"), "{text}");
         assert!(!text.contains("madeup"), "{text}");

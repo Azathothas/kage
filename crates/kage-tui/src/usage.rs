@@ -7,7 +7,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use kage_core::{Inputs, ThinkingLevel};
+use kage_core::{Modalities, ThinkingLevel};
 
 /// Snapshot of one session's running token totals plus the active
 /// model and its context window, kept current from the engine's
@@ -65,8 +65,8 @@ pub struct SessionUsage {
     /// Levels the model accepts, lowest first. Empty when the model has
     /// no thinking setting.
     pub thinking_levels: Vec<ThinkingLevel>,
-    /// Inputs the model accepts. Empty when unknown.
-    pub input: Inputs,
+    /// Modalities the model accepts. Empty when unknown.
+    pub input: Modalities,
     /// Session permission mode override. `None` hides the pill (the
     /// configured `[permissions]` rules decide); the renderer draws
     /// `perm:ask` / `perm:deny` for the matching override.

@@ -1166,7 +1166,7 @@ impl Dispatcher {
     fn prompt(&mut self, id: SessionId, mut content: Vec<Content>, delivery: Delivery) {
         let session = self.sessions.get_mut(&id).expect("session checked");
         let is_image = |c: &Content| matches!(c, Content::Image { .. });
-        if session.state.input.lacks(kage_core::Input::Image) && content.iter().any(is_image) {
+        if session.state.input.lacks(kage_core::Modality::Image) && content.iter().any(is_image) {
             content.retain(|c| !is_image(c));
             let model = &session.state.model;
             let text = if content.is_empty() {

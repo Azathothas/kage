@@ -526,6 +526,9 @@ fn model_entry(model: &DirectoryModel) -> Value {
     if !model.input.is_empty() {
         entry.insert("input".into(), json!(model.input));
     }
+    if model.produces.iter().any(|kind| kind != "text") {
+        entry.insert("produces".into(), json!(model.produces));
+    }
     if let Some(cost) = &model.cost {
         let mut prices = Map::new();
         prices.insert("input".into(), json!(cost.input));
@@ -565,6 +568,7 @@ mod tests {
                     output: Some(8_000),
                     reasoning: true,
                     input: vec!["text".into()],
+                    produces: vec!["text".into(), "image".into()],
                     cost: Some(DirectoryCost {
                         input: 1.0,
                         output: 2.0,

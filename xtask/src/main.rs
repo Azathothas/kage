@@ -26,7 +26,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
-use kage_core::{Inputs, Reasoning};
+use kage_core::{Modalities, Reasoning};
 use kage_provider::catalog::source::{self, SUPPORTED_PROVIDERS, SourceModel, SourceProvider};
 
 mod ascii;
@@ -237,7 +237,7 @@ fn render(providers: &[SourceProvider]) -> String {
          #[allow(unused_imports)]\n\
          use super::{ModelCost, ModelInfo, ProviderInfo};\n\
          #[allow(unused_imports)]\n\
-         use kage_core::{Effort, Efforts, Input, Inputs, Reasoning, ReasoningField};\n\
+         use kage_core::{Effort, Efforts, Modality, Modalities, Reasoning, ReasoningField};\n\
          \n",
     );
     let _ = writeln!(out, "/// Static provider/model catalog.");
@@ -271,6 +271,7 @@ fn emit_model(out: &mut String, m: &SourceModel) {
     let _ = writeln!(out, "output: {},", opt_int(m.output));
     let _ = writeln!(out, "reasoning: {},", reasoning_expr(m.reasoning));
     let _ = writeln!(out, "input: {},", inputs_expr(m.input));
+    let _ = writeln!(out, "produces: {},", inputs_expr(m.produces));
     match m.interleaved {
         Some(field) => {
             let _ = writeln!(out, "interleaved: Some(ReasoningField::{field:?}),");
@@ -316,9 +317,9 @@ fn reasoning_expr(r: Reasoning) -> String {
     }
 }
 
-fn inputs_expr(inputs: Inputs) -> String {
-    let list: Vec<String> = inputs.iter().map(|i| format!("Input::{i:?}")).collect();
-    format!("Inputs::of(&[{}])", list.join(", "))
+fn inputs_expr(inputs: Modalities) -> String {
+    let list: Vec<String> = inputs.iter().map(|i| format!("Modality::{i:?}")).collect();
+    format!("Modalities::of(&[{}])", list.join(", "))
 }
 
 fn opt_float(v: Option<f64>) -> String {

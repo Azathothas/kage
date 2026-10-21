@@ -882,6 +882,9 @@ pub struct DirectoryModel {
     /// The inputs it takes (`text`, `image`, `pdf`, ...).
     #[serde(default)]
     pub input: Vec<String>,
+    /// The media it produces (`text`, `image`, `audio`, ...).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub produces: Vec<String>,
     /// Prices in USD per million tokens, when listed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost: Option<DirectoryCost>,
@@ -924,6 +927,9 @@ pub struct ProbeModel {
     /// The inputs it takes (`text`, `image`, ...), when listed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub input: Vec<String>,
+    /// The media it produces (`text`, `image`, ...), when listed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub produces: Vec<String>,
     /// The effort levels it accepts, when listed.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub efforts: Vec<String>,

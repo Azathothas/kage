@@ -4063,7 +4063,7 @@ fn a_loaded_session_reports_its_own_model_window() {
 
 #[test]
 fn thinking_fits_the_model_and_images_skip_text_only_models() {
-    use kage_core::{Effort, Efforts, Input, Inputs, Reasoning};
+    use kage_core::{Effort, Efforts, Modalities, Modality, Reasoning};
     let mock = MockProvider::replaying(text_turn("ok"));
     let reasoning = Reasoning::Effort {
         efforts: Efforts::of(&[Effort::Low, Effort::Medium]),
@@ -4074,7 +4074,7 @@ fn thinking_fits_the_model_and_images_skip_text_only_models() {
         model: kage_provider::ProviderModel {
             id: "m".into(),
             reasoning,
-            input: Inputs::of(&[Input::Text]),
+            input: Modalities::of(&[Modality::Text]),
             ..kage_provider::ProviderModel::default()
         },
     };
@@ -4658,12 +4658,12 @@ fn a_queued_fork_child_loads_its_snapshot_at_its_first_run() {
 
 #[test]
 fn an_image_only_prompt_to_a_text_only_model_ends_the_run_at_once() {
-    use kage_core::{Input, Inputs};
+    use kage_core::{Modalities, Modality};
     let declared = Declared {
         mock: MockProvider::replaying(text_turn("ok")),
         model: kage_provider::ProviderModel {
             id: "m".into(),
-            input: Inputs::of(&[Input::Text]),
+            input: Modalities::of(&[Modality::Text]),
             ..kage_provider::ProviderModel::default()
         },
     };

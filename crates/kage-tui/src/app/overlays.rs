@@ -228,7 +228,7 @@ impl App {
             let usage = lock(usage);
             usage
                 .input
-                .lacks(kage_core::Input::Image)
+                .lacks(kage_core::Modality::Image)
                 .then(|| usage.model.clone())
         });
         let (text, kind) = match text_only {

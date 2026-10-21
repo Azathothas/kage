@@ -497,6 +497,10 @@ fn parse_envelope(json: &Value) -> Option<Vec<ProbeModel>> {
                 if input.is_empty() {
                     input = string_list(&entry["input_modalities"]);
                 }
+                let mut produces = string_list(&entry["architecture"]["output_modalities"]);
+                if produces.is_empty() {
+                    produces = string_list(&entry["output_modalities"]);
+                }
                 let mut efforts = Vec::new();
                 if let Some(effort) = entry["effort"].as_str() {
                     efforts.push(effort.to_owned());
@@ -515,6 +519,7 @@ fn parse_envelope(json: &Value) -> Option<Vec<ProbeModel>> {
                     max_output: number_of(&entry["top_provider"]["max_completion_tokens"])
                         .or_else(|| number_of(&entry["max_output_tokens"])),
                     input,
+                    produces,
                     efforts,
                     ..ProbeModel::default()
                 })
@@ -575,6 +580,7 @@ fn parse_directory(json: &Value, base: &str) -> Option<Vec<ProbeModel>> {
                 max_output: number_of(&model["limit"]["output"]),
                 reasoning: model["reasoning"].as_bool(),
                 input: string_list(&model["modalities"]["input"]),
+                produces: string_list(&model["modalities"]["output"]),
                 efforts: string_list(&model["support_efforts"]),
             })
             .collect(),
@@ -727,6 +733,7 @@ mod tests {
         let big = models.iter().find(|m| m.id == "lab-big").unwrap();
         assert_eq!((big.context, big.max_output), (Some(200_000), Some(32_000)));
         assert_eq!(big.input, ["text", "image"]);
+        assert_eq!(big.produces, ["text"]);
         let thinker = models.iter().find(|m| m.id == "lab-thinker").unwrap();
         assert_eq!(thinker.reasoning, Some(true));
         assert_eq!(

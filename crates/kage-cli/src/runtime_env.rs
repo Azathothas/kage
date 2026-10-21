@@ -8,7 +8,7 @@
 
 use std::path::Path;
 
-use kage_core::{Inputs, Reasoning, Skill};
+use kage_core::{Modalities, Reasoning, Skill};
 use kage_loop::{EnvContext, compose_system_prompt, with_skills};
 use kage_provider::ProviderRegistry;
 
@@ -34,6 +34,7 @@ fn model_entry(
         max_output: m.output.map(|n| u32::try_from(n).unwrap_or(u32::MAX)),
         reasoning: m.reasoning,
         input: m.input,
+        produces: m.produces,
         interleaved: m.interleaved,
         cost: m.cost,
     })
@@ -56,10 +57,10 @@ pub fn reasoning_for(registry: &ProviderRegistry, qualified_model: &str) -> Reas
     model_entry(registry, qualified_model).map_or(Reasoning::Unknown, |m| m.reasoning)
 }
 
-/// Inputs `qualified_model` accepts. Empty when unknown.
+/// Modalities `qualified_model` accepts. Empty when unknown.
 #[must_use]
-pub fn input_for(registry: &ProviderRegistry, qualified_model: &str) -> Inputs {
-    model_entry(registry, qualified_model).map_or_else(Inputs::default, |m| m.input)
+pub fn input_for(registry: &ProviderRegistry, qualified_model: &str) -> Modalities {
+    model_entry(registry, qualified_model).map_or_else(Modalities::default, |m| m.input)
 }
 
 /// Look up the per-turn max output tokens for `qualified_model`.

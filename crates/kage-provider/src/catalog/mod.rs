@@ -20,7 +20,7 @@ use std::path::Path;
 use std::sync::OnceLock;
 
 pub use kage_core::ModelCost;
-use kage_core::{Inputs, Reasoning, ReasoningField};
+use kage_core::{Modalities, Reasoning, ReasoningField};
 
 use source::{SourceModel, SourceProvider};
 
@@ -57,8 +57,11 @@ pub struct ModelInfo {
     pub output: Option<u64>,
     /// Thinking settings the model accepts.
     pub reasoning: Reasoning,
-    /// Inputs the model accepts.
-    pub input: Inputs,
+    /// Modalities the model accepts.
+    pub input: Modalities,
+    /// Modalities the model produces. Empty means unknown, which is
+    /// read as text only.
+    pub produces: Modalities,
     /// Field an OpenAI-compatible model reads its reasoning back from
     /// during a tool loop (the catalog's `interleaved.field`).
     pub interleaved: Option<ReasoningField>,
@@ -218,6 +221,7 @@ fn leak_model(m: &SourceModel) -> ModelInfo {
         output: m.output,
         reasoning: m.reasoning,
         input: m.input,
+        produces: m.produces,
         interleaved: m.interleaved,
         release_date: m.release_date.as_deref().map(leak),
         cost: m.cost,
@@ -431,7 +435,8 @@ mod tests {
             input_limit: None,
             output: None,
             reasoning: Reasoning::None,
-            input: Inputs::of(&[]),
+            input: Modalities::of(&[]),
+            produces: Modalities::of(&[]),
             interleaved: None,
             release_date,
             cost: None,

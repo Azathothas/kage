@@ -3,7 +3,7 @@
 //! client's model picker can show context, prices and thinking levels.
 
 use kage_acp::acp::{ModelEntry, ModelProvider, ModelsResponse};
-use kage_core::{Input, Inputs, ModelCost, Reasoning};
+use kage_core::{Modalities, Modality, ModelCost, Reasoning};
 use kage_provider::ProviderRegistry;
 
 /// Every provider in `registry` with its models: the ones it declares,
@@ -73,7 +73,7 @@ struct Facts<'a> {
     context: Option<u64>,
     cost: Option<ModelCost>,
     reasoning: Reasoning,
-    input: Inputs,
+    input: Modalities,
     released: Option<&'a str>,
 }
 
@@ -90,7 +90,7 @@ fn entry(provider: &str, id: &str, name: &str, facts: Facts<'_>) -> ModelEntry {
             .into_iter()
             .map(|level| level.as_str().to_owned())
             .collect(),
-        images: facts.input.contains(Input::Image),
+        images: facts.input.contains(Modality::Image),
         released: facts.released.map(str::to_owned),
     }
 }

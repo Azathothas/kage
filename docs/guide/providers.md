@@ -258,6 +258,7 @@ context = 131072                     # optional, in tokens
 max_output = 8192                    # optional, in tokens
 efforts = ["low", "medium", "high"]  # optional, see the model keys below
 input = ["text", "image"]            # optional: text, image, pdf, audio, video
+produces = ["text"]                  # optional: what it outputs, text when unset
 # optional, USD per million tokens. cache_read and cache_write are optional
 cost = { input = 0.27, output = 1.10, cache_read = 0.07, cache_write = 0.0 }
 

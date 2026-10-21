@@ -423,7 +423,7 @@ pub(crate) fn available_model_items(
     active: &str,
 ) -> Vec<kage_tui::PickItem> {
     let active = kage_core::canonical_model(active);
-    let row = |value: String, label: &str, group: &str, input: kage_core::Inputs| {
+    let row = |value: String, label: &str, group: &str, input: kage_core::Modalities| {
         let badge = if value == active { '*' } else { ' ' };
         with_inputs(
             kage_tui::PickItem::simple(value)
@@ -462,7 +462,7 @@ pub(crate) fn available_model_items(
 
 /// `item` with `input` in its right column, unless the inputs are
 /// unknown.
-fn with_inputs(item: kage_tui::PickItem, input: kage_core::Inputs) -> kage_tui::PickItem {
+fn with_inputs(item: kage_tui::PickItem, input: kage_core::Modalities) -> kage_tui::PickItem {
     if input.is_empty() {
         item
     } else {

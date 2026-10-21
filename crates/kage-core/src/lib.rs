@@ -47,7 +47,7 @@ pub use message::{
     Content, ImageSource, MAX_TOOL_RESULT_BYTES, Message, MessageId, Role, ThinkingSignature,
     ToolCallId, cap_tool_result, is_agent_result,
 };
-pub use modality::{Input, Inputs};
+pub use modality::{Modalities, Modality};
 pub use model_id::{canonical_model, qualify_model, split_model};
 pub use protocol::SessionId;
 pub use risk::Risk;

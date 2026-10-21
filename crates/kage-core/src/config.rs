@@ -13,7 +13,7 @@ use figment::providers::{Env, Format, Serialized, Toml};
 use serde::{Deserialize, Serialize};
 
 use crate::event::ModelCost;
-use crate::modality::Inputs;
+use crate::modality::Modalities;
 use crate::options::OptionValue;
 use crate::permissions::PermissionsConfig;
 use crate::thinking::{Efforts, Reasoning, ReasoningField};
@@ -674,10 +674,14 @@ pub struct CustomProviderModel {
     /// and limits the levels to these.
     #[serde(default, skip_serializing_if = "Efforts::is_empty")]
     pub efforts: Efforts,
-    /// Inputs the model accepts (`text`, `image`, `pdf`, `audio`,
+    /// Modalities the model accepts (`text`, `image`, `pdf`, `audio`,
     /// `video`). Empty when unknown.
-    #[serde(default, skip_serializing_if = "Inputs::is_empty")]
-    pub input: Inputs,
+    #[serde(default, skip_serializing_if = "Modalities::is_empty")]
+    pub input: Modalities,
+    /// Modalities the model produces (`text`, `image`, `audio`,
+    /// `video`). Empty when unknown, which is read as text only.
+    #[serde(default, skip_serializing_if = "Modalities::is_empty")]
+    pub produces: Modalities,
     /// Assistant message field (`reasoning_content` or
     /// `reasoning_details`) an `openai` kind model reads its reasoning
     /// back from during a tool loop. Unset sends reasoning back as
@@ -1958,6 +1962,7 @@ default = "ask"   # keep asking
                 name = "Thinker"
                 efforts = ["low", "high"]
                 input = ["text", "image"]
+                produces = ["text", "image"]
                 interleaved = "reasoning_content"
 
                 [[providers.custom.local.models]]
@@ -1982,7 +1987,13 @@ default = "ask"   # keep asking
                     toggle: false,
                 }
             );
-            assert!(models[0].input.contains(crate::modality::Input::Image));
+            assert!(models[0].input.contains(crate::modality::Modality::Image));
+            assert!(
+                models[0]
+                    .produces
+                    .contains(crate::modality::Modality::Image)
+            );
+            assert!(models[1].produces.is_empty());
             assert_eq!(
                 models[0].interleaved,
                 Some(ReasoningField::ReasoningContent)

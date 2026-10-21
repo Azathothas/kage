@@ -27,7 +27,7 @@ use ulid::Ulid;
 
 use crate::permissions::PermissionAction;
 use crate::{
-    Content, Inputs, LoopError, LoopEvent, Message, ThinkingLevel, TokenUsage, ToolCallId,
+    Content, LoopError, LoopEvent, Message, Modalities, ThinkingLevel, TokenUsage, ToolCallId,
 };
 
 /// Stable identifier for one session.
@@ -409,9 +409,9 @@ pub struct SessionState {
     /// no thinking setting.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub thinking_levels: Vec<ThinkingLevel>,
-    /// Inputs the model accepts. Empty when unknown.
-    #[serde(default, skip_serializing_if = "Inputs::is_empty")]
-    pub input: Inputs,
+    /// Modalities the model accepts. Empty when unknown.
+    #[serde(default, skip_serializing_if = "Modalities::is_empty")]
+    pub input: Modalities,
     /// Session permission override. `None` means the configured rules
     /// decide.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1028,7 +1028,7 @@ mod tests {
                     thinking: None,
                     thinking_effective: Some(ThinkingLevel::Medium),
                     thinking_levels: vec![ThinkingLevel::Low, ThinkingLevel::High],
-                    input: Inputs::of(&[crate::Input::Text, crate::Input::Image]),
+                    input: Modalities::of(&[crate::Modality::Text, crate::Modality::Image]),
                     permission_mode: Some(PermissionAction::Deny),
                     working: true,
                     swarm: true,

@@ -1,6 +1,6 @@
 //! Static description of a [`Provider`](crate::Provider) instance.
 
-use kage_core::{Inputs, ModelCost, Reasoning, ReasoningField};
+use kage_core::{Modalities, ModelCost, Reasoning, ReasoningField};
 
 /// Description used by the registry, `kage doctor`, and the model picker UI.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -39,8 +39,11 @@ pub struct ProviderModel {
     /// Thinking settings the model accepts. [`Reasoning::Unknown`]
     /// when not declared.
     pub reasoning: Reasoning,
-    /// Inputs the model accepts. Empty when not declared.
-    pub input: Inputs,
+    /// Modalities the model accepts. Empty when not declared.
+    pub input: Modalities,
+    /// Modalities the model produces. Empty when not declared, which
+    /// is read as text only.
+    pub produces: Modalities,
     /// Field an OpenAI-compatible model reads its reasoning back from
     /// during a tool loop, when it takes reasoning back.
     pub interleaved: Option<ReasoningField>,

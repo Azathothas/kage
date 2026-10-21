@@ -13,7 +13,7 @@ use kage_core::config::{McpServer as McpSpec, PluginsConfig};
 use kage_core::permissions::{PermissionAction, PermissionsConfig, ToolPermissionRules};
 use kage_core::protocol::{McpServerInfo, McpServerStatus, Usage};
 use kage_core::{
-    Content, ImageSource, Input, Inputs, LoopEvent, Message, MessageId, Role, ThinkingLevel,
+    Content, ImageSource, LoopEvent, Message, MessageId, Modalities, Modality, Role, ThinkingLevel,
     TokenUsage, ToolCallId, ToolOutput, ToolUpdate,
 };
 use kage_jsonrpc::{Inbound, Peer};
@@ -132,14 +132,14 @@ fn connect(host: &Arc<Host>) -> Connection {
 #[derive(Debug)]
 struct Listed {
     mock: MockProvider,
-    input: Inputs,
+    input: Modalities,
 }
 
 impl Listed {
     fn of(mock: MockProvider) -> Self {
         Self {
             mock,
-            input: Inputs::default(),
+            input: Modalities::default(),
         }
     }
 }
@@ -173,7 +173,7 @@ impl kage_provider::Provider for Listed {
 /// `sessions`, with one open session. Every session runs in
 /// `workdir`, asks before `ls` calls and generates a title.
 fn serve(scripts: Vec<Script>, workdir: &Path, sessions: &Path) -> Harness {
-    serve_with(scripts, workdir, sessions, false, Inputs::default())
+    serve_with(scripts, workdir, sessions, false, Modalities::default())
 }
 
 /// [`serve`], where every session also has the MCP server of
@@ -185,7 +185,7 @@ fn serve_with(
     workdir: &Path,
     sessions: &Path,
     mcp: bool,
-    input: Inputs,
+    input: Modalities,
 ) -> Harness {
     serve_inner(
         scripts,
@@ -212,7 +212,7 @@ fn serve_agents(
         workdir,
         sessions,
         false,
-        Inputs::default(),
+        Modalities::default(),
         agents,
         true,
     )
@@ -223,7 +223,7 @@ fn serve_inner(
     workdir: &Path,
     sessions: &Path,
     mcp: bool,
-    input: Inputs,
+    input: Modalities,
     agents: AgentSetup,
     record: bool,
 ) -> Harness {
@@ -615,7 +615,7 @@ fn a_client_asking_for_tui_rules_runs_unconfigured_tools() {
         ]);
         let provider = Listed {
             mock: mock.clone(),
-            input: Inputs::default(),
+            input: Modalities::default(),
         };
         let host = test_host_agents(
             Arc::new(provider),
@@ -1362,7 +1362,7 @@ fn an_image_only_prompt_to_a_text_only_model_answers_invalid_params() {
         dir.path(),
         dir.path(),
         false,
-        Inputs::of(&[Input::Text]),
+        Modalities::of(&[Modality::Text]),
     );
     let params = serde_json::json!({
         "sessionId": h.session,
@@ -3148,7 +3148,7 @@ fn mcp_prompts_are_commands_that_expand_when_sent_back() {
         dir.path(),
         dir.path(),
         true,
-        Inputs::default(),
+        Modalities::default(),
     );
 
     let updates = updates_until(&h.inbox, &h.session, "available_commands_update");
@@ -3367,7 +3367,7 @@ fn mcp_status_arrives_per_server_and_only_carries_changes() {
         dir.path(),
         dir.path(),
         true,
-        Inputs::default(),
+        Modalities::default(),
     );
 
     let updates = updates_until(&h.inbox, &h.session, "_kage/mcp_status");
@@ -4696,7 +4696,7 @@ impl kage_provider::Provider for Paused {
             .map(|id| kage_provider::ProviderModel {
                 id: id.into(),
                 name: format!("Mock {id}"),
-                input: Inputs::default(),
+                input: Modalities::default(),
                 ..kage_provider::ProviderModel::default()
             })
             .into()

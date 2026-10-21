@@ -227,6 +227,7 @@ fn register_custom_providers(
                 max_output: m.max_output,
                 reasoning: m.reasoning(),
                 input: m.input,
+                produces: m.produces,
                 interleaved: m.interleaved,
                 cost: m.cost,
             })
