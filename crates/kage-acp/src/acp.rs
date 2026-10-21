@@ -35,18 +35,19 @@ pub use kage_acp_wire::schema::{
     OptionSetRequest, OptionsResponse, PROTOCOL_VERSION, PermissionOption, PermissionOptionKind,
     PermissionOutcome, Plan, PlanReview, PluginInstallRequest, PluginRemoveRequest, ProbeModel,
     ProbeTool, PromptCapabilities, PromptDelivery, PromptRef, PromptRequest, PromptResponse,
-    ProviderProbe, QuestionChoice, QuestionMeta, QuestionPrompt, RequestMeta,
-    RequestPermissionRequest, RequestPermissionResponse, RequestPermissionResult, ResourceLink,
-    ResumeSessionRequest, ResumeSessionResponse, SelectedOption, SessionCapabilities,
-    SessionConfigCategory, SessionConfigKind, SessionConfigOption, SessionConfigSelectOption,
-    SessionExportResponse, SessionForkRequest, SessionForkResponse, SessionInfo, SessionInfoKage,
-    SessionInfoMeta, SessionInfoUpdate, SessionNotification, SessionRenameRequest, SessionRequest,
-    SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, StopReason,
-    SubagentSessionCapabilities, SubagentState, SubagentSwarm, SubagentUpdate, SubagentUsage,
-    Supported, SwarmMeta, SwarmResumeRequest, SwarmResumeResponse, TerminalRef, TextContent,
-    ThemesRequest, ThemesResult, ToolCall, ToolCallContent, ToolCallMeta, ToolCallStatus,
-    ToolCallUpdate, ToolKind, TurnPhase, TurnReason, TurnUpdate, UsageMeta, UsageTokens,
-    UsageUpdate, UserTheme,
+    ProviderProbe, QuestionChoice, QuestionMeta, QuestionPrompt, RegistryCapability,
+    RegistryInstallRequest, RegistryInstallResult, RegistryPackage, RegistrySearchRequest,
+    RegistrySearchResult, RequestMeta, RequestPermissionRequest, RequestPermissionResponse,
+    RequestPermissionResult, ResourceLink, ResumeSessionRequest, ResumeSessionResponse,
+    SelectedOption, SessionCapabilities, SessionConfigCategory, SessionConfigKind,
+    SessionConfigOption, SessionConfigSelectOption, SessionExportResponse, SessionForkRequest,
+    SessionForkResponse, SessionInfo, SessionInfoKage, SessionInfoMeta, SessionInfoUpdate,
+    SessionNotification, SessionRenameRequest, SessionRequest, SetSessionConfigOptionRequest,
+    SetSessionConfigOptionResponse, StopReason, SubagentSessionCapabilities, SubagentState,
+    SubagentSwarm, SubagentUpdate, SubagentUsage, Supported, SwarmMeta, SwarmResumeRequest,
+    SwarmResumeResponse, TerminalRef, TextContent, ThemesRequest, ThemesResult, ToolCall,
+    ToolCallContent, ToolCallMeta, ToolCallStatus, ToolCallUpdate, ToolKind, TurnPhase, TurnReason,
+    TurnUpdate, UsageMeta, UsageTokens, UsageUpdate, UserTheme,
 };
 
 /// `_kage/config/get` result: the read-only sections a settings page
@@ -111,6 +112,12 @@ pub struct InstalledPlugin {
     /// The file stem or package directory, which `config.toml` names
     /// the plugin by.
     pub name: String,
+    /// A package's version, from its manifest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// Whether it was installed from a registry.
+    #[serde(default)]
+    pub from_registry: bool,
     /// Whether `[plugins] disabled` (and the deprecated `enabled`
     /// allowlist) let it load.
     pub enabled: bool,

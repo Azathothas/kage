@@ -1074,6 +1074,43 @@ fn directory_and_plugin_answers_arrive_under_their_ids() {
         }],
     );
     assert_eq!(changes, vec![Change::Plugins { request: id }]);
+
+    let id = client.registry_search("web", false);
+    let sent = client.take_outgoing();
+    assert!(
+        format!("{sent:?}").contains("_kage/registry/search"),
+        "{sent:?}"
+    );
+    let changes = drive(
+        &mut client,
+        &[Frame::Success {
+            id: n(id),
+            result: serde_json::json!({
+                "registry": "https://kura.test/",
+                "packages": [{"name": "web", "version": "0.1.0",
+                    "capabilities": [{"name": "net", "summary": "make outbound HTTP requests"}]}]
+            }),
+        }],
+    );
+    let [Change::Registry { request, result }] = changes.as_slice() else {
+        panic!("{changes:?}");
+    };
+    assert_eq!(*request, id);
+    assert_eq!(result.packages[0].capabilities[0].name, "net");
+
+    let id = client.registry_install("web", None, false);
+    let _ = client.take_outgoing();
+    let changes = drive(
+        &mut client,
+        &[Frame::Success {
+            id: n(id),
+            result: serde_json::json!({"name": "web", "version": "0.1.0", "capabilities": ["net"]}),
+        }],
+    );
+    let [Change::RegistryInstalled { request, result }] = changes.as_slice() else {
+        panic!("{changes:?}");
+    };
+    assert_eq!((*request, result.version.as_str()), (id, "0.1.0"));
 }
 
 #[test]

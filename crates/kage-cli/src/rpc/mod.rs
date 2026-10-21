@@ -42,6 +42,7 @@ mod mcp;
 mod models;
 mod options;
 mod plugin_files;
+mod plugin_registry;
 pub(crate) mod probe;
 mod registry;
 mod sessions;
@@ -62,7 +63,8 @@ use kage_acp::acp::{
     ListSessionsRequest, ListSessionsResponse, LoadSessionRequest, LoadSessionResponse,
     McpCapabilities, ModelsResponse, NewSessionRequest, NewSessionResponse, OptionSetRequest,
     OptionsResponse, PROTOCOL_VERSION, PluginInstallRequest, PluginRemoveRequest,
-    PromptCapabilities, PromptDelivery, PromptRequest, PromptResponse, ResumeSessionRequest,
+    PromptCapabilities, PromptDelivery, PromptRequest, PromptResponse, RegistryInstallRequest,
+    RegistryInstallResult, RegistrySearchRequest, RegistrySearchResult, ResumeSessionRequest,
     ResumeSessionResponse, SessionCapabilities, SessionConfigOption, SessionExportResponse,
     SessionForkRequest, SessionForkResponse, SessionRenameRequest, SessionRequest,
     SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, StopReason, Supported,
@@ -75,7 +77,6 @@ use kage_core::protocol::{AgentTree, Command, CommandKind, Delivery, RunOutcome}
 use kage_core::sync::lock;
 use kage_core::{LoopError, SessionId, StopReason as CoreStopReason};
 use kage_jsonrpc::{Peer, RpcError};
-use kage_plugin::package::Found;
 
 use bridge::{Ask, AskSet, Bridge, HeldUpdates};
 use content::prompt_content;
@@ -91,24 +92,22 @@ use crate::engine::{Background, Recorder, SessionSpec, SubscriptionId};
 const REDACTED: &str = "<redacted>";
 
 /// The plugins in `dir`, scripts and packages, by name, each marked
-/// with whether `plugins` lets it load. A missing or unreadable
-/// directory has none, and an entry that cannot load is left out (the
-/// load reports it).
+/// with whether `plugins` lets it load, its version and whether it came
+/// from a registry. A missing or unreadable directory has none, and an
+/// entry that cannot load is left out (the load reports it).
 fn installed_plugins(dir: &Path, plugins: &PluginsConfig) -> Vec<InstalledPlugin> {
-    let found = kage_plugin::package::discover(dir).unwrap_or_default();
-    let mut plugins: Vec<InstalledPlugin> = found
+    let mut installed: Vec<InstalledPlugin> = kage_kura::status(dir, None)
+        .unwrap_or_default()
         .into_iter()
-        .filter_map(|entry| match entry {
-            Found::Script { name, .. } | Found::Package { name, .. } => Some(name),
-            Found::Invalid { .. } => None,
-        })
-        .map(|name| InstalledPlugin {
-            enabled: plugins.loads(&name),
-            name,
+        .map(|status| InstalledPlugin {
+            enabled: plugins.loads(&status.name),
+            version: status.version.map(|v| v.to_string()),
+            from_registry: status.locked.is_some(),
+            name: status.name,
         })
         .collect();
-    plugins.sort_by(|a, b| a.name.cmp(&b.name));
-    plugins
+    installed.sort_by(|a, b| a.name.cmp(&b.name));
+    installed
 }
 
 /// Blanks the config values that may carry credentials before they leave
@@ -685,6 +684,20 @@ impl Agent for CliAcpAgent {
         let dir = crate::plugins_dir().map_err(RpcError::internal)?;
         plugin_files::remove(&dir, &req)?;
         Ok(serde_json::json!({}))
+    }
+
+    fn registry_search(
+        &self,
+        req: RegistrySearchRequest,
+    ) -> Result<RegistrySearchResult, RpcError> {
+        plugin_registry::search(&req)
+    }
+
+    fn registry_install(
+        &self,
+        req: RegistryInstallRequest,
+    ) -> Result<RegistryInstallResult, RpcError> {
+        plugin_registry::install(&req)
     }
 
     fn session_fork(&self, req: SessionForkRequest) -> Result<SessionForkResponse, RpcError> {

@@ -141,6 +141,20 @@ pub enum Change {
         /// The id of the request answered.
         request: u64,
     },
+    /// A `_kage/registry/search` answer arrived.
+    Registry {
+        /// The id of the request answered.
+        request: u64,
+        /// The registry and its matching packages.
+        result: kage_acp_wire::RegistrySearchResult,
+    },
+    /// A `_kage/registry/install` answer arrived: a package was installed.
+    RegistryInstalled {
+        /// The id of the request answered.
+        request: u64,
+        /// What was installed and what it may ask for.
+        result: kage_acp_wire::RegistryInstallResult,
+    },
     /// A `_kage/auth/set` answer arrived: the provider's key was saved
     /// or removed.
     KeySaved {
@@ -180,6 +194,8 @@ impl Change {
             | Self::Folders { .. }
             | Self::Themes { .. }
             | Self::Plugins { .. }
+            | Self::Registry { .. }
+            | Self::RegistryInstalled { .. }
             | Self::KeySaved { .. }
             | Self::Failed { .. } => None,
         }

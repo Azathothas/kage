@@ -952,6 +952,104 @@ pub struct PluginRemoveRequest {
     pub name: String,
 }
 
+/// `_kage/registry/search` request params.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegistrySearchRequest {
+    /// Words a package's name, description or tags must all contain;
+    /// empty lists every package.
+    #[serde(default)]
+    pub query: String,
+    /// Fetch the index again instead of using a cached one.
+    #[serde(default)]
+    pub refresh: bool,
+}
+
+/// `_kage/registry/search` result.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegistrySearchResult {
+    /// The registry's index URL.
+    pub registry: String,
+    /// Set when the registry could not be reached and a cached index
+    /// stood in: why.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stale: Option<String>,
+    /// The matching packages, by name.
+    pub packages: Vec<RegistryPackage>,
+}
+
+/// One package in a registry.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegistryPackage {
+    /// The package name.
+    pub name: String,
+    /// One line on what it does.
+    #[serde(default)]
+    pub description: String,
+    /// Keywords it is found by.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    /// Its home page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub homepage: Option<String>,
+    /// The release an install picks, absent when none fits this kage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// Why no release fits, when none does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unavailable: Option<String>,
+    /// What that release may ask for.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capabilities: Vec<RegistryCapability>,
+    /// The version installed from a registry, when one is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed: Option<String>,
+}
+
+/// One capability a package may ask for.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegistryCapability {
+    /// The capability's name.
+    pub name: String,
+    /// What it lets a plugin do.
+    #[serde(default)]
+    pub summary: String,
+}
+
+/// `_kage/registry/install` request params.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegistryInstallRequest {
+    /// The package to install.
+    pub name: String,
+    /// The release, the newest that fits this kage when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    /// Replace a script or local package of the same name, or discard
+    /// local changes to an installed one.
+    #[serde(default)]
+    pub force: bool,
+}
+
+/// `_kage/registry/install` result.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RegistryInstallResult {
+    /// The package installed.
+    pub name: String,
+    /// The version now installed.
+    pub version: String,
+    /// The version it replaced, when one came from a registry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous: Option<String>,
+    /// Every capability it may request. Installing grants none.
+    #[serde(default)]
+    pub capabilities: Vec<String>,
+}
+
 /// `_kage/auth/set` request params.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -202,10 +202,12 @@ struct Plugins {
 }
 
 #[derive(Debug, Default, Deserialize)]
-#[serde(default)]
+#[serde(default, rename_all = "camelCase")]
 struct InstalledPlugin {
     name: String,
     enabled: bool,
+    version: Option<String>,
+    from_registry: bool,
 }
 
 /// One provider row: a configured one, or one the session's model
@@ -437,11 +439,15 @@ fn plugin_rows(snapshot: &Snapshot) -> Vec<PluginRow> {
         .into_iter()
         .map(|name| {
             let caps = plugins.capabilities.get(name).cloned().unwrap_or_default();
-            let enabled = snapshot
+            let installed = snapshot
                 .installed_plugins
                 .iter()
-                .find(|plugin| &plugin.name == name)
-                .map(|plugin| plugin.enabled);
+                .find(|plugin| &plugin.name == name);
+            let enabled = installed.map(|plugin| plugin.enabled);
+            let version = installed.and_then(|plugin| plugin.version.clone());
+            let source = installed
+                .is_some_and(|plugin| plugin.from_registry)
+                .then_some("from kura");
             let state = match enabled {
                 Some(true) => "loads",
                 Some(false) => "disabled",
@@ -449,6 +455,8 @@ fn plugin_rows(snapshot: &Snapshot) -> Vec<PluginRow> {
             };
             let detail = [
                 Some(state),
+                version.as_deref(),
+                source,
                 (!caps.is_empty()).then_some("capabilities granted in config.toml"),
                 plugins.config.contains_key(name).then_some("has settings"),
             ]
@@ -503,6 +511,15 @@ pub struct PageState {
     pub plugin_install: Option<u64>,
     /// The plugin whose grants show.
     pub plugin_open: Option<String>,
+    /// The registry read the kura list shows, by request id.
+    pub registry: Option<u64>,
+    /// The text the kura list is filtered by.
+    pub registry_filter: String,
+    /// The registry package whose details show.
+    pub registry_open: Option<String>,
+    /// The registry install in flight or last done: the package and the
+    /// request id.
+    pub registry_install: Option<(String, u64)>,
     /// The General page's theme menu that shows: `Some(true)` for the
     /// dark desktop's, `Some(false)` for the light one's.
     pub pick_open: Option<bool>,
@@ -2156,11 +2173,280 @@ pub fn plugins_page(
             }
         });
     }
+    kura_section(ui, store, snapshot, state, palette);
     note(
         ui,
         "Lua plugins load from the plugin directory when a session opens, so a change applies to the next session. Blocks and widgets a plugin draws carry its name as an owner badge.",
         palette,
     );
+}
+
+/// The plugin registry's packages: a filter, one row per package that
+/// opens to what it asks for and its install button, and the outcome of
+/// the last install with a button to grant what it asks for.
+fn kura_section(
+    ui: &mut egui::Ui,
+    store: &mut Store,
+    snapshot: &Snapshot,
+    state: &mut PageState,
+    palette: &Palette,
+) {
+    let refresh = group_with(
+        ui,
+        "From kura",
+        Some(("Refresh", Some(crate::icons::Icon::RefreshCw))),
+        palette,
+    );
+    if refresh || state.registry.is_none() {
+        state.registry = Some(store.ask_registry(refresh));
+    }
+    let faint = |ui: &mut egui::Ui, text: &str, color: egui::Color32| {
+        ui.add(egui::Label::new(egui::RichText::new(text).size(FS_XS).color(color)).wrap());
+        ui.add_space(8.0);
+    };
+    let read = state.registry.and_then(|id| store.registry(id).cloned());
+    let result = match read {
+        None => return faint(ui, "Reading the registry\u{2026}", palette.muted),
+        Some(Err(why)) => return faint(ui, &why, palette.danger),
+        Some(Ok(result)) => result,
+    };
+    if let Some(why) = &result.stale {
+        faint(
+            ui,
+            &format!("The registry is unreachable ({why}), so this is the cached list."),
+            palette.warn,
+        );
+    }
+    crate::ui::forms::add_field(
+        ui,
+        egui::TextEdit::singleline(&mut state.registry_filter)
+            .id(egui::Id::new("settings-registry-filter"))
+            .hint_text(
+                egui::RichText::new("Filter packages")
+                    .size(FS_XS)
+                    .color(palette.faint),
+            )
+            .font(egui::FontId::new(FS_XS, family(FAMILY_BODY_MEDIUM)))
+            .desired_width(ui.available_width()),
+        palette,
+    );
+    ui.add_space(8.0);
+    let packages = filtered_packages(&result.packages, &state.registry_filter);
+    if packages.is_empty() {
+        let empty = if result.packages.is_empty() {
+            "kura has no packages yet."
+        } else {
+            "No package matches."
+        };
+        faint(ui, empty, palette.muted);
+    } else {
+        boxed(ui, palette, |ui| {
+            for package in packages {
+                package_row(ui, store, snapshot, package, state, palette);
+            }
+        });
+    }
+    install_outcome(ui, store, snapshot, state, palette);
+}
+
+/// The packages whose name, description or tags hold every word of
+/// `filter`, case-insensitively.
+fn filtered_packages<'a>(
+    packages: &'a [kage_client::wire::RegistryPackage],
+    filter: &str,
+) -> Vec<&'a kage_client::wire::RegistryPackage> {
+    let words: Vec<String> = filter.split_whitespace().map(str::to_lowercase).collect();
+    packages
+        .iter()
+        .filter(|package| {
+            let text = format!(
+                "{} {} {}",
+                package.name,
+                package.description,
+                package.tags.join(" ")
+            )
+            .to_lowercase();
+            words.iter().all(|word| text.contains(word))
+        })
+        .collect()
+}
+
+/// One registry package: its name and what it asks for, its state, and
+/// once opened its details and install button.
+fn package_row(
+    ui: &mut egui::Ui,
+    store: &mut Store,
+    snapshot: &Snapshot,
+    package: &kage_client::wire::RegistryPackage,
+    state: &mut PageState,
+    palette: &Palette,
+) {
+    let expanded = state.registry_open.as_deref() == Some(package.name.as_str());
+    let local = snapshot
+        .installed_plugins
+        .iter()
+        .find(|plugin| plugin.name == package.name);
+    let installed = local
+        .filter(|plugin| plugin.from_registry)
+        .and_then(|plugin| plugin.version.clone());
+    let mut name = vec![Part::Mono(package.name.clone())];
+    for cap in &package.capabilities {
+        name.push(Part::Badge(cap.name.clone(), Tone::plain(palette)));
+    }
+    let trail = match (&installed, &package.version) {
+        (Some(have), Some(latest)) if have != latest => {
+            Trail::Badge(format!("update {latest}"), Tone::warn(palette))
+        }
+        (Some(have), _) => Trail::Badge(format!("installed {have}"), Tone::ok(palette)),
+        (None, Some(latest)) => Trail::Mono(latest.clone()),
+        (None, None) => Trail::Faint("unavailable".to_owned()),
+    };
+    let lead = Lead::Icon(if expanded {
+        crate::icons::Icon::ChevronDown
+    } else {
+        crate::icons::Icon::ChevronRight
+    });
+    let detail = (!package.description.is_empty()).then_some(package.description.as_str());
+    if list_row(
+        ui,
+        &format!("kura-{}", package.name),
+        &lead,
+        &name,
+        detail,
+        &trail,
+        true,
+        palette,
+    ) == Hit::Row
+    {
+        state.registry_open = (!expanded).then(|| package.name.clone());
+    }
+    if !expanded {
+        return;
+    }
+    egui::Frame::NONE
+        .inner_margin(egui::Margin {
+            left: 42,
+            right: 42,
+            top: 0,
+            bottom: 12,
+        })
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            let line = |ui: &mut egui::Ui, text: &str, color: egui::Color32| {
+                ui.add(egui::Label::new(egui::RichText::new(text).size(FS_XS).color(color)).wrap());
+            };
+            if let Some(homepage) = &package.homepage {
+                line(ui, homepage, palette.faint);
+            }
+            if let Some(why) = &package.unavailable {
+                line(ui, why, palette.warn);
+            }
+            if package.capabilities.is_empty() {
+                line(ui, "Asks for no capabilities.", palette.muted);
+            } else {
+                line(ui, "Asks for:", palette.muted);
+                for cap in &package.capabilities {
+                    line(ui, &format!("{}: {}", cap.name, cap.summary), palette.ink);
+                }
+            }
+            let Some(latest) = &package.version else {
+                return;
+            };
+            let action = match (&installed, local) {
+                (Some(have), _) if have == latest => None,
+                (Some(_), _) => Some((format!("Update to {latest}"), false)),
+                (None, Some(_)) => Some(("Replace the local plugin".to_owned(), true)),
+                (None, None) => Some((format!("Install {latest}"), false)),
+            };
+            if let Some((label, force)) = action
+                && btn_sm(ui, &label, None, BtnTone::Primary, palette).clicked()
+            {
+                let id = store.install_package(&package.name, force);
+                state.registry_install = Some((package.name.clone(), id));
+            }
+        });
+}
+
+/// How the last registry install went, with a button to grant the
+/// capabilities it asks for that config.toml does not grant yet, or to
+/// retry over what was in the way.
+fn install_outcome(
+    ui: &mut egui::Ui,
+    store: &mut Store,
+    snapshot: &Snapshot,
+    state: &mut PageState,
+    palette: &Palette,
+) {
+    let Some((name, id)) = state.registry_install.clone() else {
+        return;
+    };
+    let text = |ui: &mut egui::Ui, text: &str, color: egui::Color32| {
+        ui.add(egui::Label::new(egui::RichText::new(text).size(FS_XS).color(color)).wrap());
+    };
+    ui.add_space(6.0);
+    match store.registry_install(id).cloned() {
+        None => text(ui, &format!("Installing {name}\u{2026}"), palette.muted),
+        Some(Err(why)) => {
+            text(ui, &why, palette.danger);
+            let local = snapshot.installed_plugins.iter().any(|p| p.name == name);
+            if local && btn_sm(ui, "Replace anyway", None, BtnTone::Danger, palette).clicked() {
+                state.registry_install = Some((name.clone(), store.install_package(&name, true)));
+            }
+        }
+        Some(Ok(done)) => {
+            let verb = match &done.previous {
+                Some(previous) if previous != &done.version => {
+                    format!("Updated {name} from {previous} to {}", done.version)
+                }
+                _ => format!("Installed {name} {}", done.version),
+            };
+            text(
+                ui,
+                &format!("{verb}. It loads with the next session."),
+                palette.ok,
+            );
+            let granted = snapshot
+                .plugins
+                .capabilities
+                .get(&name)
+                .cloned()
+                .unwrap_or_default();
+            let missing: Vec<&String> = done
+                .capabilities
+                .iter()
+                .filter(|cap| !granted.contains(cap))
+                .collect();
+            if !missing.is_empty() {
+                let list = missing
+                    .iter()
+                    .map(|cap| cap.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                text(
+                    ui,
+                    &format!("It asks for {list}, which config.toml does not grant yet."),
+                    palette.muted,
+                );
+                if btn_sm(
+                    ui,
+                    &format!("Grant {list}"),
+                    None,
+                    BtnTone::Primary,
+                    palette,
+                )
+                .clicked()
+                {
+                    let mut all = granted;
+                    all.extend(missing.into_iter().cloned());
+                    store.config_set(
+                        &["plugins", "capabilities", &name],
+                        Some(serde_json::json!(all)),
+                    );
+                }
+            }
+        }
+    }
+    ui.add_space(8.0);
 }
 
 /// The install field with its buttons, and the install's outcome.
@@ -2389,7 +2675,10 @@ fn grant_chip(ui: &mut egui::Ui, cap: &str, granted: bool, palette: &Palette) ->
 
 #[cfg(test)]
 mod tests {
-    use super::{RuleAdd, Snapshot, plugin_rows, provider_rows, rule_added, toggled_disabled};
+    use super::{
+        RuleAdd, Snapshot, filtered_packages, plugin_rows, provider_rows, rule_added,
+        toggled_disabled,
+    };
 
     #[test]
     fn an_added_glob_writes_the_whole_rule() {
@@ -2457,6 +2746,33 @@ mod tests {
         }));
         assert_eq!(toggled_disabled(&open, "a", false), ["a", "gone"]);
         assert_eq!(toggled_disabled(&open, "gone", true), Vec::<String>::new());
+    }
+
+    #[test]
+    fn registry_packages_filter_by_every_word_and_rows_show_versions() {
+        let packages: Vec<kage_client::wire::RegistryPackage> =
+            serde_json::from_value(serde_json::json!([
+                {"name": "web", "description": "Search and read the web", "tags": ["net"]},
+                {"name": "clock", "description": "Shows the time"}
+            ]))
+            .unwrap();
+        let names = |filter: &str| -> Vec<String> {
+            filtered_packages(&packages, filter)
+                .into_iter()
+                .map(|p| p.name.clone())
+                .collect()
+        };
+        assert_eq!(names(""), ["web", "clock"]);
+        assert_eq!(names("READ net"), ["web"]);
+        assert!(names("web time").is_empty());
+
+        let snapshot = Snapshot::parse(&serde_json::json!({
+            "installedPlugins": [
+                {"name": "web", "enabled": true, "version": "0.2.0", "fromRegistry": true}
+            ]
+        }));
+        let rows = plugin_rows(&snapshot);
+        assert_eq!(rows[0].detail, "loads \u{b7} 0.2.0 \u{b7} from kura");
     }
 
     #[test]

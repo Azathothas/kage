@@ -162,6 +162,8 @@ enum Pending {
     Folders,
     Themes,
     Plugins,
+    Registry,
+    RegistryInstall,
 }
 
 /// The client side of an ACP connection.
@@ -664,6 +666,35 @@ impl Client {
         )
     }
 
+    /// Lists the plugin registry's packages whose name, description or
+    /// tags contain every word of `query`; `refresh` fetches the index
+    /// again. The answer arrives as [`Change::Registry`].
+    pub fn registry_search(&mut self, query: &str, refresh: bool) -> u64 {
+        self.request(
+            "_kage/registry/search",
+            params(&kage_acp_wire::RegistrySearchRequest {
+                query: query.to_owned(),
+                refresh,
+            }),
+            Pending::Registry,
+        )
+    }
+
+    /// Installs package `name` from the plugin registry: `version`, or
+    /// the newest that fits the engine. `force` replaces what is in the
+    /// way. The answer arrives as [`Change::RegistryInstalled`].
+    pub fn registry_install(&mut self, name: &str, version: Option<&str>, force: bool) -> u64 {
+        self.request(
+            "_kage/registry/install",
+            params(&kage_acp_wire::RegistryInstallRequest {
+                name: name.to_owned(),
+                version: version.map(str::to_owned),
+                force,
+            }),
+            Pending::RegistryInstall,
+        )
+    }
+
     /// Saves `key` as `provider`'s API key in the engine's credential
     /// store, or removes the saved one when `key` is `None`. The answer
     /// arrives as [`Change::KeySaved`].
@@ -1098,6 +1129,8 @@ impl Client {
             | Pending::Folders
             | Pending::Themes
             | Pending::Plugins
+            | Pending::Registry
+            | Pending::RegistryInstall
             | Pending::Models
             | Pending::Options) => settings_answer(id, pending, result),
             Pending::SwarmResume { session_id }
@@ -1605,6 +1638,28 @@ fn settings_answer(id: u64, pending: Pending, result: Value) -> Vec<Change> {
             }
         }
         Pending::Plugins => vec![Change::Plugins { request: id }],
+        Pending::Registry => match answer::<kage_acp_wire::RegistrySearchResult>(
+            id,
+            result,
+            "_kage/registry/search result",
+        ) {
+            Err(failed) => failed,
+            Ok(result) => vec![Change::Registry {
+                request: id,
+                result,
+            }],
+        },
+        Pending::RegistryInstall => match answer::<kage_acp_wire::RegistryInstallResult>(
+            id,
+            result,
+            "_kage/registry/install result",
+        ) {
+            Err(failed) => failed,
+            Ok(result) => vec![Change::RegistryInstalled {
+                request: id,
+                result,
+            }],
+        },
         Pending::Models => match answer::<ModelsResponse>(id, result, "_kage/models result") {
             Err(failed) => failed,
             Ok(answer) => vec![Change::Models {

@@ -38,6 +38,13 @@ pub type DirectoryRead = Result<Vec<kage_client::wire::DirectoryProvider>, Strin
 /// could not.
 pub type FoldersRead = Result<kage_client::wire::FoldersResult, String>;
 
+/// A plugin registry read's answer: the registry's packages, or why it
+/// could not be read.
+pub type RegistryRead = Result<kage_client::wire::RegistrySearchResult, String>;
+
+/// A registry install's answer: what was installed, or why not.
+pub type RegistryInstall = Result<kage_client::wire::RegistryInstallResult, String>;
+
 /// What the store asks the shell to carry out.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
@@ -247,6 +254,10 @@ pub struct Store {
     directories: HashMap<u64, Option<DirectoryRead>>,
     /// Folder listings asked for, by request id, until they answer.
     folders: HashMap<u64, Option<FoldersRead>>,
+    /// Plugin registry reads by request id: `None` while in flight.
+    registry_reads: HashMap<u64, Option<RegistryRead>>,
+    /// Registry installs by request id: `None` while in flight.
+    registry_installs: HashMap<u64, Option<RegistryInstall>>,
     /// The user themes on the engine's machine, once listed.
     themes: Vec<kage_client::wire::UserTheme>,
     /// Forks waiting for their copy, by source session.
@@ -306,6 +317,8 @@ impl Store {
             tests: HashMap::new(),
             directories: HashMap::new(),
             folders: HashMap::new(),
+            registry_reads: HashMap::new(),
+            registry_installs: HashMap::new(),
             themes: Vec::new(),
             models: None,
             forking: HashMap::new(),
@@ -681,6 +694,12 @@ impl Store {
                     if let Some(read) = self.folders.get_mut(request) {
                         *read = Some(Err(error.message.clone()));
                     }
+                    if let Some(read) = self.registry_reads.get_mut(request) {
+                        *read = Some(Err(error.message.clone()));
+                    }
+                    if let Some(install) = self.registry_installs.get_mut(request) {
+                        *install = Some(Err(error.message.clone()));
+                    }
                     if self
                         .fs_reading
                         .as_ref()
@@ -701,6 +720,15 @@ impl Store {
                     if let Some(outcome) = self.writes.get_mut(request) {
                         *outcome = Some(Ok(()));
                     }
+                    self.ask_config();
+                }
+                Change::Registry { request, result } => {
+                    self.registry_reads
+                        .insert(*request, Some(Ok(result.clone())));
+                }
+                Change::RegistryInstalled { request, result } => {
+                    self.registry_installs
+                        .insert(*request, Some(Ok(result.clone())));
                     self.ask_config();
                 }
                 Change::Tested { request, result } => {
@@ -1273,6 +1301,37 @@ impl Store {
         let id = self.client.plugin_remove(name);
         self.writes.insert(id, None);
         id
+    }
+
+    /// Asks the engine for the plugin registry's packages; `refresh`
+    /// fetches the index again. The answer lands under the returned id
+    /// in [`Store::registry`].
+    pub fn ask_registry(&mut self, refresh: bool) -> u64 {
+        let id = self.client.registry_search("", refresh);
+        self.registry_reads.insert(id, None);
+        id
+    }
+
+    /// The answer to registry read `id`, once it arrived.
+    #[must_use]
+    pub fn registry(&self, id: u64) -> Option<&RegistryRead> {
+        self.registry_reads.get(&id)?.as_ref()
+    }
+
+    /// Installs package `name` from the plugin registry, its newest
+    /// release that fits; `force` replaces what is in the way. The
+    /// answer lands under the returned id in [`Store::registry_install`],
+    /// and the config snapshot refreshes.
+    pub fn install_package(&mut self, name: &str, force: bool) -> u64 {
+        let id = self.client.registry_install(name, None, force);
+        self.registry_installs.insert(id, None);
+        id
+    }
+
+    /// The answer to registry install `id`, once it arrived.
+    #[must_use]
+    pub fn registry_install(&self, id: u64) -> Option<&RegistryInstall> {
+        self.registry_installs.get(&id)?.as_ref()
     }
 
     /// The answer to provider test `id`, once it arrived.

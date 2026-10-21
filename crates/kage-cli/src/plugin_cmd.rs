@@ -47,16 +47,11 @@ impl Ctx {
         let user = Config::load_default()
             .map_err(|e| format!("config: {e}"))?
             .plugins;
-        let url = user
-            .registry
-            .clone()
-            .unwrap_or_else(|| kage_kura::DEFAULT_REGISTRY.to_owned());
-        let cache = crate::cache_root().ok().map(|dir| dir.join("kura"));
         Ok(Self {
             plugins_dir,
             config_path,
+            registry: registry(&user),
             user,
-            registry: Registry::new(url, cache),
         })
     }
 
@@ -85,15 +80,12 @@ impl Ctx {
 
     /// The registry index, saying so when a cached copy stands in.
     fn index(&self, refresh: bool) -> Result<Index, String> {
-        let fetched = self
-            .registry
-            .index(refresh)
-            .map_err(|e| match e {
-                kage_kura::Error::Network(why) => {
-                    format!("cannot reach the plugin registry: {why}")
-                }
-                other => format!("{}: {other}", self.registry.url()),
-            })?;
+        let fetched = self.registry.index(refresh).map_err(|e| match e {
+            kage_kura::Error::Network(why) => {
+                format!("cannot reach the plugin registry: {why}")
+            }
+            other => format!("{}: {other}", self.registry.url()),
+        })?;
         if let Some(why) = fetched.stale {
             eprintln!(
                 "kage: {} is unreachable ({why}); using the cached index",
@@ -481,6 +473,17 @@ impl Ctx {
     }
 }
 
+/// The registry `[plugins] registry` in the user config names, kura
+/// unless set, with its index cached under the cache root.
+pub(crate) fn registry(user: &PluginsConfig) -> Registry {
+    let url = user
+        .registry
+        .clone()
+        .unwrap_or_else(|| kage_kura::DEFAULT_REGISTRY.to_owned());
+    let cache = crate::cache_root().ok().map(|dir| dir.join("kura"));
+    Registry::new(url, cache)
+}
+
 /// The plugin settings in force in the current directory, the project
 /// config included, or `user` when that cannot be read.
 fn effective_plugins(user: &PluginsConfig) -> PluginsConfig {
@@ -491,7 +494,7 @@ fn effective_plugins(user: &PluginsConfig) -> PluginsConfig {
 }
 
 /// `name` or `name@version`.
-fn parse_spec(spec: &str) -> Result<(&str, Option<Version>), String> {
+pub(crate) fn parse_spec(spec: &str) -> Result<(&str, Option<Version>), String> {
     let (name, version) = match spec.split_once('@') {
         Some((name, version)) => {
             let version = Version::parse(version)

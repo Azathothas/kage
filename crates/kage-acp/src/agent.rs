@@ -30,8 +30,9 @@ use crate::acp::{
     KageMeta, ListSessionsRequest, ListSessionsResponse, LoadSessionRequest, LoadSessionResponse,
     ModelsResponse, NewSessionRequest, NewSessionResponse, OptionSetRequest, OptionsResponse,
     PermissionOption, PermissionOptionKind, PermissionOutcome, PlanReview, PluginInstallRequest,
-    PluginRemoveRequest, PromptRequest, PromptResponse, QuestionMeta, QuestionPrompt, RequestMeta,
-    RequestPermissionRequest, RequestPermissionResponse, RequestPermissionResult,
+    PluginRemoveRequest, PromptRequest, PromptResponse, QuestionMeta, QuestionPrompt,
+    RegistryInstallRequest, RegistryInstallResult, RegistrySearchRequest, RegistrySearchResult,
+    RequestMeta, RequestPermissionRequest, RequestPermissionResponse, RequestPermissionResult,
     ResumeSessionRequest, ResumeSessionResponse, SessionExportResponse, SessionForkRequest,
     SessionForkResponse, SessionNotification, SessionRenameRequest, SessionRequest, SessionUpdate,
     SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, SwarmResumeRequest,
@@ -626,6 +627,35 @@ pub trait Agent: Send + Sync + 'static {
         Err(RpcError::method_not_found("_kage/plugins/remove"))
     }
 
+    /// Lists the packages of the plugin registry
+    /// (`_kage/registry/search`). The default rejects.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`RpcError`] if the registry cannot be reached and no
+    /// index is cached.
+    fn registry_search(
+        &self,
+        _req: RegistrySearchRequest,
+    ) -> Result<RegistrySearchResult, RpcError> {
+        Err(RpcError::method_not_found("_kage/registry/search"))
+    }
+
+    /// Installs a package from the plugin registry into the plugin
+    /// directory (`_kage/registry/install`). The default rejects.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`RpcError`] if no release fits, a download fails or
+    /// does not match the index, or something of the same name is in
+    /// the way.
+    fn registry_install(
+        &self,
+        _req: RegistryInstallRequest,
+    ) -> Result<RegistryInstallResult, RpcError> {
+        Err(RpcError::method_not_found("_kage/registry/install"))
+    }
+
     /// Run one prompt turn to completion, streaming `session/update`
     /// notifications through `ctx`.
     ///
@@ -928,6 +958,14 @@ fn handle_kage_request<A: Agent>(
         },
         "_kage/plugins/remove" => match parse::<PluginRemoveRequest>(params) {
             Ok(req) => spawn_op(peer, agent, id, move |a| a.plugin_remove(req)),
+            Err(e) => return parse_failed(peer, &id, e),
+        },
+        "_kage/registry/search" => match parse::<RegistrySearchRequest>(params) {
+            Ok(req) => spawn_op(peer, agent, id, move |a| a.registry_search(req).map(jval)),
+            Err(e) => return parse_failed(peer, &id, e),
+        },
+        "_kage/registry/install" => match parse::<RegistryInstallRequest>(params) {
+            Ok(req) => spawn_op(peer, agent, id, move |a| a.registry_install(req).map(jval)),
             Err(e) => return parse_failed(peer, &id, e),
         },
         "_kage/session/rename" => match parse::<SessionRenameRequest>(params) {
