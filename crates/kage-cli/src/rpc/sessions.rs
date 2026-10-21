@@ -427,6 +427,14 @@ pub(super) fn replay_updates(timeline: &[TimelineItem]) -> Vec<SessionUpdate> {
                 (Role::User, Content::Image { source, mime }) => {
                     Some(user_chunk(image_block(source, mime)))
                 }
+                // A tool's images ride its result, below.
+                (Role::ToolResult, Content::Image { .. }) => None,
+                (Role::ToolResult, Content::ToolResultBlock { call_id, .. }) => {
+                    replay_event(message.id, block)
+                        .map(|event| with_tool_media(event, message, call_id))
+                        .and_then(|e| to_update(&mut seen, &e))
+                        .map(|update| timed(update, recorded_ms(message, block, &mut called)))
+                }
                 (_, block) => replay_event(message.id, block)
                     .and_then(|e| to_update(&mut seen, &e))
                     .map(|update| timed(update, recorded_ms(message, block, &mut called))),
@@ -694,6 +702,26 @@ fn timed(mut update: SessionUpdate, ms: Option<u64>) -> SessionUpdate {
     update
 }
 
+/// `event`, a replayed tool result, with the images the tool produced,
+/// which follow the result in `message`.
+fn with_tool_media(mut event: LoopEvent, message: &Message, call_id: &ToolCallId) -> LoopEvent {
+    if let LoopEvent::ToolCallEnd { output, .. } = &mut event {
+        output.media = kage_core::tool_results(&message.content)
+            .into_iter()
+            .filter(|result| result.call_id == call_id)
+            .flat_map(|result| result.media)
+            .filter_map(|(source, mime)| match source {
+                MediaSource::Base64 { data } => Some(kage_core::ToolMedia {
+                    mime: mime.to_owned(),
+                    data: data.clone(),
+                }),
+                MediaSource::Url { .. } | MediaSource::Blob { .. } => None,
+            })
+            .collect();
+    }
+    event
+}
+
 /// The loop event that streamed `block` of message `id`, if it shows.
 fn replay_event(id: MessageId, block: &Content) -> Option<LoopEvent> {
     match block {
@@ -865,6 +893,56 @@ mod tests {
             matches!(&chunks[1], kage_acp::acp::ContentBlock::Text(text)
                 if text.text.contains("no longer stored")),
             "{chunks:?}"
+        );
+    }
+
+    #[test]
+    fn a_tool_s_image_replays_with_its_call() {
+        let timeline = vec![
+            TimelineItem::Message(Arc::new(Message::new(
+                Role::Assistant,
+                vec![call("draw")],
+                None,
+            ))),
+            TimelineItem::Message(Arc::new(Message::new(
+                Role::ToolResult,
+                vec![
+                    Content::ToolResultBlock {
+                        call_id: ToolCallId::new("draw"),
+                        output: "drawn".to_owned(),
+                        is_error: false,
+                    },
+                    Content::Image {
+                        source: kage_core::MediaSource::Base64 {
+                            data: "iVBO".to_owned(),
+                        },
+                        mime: "image/png".to_owned(),
+                    },
+                ],
+                None,
+            ))),
+        ];
+        let updates = replay_updates(&timeline);
+        assert!(
+            !updates
+                .iter()
+                .any(|u| matches!(u, SessionUpdate::AgentMessageChunk(_))),
+            "the image is not the agent's reply: {updates:?}"
+        );
+        let done = updates
+            .iter()
+            .find_map(|u| match u {
+                SessionUpdate::ToolCallUpdate(call) if call.status.is_some() => Some(call),
+                _ => None,
+            })
+            .expect("the call ends");
+        let content = &done.content;
+        assert!(
+            content.iter().any(|c| matches!(c,
+                kage_acp::acp::ToolCallContent::Content(chunk)
+                    if matches!(&chunk.content, kage_acp::acp::ContentBlock::Image(blob)
+                        if blob.data == "iVBO"))),
+            "{content:?}"
         );
     }
 

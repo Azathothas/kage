@@ -345,17 +345,14 @@ fn flush_assistant_text(items: &mut Vec<Value>, text_parts: &mut Vec<Value>) {
 }
 
 fn convert_tool_result_items(blocks: &[Content]) -> Vec<Value> {
-    blocks
+    kage_core::tool_results(blocks)
         .iter()
-        .filter_map(|c| match c {
-            Content::ToolResultBlock {
-                call_id, output, ..
-            } => Some(serde_json::json!({
+        .map(|result| {
+            serde_json::json!({
                 "type": "function_call_output",
-                "call_id": call_id.0,
-                "output": output,
-            })),
-            _ => None,
+                "call_id": result.call_id.0,
+                "output": result.text_with_media_notes(),
+            })
         })
         .collect()
 }

@@ -159,6 +159,12 @@
 ---@field text string Output text shown to the agent.
 ---@field is_error? boolean Mark the call as failed.
 ---@field structured? table Machine-readable detail.
+---@field media? kage.ToolMedia[] Images the tool produced, shown with the call and kept in the session.
+
+--- One image a tool produced.
+---@class kage.ToolMedia
+---@field mime string MIME type, such as `image/png`.
+---@field data string The bytes, base64-encoded.
 
 --- Spec passed to `kage.register_tool` / `kage.override_tool`.
 ---@class kage.ToolSpec

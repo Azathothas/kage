@@ -400,6 +400,7 @@ fn run_command(
             "cwd": cwd_display(cwd),
         })),
         terminate: false,
+        media: Vec::new(),
     })
 }
 

@@ -130,6 +130,7 @@ impl Tool for GrepTool {
                 "truncated": hit_cap,
             })),
             terminate: false,
+            media: Vec::new(),
         })
     }
 }

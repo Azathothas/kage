@@ -102,6 +102,7 @@ fn all_loop_events_roundtrip() {
                 text: "ok".into(),
                 structured: None,
                 terminate: false,
+                media: Vec::new(),
             },
         },
         LoopEvent::MessageEnd {
@@ -212,6 +213,7 @@ fn tool_output_with_structured_payload_roundtrips() {
         text: "out of bounds".into(),
         structured: Some(serde_json::json!({"line": 42, "kind": "syntax"})),
         terminate: false,
+        media: Vec::new(),
     });
 }
 

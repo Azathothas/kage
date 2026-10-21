@@ -345,21 +345,30 @@ fn is_claude_model(model: &str) -> bool {
             .any(|token| FAMILIES.contains(&token))
 }
 
+/// Tool results on the wire. Images a tool produced go inside its
+/// `tool_result`, which Anthropic accepts, so the model sees them.
 fn convert_tool_result_blocks(blocks: &[Content]) -> Vec<Value> {
-    blocks
+    kage_core::tool_results(blocks)
         .iter()
-        .filter_map(|c| match c {
-            Content::ToolResultBlock {
-                call_id,
-                output,
-                is_error,
-            } => Some(serde_json::json!({
-                "type":"tool_result",
-                "tool_use_id": call_id.0,
-                "content": output,
-                "is_error": is_error,
-            })),
-            _ => None,
+        .map(|result| {
+            let content = if result.media.is_empty() {
+                Value::String(result.output.to_owned())
+            } else {
+                let mut parts = Vec::new();
+                if !result.output.is_empty() {
+                    parts.push(serde_json::json!({"type": "text", "text": result.output}));
+                }
+                for (source, mime) in &result.media {
+                    parts.push(image_to_anthropic(source, mime));
+                }
+                Value::Array(parts)
+            };
+            serde_json::json!({
+                "type": "tool_result",
+                "tool_use_id": result.call_id.0,
+                "content": content,
+                "is_error": result.is_error,
+            })
         })
         .collect()
 }

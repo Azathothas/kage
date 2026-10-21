@@ -127,6 +127,14 @@ deadline. Listing, reading a resource and fetching a prompt give up
 after 15 seconds, and `initialize` after 10 seconds. `initialize` is
 never cancelled, because MCP forbids it.
 
+### images in results
+
+An `image` item in a tool's result stays an image: it shows with the
+call in the TUI, the desktop and editors, `/image save` can write it
+into the project, and a model that reads images in tool results
+(Claude) sees it. Other models read a note naming it. Other binary
+items are named in the result text.
+
 ### failed servers
 
 kage keeps every configured server, even one that failed to start, so

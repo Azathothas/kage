@@ -105,8 +105,8 @@ pub enum RowAction {
     Fork(Option<usize>),
     /// Rewind the session to before the prompt at this item.
     Rewind(usize),
-    /// Save the image at this item into the session's directory.
-    SaveImage(usize),
+    /// Save the `nth` image of this item into the session's directory.
+    SaveImage(usize, usize),
 }
 
 /// The plan card's revise field: which card's field shows, and the

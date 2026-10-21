@@ -533,6 +533,7 @@ fn error_output(tool: &str, reason: &str) -> ToolOutput {
         text: format!("`{tool}`: {reason}"),
         structured: None,
         terminate: false,
+        media: Vec::new(),
     }
 }
 

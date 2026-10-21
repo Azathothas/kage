@@ -873,7 +873,7 @@ fn render_row(
             Some(TranscriptItem::Media { mime, data }) => {
                 let (response, save) = super::media_rows::render_media(ui, mime, data);
                 if save {
-                    events.push(RowAction::SaveImage(*ix));
+                    events.push(RowAction::SaveImage(*ix, 0));
                 }
                 response
             }
@@ -920,17 +920,37 @@ fn render_row(
                 response
             }
             Some(TranscriptItem::ToolCall(call)) => {
-                let (response, actions) = tool_rows::render_tool(
-                    ui,
-                    *ix,
-                    call,
-                    false,
-                    false,
-                    times.and_then(|t| t.tool(&call.tool_call_id)),
-                    ui_state,
-                );
-                events.extend(actions);
-                response
+                let images = super::media_rows::tool_images(call);
+                let mut render = |ui: &mut egui::Ui, events: &mut Vec<RowAction>| {
+                    let (response, actions) = tool_rows::render_tool(
+                        ui,
+                        *ix,
+                        call,
+                        false,
+                        false,
+                        times.and_then(|t| t.tool(&call.tool_call_id)),
+                        ui_state,
+                    );
+                    events.extend(actions);
+                    response
+                };
+                if images.is_empty() {
+                    render(ui, events)
+                } else {
+                    // A tool's images show under its row, open or not:
+                    // the picture is usually why it ran.
+                    ui.vertical(|ui| {
+                        render(ui, events);
+                        for (nth, (mime, data)) in images.iter().enumerate() {
+                            ui.add_space(crate::theme::SP_2);
+                            let (_, save) = super::media_rows::render_media(ui, mime, data);
+                            if save {
+                                events.push(RowAction::SaveImage(*ix, nth));
+                            }
+                        }
+                    })
+                    .response
+                }
             }
             _ => blank_row(ui),
         },

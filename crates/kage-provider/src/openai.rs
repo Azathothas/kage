@@ -463,17 +463,14 @@ fn convert_assistant_message(blocks: &[Content], replay: ThinkingReplay, model: 
 }
 
 fn convert_tool_result_messages(blocks: &[Content]) -> Vec<Value> {
-    blocks
+    kage_core::tool_results(blocks)
         .iter()
-        .filter_map(|c| match c {
-            Content::ToolResultBlock {
-                call_id, output, ..
-            } => Some(serde_json::json!({
+        .map(|result| {
+            serde_json::json!({
                 "role": "tool",
-                "tool_call_id": call_id.0,
-                "content": output,
-            })),
-            _ => None,
+                "tool_call_id": result.call_id.0,
+                "content": result.text_with_media_notes(),
+            })
         })
         .collect()
 }
@@ -948,6 +945,33 @@ mod tests {
         req.level = Some(crate::ThinkingLevel::Medium);
         let body = build_request_body(&req, false, None, Dialect::OpenAi);
         assert_eq!(body["reasoning_effort"], "medium");
+    }
+
+    #[test]
+    fn a_tool_s_image_is_named_in_its_result_text() {
+        let msg = Message::new(
+            Role::ToolResult,
+            vec![
+                Content::ToolResultBlock {
+                    call_id: ToolCallId::new("c1"),
+                    output: "drawn".into(),
+                    is_error: false,
+                },
+                Content::Image {
+                    source: kage_core::MediaSource::Base64 {
+                        data: "iVBO".into(),
+                    },
+                    mime: "image/png".into(),
+                },
+            ],
+            None,
+        );
+        let req = StreamRequest::new("gpt-5", vec![Arc::new(msg)]);
+        let body = build_request_body(&req, false, None, Dialect::OpenAi);
+        assert_eq!(
+            body["messages"][0]["content"],
+            "drawn\n[the tool produced an image (image/png), not shown here]"
+        );
     }
 
     #[test]

@@ -80,6 +80,7 @@ impl Tool for ReadTool {
             text,
             structured: None,
             terminate: false,
+            media: Vec::new(),
         })
     }
 }

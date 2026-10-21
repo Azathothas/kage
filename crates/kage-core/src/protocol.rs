@@ -987,6 +987,7 @@ mod tests {
                     text: "a".into(),
                     structured: Some(serde_json::json!({ "exit_code": 0 })),
                     terminate: true,
+                    media: Vec::new(),
                 },
             },
             LoopEvent::MessageEnd {

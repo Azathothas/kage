@@ -201,6 +201,7 @@ impl EditTool {
                 "diff": diff,
             })),
             terminate: false,
+            media: Vec::new(),
         })
     }
 }
@@ -434,6 +435,7 @@ fn error(path: &str, message: String) -> ToolOutput {
         text: message,
         structured: None,
         terminate: false,
+        media: Vec::new(),
     }
 }
 

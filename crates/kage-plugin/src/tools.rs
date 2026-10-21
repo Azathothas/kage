@@ -132,6 +132,7 @@ fn run_tool(
                 text: err.to_string(),
                 structured: None,
                 terminate: false,
+                media: Vec::new(),
             })
         }
     }
@@ -144,30 +145,35 @@ fn value_to_output(value: Value) -> ToolOutput {
             text: String::new(),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         },
         Value::String(s) => ToolOutput {
             is_error: false,
             text: s.to_str().map(|s| s.to_owned()).unwrap_or_default(),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         },
         Value::Boolean(b) => ToolOutput {
             is_error: false,
             text: b.to_string(),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         },
         Value::Integer(i) => ToolOutput {
             is_error: false,
             text: i.to_string(),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         },
         Value::Number(n) => ToolOutput {
             is_error: false,
             text: n.to_string(),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         },
         Value::Table(t) => table_to_output(&t),
         other => {
@@ -177,6 +183,7 @@ fn value_to_output(value: Value) -> ToolOutput {
                 text: json.to_string(),
                 structured: Some(json),
                 terminate: false,
+                media: Vec::new(),
             }
         }
     }
@@ -193,6 +200,7 @@ fn table_to_output(table: &Table) -> ToolOutput {
             text,
             structured: structured_json,
             terminate: false,
+            media: table_media(table),
         };
     }
     // No `text` field: serialize the table itself as JSON for the model.
@@ -202,7 +210,24 @@ fn table_to_output(table: &Table) -> ToolOutput {
         text: as_json.to_string(),
         structured: Some(as_json),
         terminate: false,
+        media: Vec::new(),
     }
+}
+
+/// The `media` list of a tool's result table: `{ mime, data }` entries,
+/// `data` base64. Entries missing either are skipped.
+fn table_media(table: &Table) -> Vec<kage_core::ToolMedia> {
+    let Ok(list) = table.get::<Table>("media") else {
+        return Vec::new();
+    };
+    list.sequence_values::<Table>()
+        .flatten()
+        .filter_map(|entry| {
+            let mime: String = entry.get("mime").ok()?;
+            let data: String = entry.get("data").ok()?;
+            (!mime.is_empty() && !data.is_empty()).then_some(kage_core::ToolMedia { mime, data })
+        })
+        .collect()
 }
 
 /// Install `kage.register_tool` on the running Lua state. The closure
@@ -435,6 +460,30 @@ mod tests {
         let cx = ToolContext::new(&workdir, &cancel);
         let err = tool.execute(json!({}), &cx).unwrap_err();
         assert!(matches!(err, ToolError::Cancelled));
+    }
+
+    #[test]
+    fn a_result_table_can_carry_media() {
+        let lua = Lua::new();
+        let table: Table = lua
+            .load(
+                "return { text = 'drawn', media = {
+                    { mime = 'image/png', data = 'iVBO' },
+                    { mime = 'image/png' },
+                } }",
+            )
+            .eval()
+            .unwrap();
+        let output = table_to_output(&table);
+        assert_eq!(output.text, "drawn");
+        assert_eq!(
+            output.media,
+            [kage_core::ToolMedia {
+                mime: "image/png".into(),
+                data: "iVBO".into(),
+            }],
+            "an entry without data is skipped"
+        );
     }
 
     #[test]

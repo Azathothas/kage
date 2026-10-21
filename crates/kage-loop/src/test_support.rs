@@ -76,6 +76,7 @@ impl Tool for MeetTool {
             text: if met { "met" } else { "alone" }.into(),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         })
     }
 }

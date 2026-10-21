@@ -919,3 +919,33 @@ fn with_models_overrides_advertised_models() {
     assert_eq!(provider.models(), models);
     assert!(AnthropicProvider::new("k").models().is_empty());
 }
+
+#[test]
+fn a_tool_s_images_go_inside_its_tool_result() {
+    let msg = Message::new(
+        Role::ToolResult,
+        vec![
+            Content::ToolResultBlock {
+                call_id: kage_core::ToolCallId::new("c1"),
+                output: "drawn".into(),
+                is_error: false,
+            },
+            Content::Image {
+                source: kage_core::MediaSource::Base64 {
+                    data: "iVBO".into(),
+                },
+                mime: "image/png".into(),
+            },
+        ],
+        None,
+    );
+    let req = StreamRequest::new("claude-sonnet-4-6", vec![Arc::new(msg)]);
+    let body = build_request_body(&req, false);
+    let content = &body["messages"][0]["content"][0]["content"];
+    assert_eq!(
+        content[0],
+        serde_json::json!({"type": "text", "text": "drawn"})
+    );
+    assert_eq!(content[1]["type"], "image");
+    assert_eq!(content[1]["source"]["data"], "iVBO");
+}

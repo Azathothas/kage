@@ -52,9 +52,9 @@ impl super::Dispatcher {
     }
 }
 
-/// The MIME type and bytes of an image the assistant messages of the
-/// session at `path` hold: the one whose bytes hash to `sha256`, or the
-/// last one.
+/// The MIME type and bytes of an image the model or one of its tools
+/// produced in the session at `path`: the one whose bytes hash to
+/// `sha256`, or the last one.
 fn produced_image(path: &Path, sha256: Option<&str>) -> Option<(String, Vec<u8>)> {
     let decode = |data: &str| base64::engine::general_purpose::STANDARD.decode(data).ok();
     let mut newest = None;
@@ -62,7 +62,9 @@ fn produced_image(path: &Path, sha256: Option<&str>) -> Option<(String, Vec<u8>)
         let SessionEntry::Message(message) = entry else {
             continue;
         };
-        if message.message.role != Role::Assistant {
+        // The model's own images and its tools' count; attached ones
+        // are the user's.
+        if !matches!(message.message.role, Role::Assistant | Role::ToolResult) {
             continue;
         }
         for block in &message.message.content {
@@ -213,10 +215,15 @@ mod tests {
         let mut writer = kage_session::SessionWriter::create(&path, header).unwrap();
         writer.append(&image(Role::Assistant, b"first")).unwrap();
         writer.append(&image(Role::Assistant, b"second")).unwrap();
+        writer.append(&image(Role::ToolResult, b"tooled")).unwrap();
         writer.append(&image(Role::User, b"attached")).unwrap();
         drop(writer);
 
-        assert_eq!(produced_image(&path, None).unwrap().1, b"second");
+        assert_eq!(
+            produced_image(&path, None).unwrap().1,
+            b"tooled",
+            "a tool's image counts"
+        );
         let first = kage_session::BlobStore::digest(b"first");
         assert_eq!(produced_image(&path, Some(&first)).unwrap().1, b"first");
         let attached = kage_session::BlobStore::digest(b"attached");

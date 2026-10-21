@@ -39,6 +39,7 @@ fn edit_events_at(
                 },
                 structured: None,
                 terminate: false,
+                media: Vec::new(),
             },
         }
         .into(),

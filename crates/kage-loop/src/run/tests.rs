@@ -549,6 +549,7 @@ impl kage_tools::Tool for AlwaysCallTool {
             text: "ran".into(),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         })
     }
 }
@@ -900,6 +901,7 @@ impl kage_tools::Tool for TaskDoneTool {
             text: "done".into(),
             structured: None,
             terminate: true,
+            media: Vec::new(),
         })
     }
 }
@@ -1003,6 +1005,7 @@ impl kage_tools::Tool for StaticTool {
             text: "static-result".into(),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         })
     }
 }
@@ -1109,6 +1112,7 @@ impl kage_tools::Tool for CancellingTool {
             text: "cancelled".into(),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         })
     }
 }
@@ -1172,6 +1176,7 @@ impl kage_tools::Tool for AlwaysFailTool {
             text: "boom".into(),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         })
     }
 }
@@ -1333,6 +1338,7 @@ impl kage_tools::Tool for CountingTool {
             text: format!("ran #{}", self.calls.lock().expect("not poisoned").len()),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         })
     }
 }

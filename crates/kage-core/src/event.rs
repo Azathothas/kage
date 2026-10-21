@@ -82,6 +82,20 @@ pub struct ToolOutput {
     /// tools like `task_done` that signal a successful exit.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub terminate: bool,
+    /// Media the tool produced, such as an image it generated. Unlike
+    /// `structured`, media go into history with the result: hosts show
+    /// them with the call, and a model that reads images sees them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub media: Vec<ToolMedia>,
+}
+
+/// One piece of media a tool produced.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolMedia {
+    /// MIME type, such as `image/png`.
+    pub mime: String,
+    /// The bytes, base64-encoded without a `data:` prefix.
+    pub data: String,
 }
 
 /// Per-million-token prices for one model, in USD.
@@ -526,6 +540,7 @@ mod tests {
             text: "ok".into(),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         };
         let json = serde_json::to_value(&out).unwrap();
         assert!(json.get("structured").is_none());
@@ -538,6 +553,7 @@ mod tests {
             text: "ok".into(),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         };
         let json = serde_json::to_value(&out).unwrap();
         assert!(json.get("terminate").is_none());
@@ -550,6 +566,7 @@ mod tests {
             text: "done".into(),
             structured: None,
             terminate: true,
+            media: Vec::new(),
         };
         let json = serde_json::to_value(&out).unwrap();
         assert_eq!(json["terminate"], true);

@@ -208,6 +208,64 @@ impl MediaSource {
     }
 }
 
+/// One tool result of a tool-result message, with the media the tool
+/// produced, which follow its result block in the message.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ToolResultParts<'a> {
+    /// The call the result answers.
+    pub call_id: &'a ToolCallId,
+    /// The result text.
+    pub output: &'a str,
+    /// Whether the tool failed.
+    pub is_error: bool,
+    /// The images the tool produced, as `(source, mime)`.
+    pub media: Vec<(&'a MediaSource, &'a str)>,
+}
+
+impl ToolResultParts<'_> {
+    /// The result text, with a note for each image after it, for a
+    /// provider that cannot take images in a tool result.
+    #[must_use]
+    pub fn text_with_media_notes(&self) -> String {
+        use std::fmt::Write as _;
+        let mut text = self.output.to_owned();
+        for (_, mime) in &self.media {
+            let _ = write!(
+                text,
+                "\n[the tool produced an image ({mime}), not shown here]"
+            );
+        }
+        text
+    }
+}
+
+/// The tool results in `blocks`, each with the images that follow it.
+#[must_use]
+pub fn tool_results(blocks: &[Content]) -> Vec<ToolResultParts<'_>> {
+    let mut out: Vec<ToolResultParts<'_>> = Vec::new();
+    for block in blocks {
+        match block {
+            Content::ToolResultBlock {
+                call_id,
+                output,
+                is_error,
+            } => out.push(ToolResultParts {
+                call_id,
+                output,
+                is_error: *is_error,
+                media: Vec::new(),
+            }),
+            Content::Image { source, mime } => {
+                if let Some(last) = out.last_mut() {
+                    last.media.push((source, mime));
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 /// One turn in the conversation.
 ///
 /// A `Message` is the persisted unit of conversation history. Streaming

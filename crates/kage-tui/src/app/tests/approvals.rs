@@ -61,6 +61,7 @@ fn tool_timing_excludes_the_approval_wait() {
                     text: "stdout:\na\nexit: 0".into(),
                     structured: None,
                     terminate: false,
+                    media: Vec::new(),
                 },
             }
             .into(),

@@ -69,6 +69,8 @@ chunks around them. A loaded session replays them the same way. The
 bytes ride the stream rather than a `file://` link, so a client that
 does not share the engine's filesystem shows them too. An image whose
 bytes the engine no longer holds replays as a text chunk saying so.
+Images a tool produced arrive the same way inside the `content` of the
+`tool_call_update` that ends the call, after its text.
 
 ## sessions an agent started
 

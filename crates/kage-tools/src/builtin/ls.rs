@@ -108,6 +108,7 @@ impl Tool for LsTool {
                 "truncated": truncated,
             })),
             terminate: false,
+            media: Vec::new(),
         })
     }
 }

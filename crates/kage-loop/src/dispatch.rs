@@ -22,8 +22,8 @@ use std::sync::Arc;
 use crossbeam_channel::Sender;
 use kage_core::event::TOOL_CANCELLED_TEXT;
 use kage_core::{
-    CancelFlag, Content, LoopError, LoopEvent, Message, MessageId, Role, ToolCallId, ToolOutput,
-    ToolUpdate,
+    CancelFlag, Content, LoopError, LoopEvent, MediaSource, Message, MessageId, Modality, Role,
+    ToolCallId, ToolOutput, ToolUpdate,
 };
 use kage_tools::{ProgressSink, ToolContext, ToolError, ToolRegistry};
 
@@ -306,6 +306,7 @@ fn synthesized_output(error: &LoopError) -> ToolOutput {
         text,
         structured: None,
         terminate: false,
+        media: Vec::new(),
     }
 }
 
@@ -337,6 +338,7 @@ fn alone_output(name: &str) -> ToolOutput {
         ),
         structured: None,
         terminate: false,
+        media: Vec::new(),
     }
 }
 
@@ -361,6 +363,7 @@ pub(crate) fn unrun_results<F: FnMut(LoopEvent)>(
                 text: "tool did not run: the run stopped after this turn".to_owned(),
                 structured: None,
                 terminate: false,
+                media: Vec::new(),
             };
             emit(LoopEvent::ToolCallEnd {
                 id: call.id.clone(),
@@ -377,6 +380,35 @@ pub(crate) fn unrun_results<F: FnMut(LoopEvent)>(
             )
         })
         .collect()
+}
+
+/// The history message holding `call_id`'s `output`: its result block,
+/// then each image the tool produced, so it is stored, shown and sent
+/// with the result. A kind of media history cannot hold yet is named in
+/// the result text instead.
+fn result_message(call_id: ToolCallId, output: ToolOutput, parent: MessageId) -> Message {
+    let mut text = output.text;
+    let mut images = Vec::new();
+    for media in output.media {
+        if Modality::of_mime(&media.mime) == Some(Modality::Image) {
+            images.push(Content::Image {
+                source: MediaSource::Base64 { data: media.data },
+                mime: media.mime,
+            });
+        } else {
+            let _ = std::fmt::Write::write_fmt(
+                &mut text,
+                format_args!("\n[{} output is not kept]", media.mime),
+            );
+        }
+    }
+    let mut content = vec![Content::ToolResultBlock {
+        call_id,
+        output: text,
+        is_error: output.is_error,
+    }];
+    content.extend(images);
+    Message::new(Role::ToolResult, content, Some(parent))
 }
 
 /// Record the batch-level failure worth surfacing to the caller.
@@ -472,15 +504,7 @@ pub(crate) fn dispatch_tool_calls<F: FnMut(LoopEvent)>(
             output: output.clone(),
         });
 
-        results.push(Message::new(
-            Role::ToolResult,
-            vec![Content::ToolResultBlock {
-                call_id: call.id,
-                output: output.text,
-                is_error: output.is_error,
-            }],
-            Some(parent),
-        ));
+        results.push(result_message(call.id, output, parent));
     }
     DispatchOutcome {
         results,
@@ -563,15 +587,7 @@ pub(crate) fn dispatch_tool_calls_parallel<F: FnMut(LoopEvent)>(
             id: call.id.clone(),
             output: output.clone(),
         });
-        results[index] = Some(Message::new(
-            Role::ToolResult,
-            vec![Content::ToolResultBlock {
-                call_id: call.id.clone(),
-                output: output.text,
-                is_error: output.is_error,
-            }],
-            Some(parent),
-        ));
+        results[index] = Some(result_message(call.id.clone(), output, parent));
     };
 
     if entry_cancelled {
@@ -634,6 +650,7 @@ fn execute(
             ),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         });
     };
 
@@ -652,6 +669,7 @@ fn execute(
             text: err.to_string(),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         }),
     }
 }

@@ -41,11 +41,12 @@ pub use config::{
 };
 pub use error::{Error, Result};
 pub use event::{
-    LoopError, LoopEvent, ModelCost, StopReason, TokenCost, TokenUsage, ToolOutput, ToolUpdate,
+    LoopError, LoopEvent, ModelCost, StopReason, TokenCost, TokenUsage, ToolMedia, ToolOutput,
+    ToolUpdate,
 };
 pub use message::{
     Content, MAX_TOOL_RESULT_BYTES, MediaSource, Message, MessageId, Role, ThinkingSignature,
-    ToolCallId, cap_tool_result, is_agent_result,
+    ToolCallId, ToolResultParts, cap_tool_result, is_agent_result, tool_results,
 };
 pub use modality::{Modalities, Modality};
 pub use model_id::{canonical_model, qualify_model, split_model};

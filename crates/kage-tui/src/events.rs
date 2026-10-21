@@ -71,6 +71,10 @@ pub fn apply_loop_event(buf: &mut Buffer, event: &LoopEvent) {
         }
         LoopEvent::ToolCallEnd { id, output } => {
             buf.push_tool_result(id.to_string(), output.text.clone(), output.is_error);
+            for media in &output.media {
+                let label = tool_media_label(&media.mime, media.data.len() / 4 * 3);
+                buf.push_custom("kage:image", label, false);
+            }
         }
         LoopEvent::MessageEnd {
             stop_reason: StopReason::MaxTokens,
@@ -158,6 +162,15 @@ fn push_user_message(buf: &mut Buffer, message: &Message) {
         push_user_text(buf, text);
     }
     push_user_image_rows(buf, message);
+}
+
+/// The row that stands for an image a tool produced, the same live and
+/// on replay.
+fn tool_media_label(mime: &str, bytes: usize) -> String {
+    format!(
+        "[{mime} from the tool, {}]",
+        crate::image::human_bytes(bytes)
+    )
 }
 
 /// The row that stands for media the model produced: its type and
@@ -447,6 +460,14 @@ fn push_replayed_message(buf: &mut Buffer, msg: &Arc<Message>, tool_durations: &
                         duration,
                     );
                 }
+                if let Content::Image { source, mime } = block {
+                    let bytes = match source {
+                        MediaSource::Base64 { data } => data.len() / 4 * 3,
+                        MediaSource::Blob { size, .. } => usize::try_from(*size).unwrap_or(0),
+                        MediaSource::Url { .. } => 0,
+                    };
+                    buf.push_custom("kage:image", tool_media_label(mime, bytes), false);
+                }
             }
         }
         Role::System => {}
@@ -621,6 +642,31 @@ mod tests {
             rows(&live)[0].contains("image/png from the model"),
             "{:?}",
             rows(&live)
+        );
+    }
+
+    #[test]
+    fn a_tool_s_image_shows_after_its_result() {
+        let mut buf = Buffer::new();
+        apply_loop_event(
+            &mut buf,
+            &LoopEvent::ToolCallEnd {
+                id: ToolCallId::new("c1"),
+                output: ToolOutput {
+                    text: "drawn".into(),
+                    media: vec![kage_core::ToolMedia {
+                        mime: "image/png".into(),
+                        data: "A".repeat(4000),
+                    }],
+                    ..ToolOutput::default()
+                },
+            },
+        );
+        let last = buf.blocks().last().cloned().unwrap();
+        assert!(
+            matches!(last.as_ref(), Block::Custom { kind, text, .. }
+                if kind == "kage:image" && text.contains("image/png from the tool")),
+            "{last:?}"
         );
     }
 
@@ -897,6 +943,7 @@ mod tests {
                 text: "file1\nfile2".into(),
                 structured: None,
                 terminate: false,
+                media: Vec::new(),
             },
         });
         let buf = buf.lock().unwrap();
@@ -922,6 +969,7 @@ mod tests {
             text: text.into(),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         }
     }
 

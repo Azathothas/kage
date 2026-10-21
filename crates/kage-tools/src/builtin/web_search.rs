@@ -141,6 +141,7 @@ fn output(query: &str, results: &[SearchResult]) -> ToolOutput {
         text: text.trim_end().to_owned(),
         structured: Some(serde_json::json!({ "query": query, "results": results })),
         terminate: false,
+        media: Vec::new(),
     }
 }
 

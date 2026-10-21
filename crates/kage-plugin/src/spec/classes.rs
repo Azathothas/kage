@@ -22,6 +22,27 @@ pub(super) const CLASSES: &[Class] = &[
                 ty: "table",
                 doc: "Machine-readable detail.",
             },
+            Field {
+                name: "media?",
+                ty: "kage.ToolMedia[]",
+                doc: "Images the tool produced, shown with the call and kept in the session.",
+            },
+        ],
+    },
+    Class {
+        name: "kage.ToolMedia",
+        doc: &["One image a tool produced."],
+        fields: &[
+            Field {
+                name: "mime",
+                ty: "string",
+                doc: "MIME type, such as `image/png`.",
+            },
+            Field {
+                name: "data",
+                ty: "string",
+                doc: "The bytes, base64-encoded.",
+            },
         ],
     },
     Class {

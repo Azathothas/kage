@@ -142,6 +142,7 @@ impl Tool for FindTool {
                 "truncated": truncated,
             })),
             terminate: false,
+            media: Vec::new(),
         })
     }
 }

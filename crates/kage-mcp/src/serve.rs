@@ -346,6 +346,7 @@ mod tests {
                 text: msg,
                 structured: None,
                 terminate: false,
+                media: Vec::new(),
             })
         }
     }
@@ -505,6 +506,7 @@ mod tests {
                 text: "ran".to_owned(),
                 structured: None,
                 terminate: false,
+                media: Vec::new(),
             })
         }
     }
@@ -618,6 +620,7 @@ mod tests {
                 text: text.to_owned(),
                 structured: None,
                 terminate: false,
+                media: Vec::new(),
             })
         }
     }

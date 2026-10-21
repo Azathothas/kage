@@ -215,19 +215,34 @@ impl McpTool {
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
         let mut parts: Vec<String> = Vec::new();
-        if let Some(items) = value.get("content").and_then(|c| c.as_array()) {
-            parts.extend(items.iter().filter_map(render_content));
+        let mut media = Vec::new();
+        let mut structured = value.clone();
+        if let Some(items) = structured.get_mut("content").and_then(|c| c.as_array_mut()) {
+            for item in items {
+                match tool_media(item) {
+                    // The bytes ride `media`; the structured copy keeps
+                    // only the item's type, so they are not sent twice.
+                    Some(found) => {
+                        if let Some(item) = item.as_object_mut() {
+                            item.remove("data");
+                        }
+                        media.push(found);
+                    }
+                    None => parts.extend(render_content(item)),
+                }
+            }
         }
         if parts.is_empty()
-            && let Some(structured) = value.get("structuredContent")
+            && let Some(found) = value.get("structuredContent")
         {
-            parts.push(serde_json::to_string_pretty(structured).unwrap_or_default());
+            parts.push(serde_json::to_string_pretty(found).unwrap_or_default());
         }
         ToolOutput {
             is_error,
             text: parts.join("\n"),
-            structured: Some(value.clone()),
+            structured: Some(structured),
             terminate: false,
+            media,
         }
     }
 }
@@ -282,9 +297,25 @@ impl Tool for McpTool {
                 text: e.to_string(),
                 structured: None,
                 terminate: false,
+                media: Vec::new(),
             }),
         }
     }
+}
+
+/// An `image` or `audio` item of a `tools/call` result as tool media,
+/// so the image shows with the call and reaches a model that reads it.
+fn tool_media(item: &serde_json::Value) -> Option<kage_core::ToolMedia> {
+    let kind = item.get("type").and_then(|t| t.as_str())?;
+    if kind != "image" && kind != "audio" {
+        return None;
+    }
+    let data = item.get("data").and_then(|d| d.as_str())?;
+    let mime = item.get("mimeType").and_then(|m| m.as_str())?;
+    (!data.is_empty()).then(|| kage_core::ToolMedia {
+        mime: mime.to_owned(),
+        data: data.to_owned(),
+    })
 }
 
 /// Render one `content` item of a `tools/call` result as text. Text
@@ -551,11 +582,28 @@ mod tests {
     }
 
     #[test]
-    fn images_keep_a_marker_with_their_mime_type() {
-        let text = rendered(&serde_json::json!({
-            "content": [{ "type": "image", "data": "AAAA", "mimeType": "image/png" }],
+    fn images_ride_the_result_as_media_and_leave_the_raw_copy() {
+        let output = McpTool::render_result(&serde_json::json!({
+            "content": [
+                { "type": "text", "text": "drawn" },
+                { "type": "image", "data": "AAAA", "mimeType": "image/png" },
+                { "type": "video", "mimeType": "video/mp4" },
+            ],
         }));
-        assert_eq!(text, "[mcp image content (image/png) omitted]");
+        assert_eq!(
+            output.media,
+            [kage_core::ToolMedia {
+                mime: "image/png".into(),
+                data: "AAAA".into(),
+            }]
+        );
+        assert_eq!(
+            output.text,
+            "drawn\n[mcp video content (video/mp4) omitted]"
+        );
+        let raw = output.structured.unwrap();
+        assert!(raw["content"][1].get("data").is_none(), "{raw}");
+        assert_eq!(raw["content"][1]["type"], "image");
     }
 
     #[test]

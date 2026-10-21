@@ -349,8 +349,14 @@ return {
   is_error    = false,
   text        = "ok",
   structured  = { count = 7 },
+  media       = { { mime = "image/png", data = png_base64 } },
 }
 ```
+
+`media` lists images the tool produced, each with its MIME type and
+base64 bytes. They show with the call in every client, stay in the
+session, and reach a model that reads images in tool results; other
+models read a note naming them.
 
 ### `kage.override_tool(spec)`
 

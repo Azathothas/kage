@@ -457,23 +457,19 @@ fn convert_tool_result_parts(
     names_by_id: &HashMap<String, String>,
     declared: &[ToolSpec],
 ) -> Vec<Value> {
-    blocks
+    kage_core::tool_results(blocks)
         .iter()
-        .filter_map(|c| match c {
-            Content::ToolResultBlock {
-                call_id, output, ..
-            } => {
-                let name = names_by_id
-                    .get(&call_id.0)
-                    .map_or_else(|| tool_name_from_call_id(call_id, declared), String::as_str);
-                Some(serde_json::json!({
-                    "functionResponse": {
-                        "name": name,
-                        "response": {"output": output},
-                    },
-                }))
-            }
-            _ => None,
+        .map(|result| {
+            let call_id = result.call_id;
+            let name = names_by_id
+                .get(&call_id.0)
+                .map_or_else(|| tool_name_from_call_id(call_id, declared), String::as_str);
+            serde_json::json!({
+                "functionResponse": {
+                    "name": name,
+                    "response": {"output": result.text_with_media_notes()},
+                },
+            })
         })
         .collect()
 }

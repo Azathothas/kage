@@ -1570,7 +1570,7 @@ impl ShellApp {
             RowAction::Fork(through) => {
                 self.shell.store.fork(through);
             }
-            RowAction::SaveImage(ix) => self.shell.store.save_image(ix),
+            RowAction::SaveImage(ix, nth) => self.shell.store.save_image(ix, nth),
             RowAction::Rewind(prompt) => {
                 // A rewind drops history, so it asks first, as the
                 // reference does; the dialog carries it out.

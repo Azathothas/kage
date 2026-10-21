@@ -36,6 +36,7 @@ impl Tool for EchoTool {
             text: input.to_string(),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         })
     }
 }
@@ -99,6 +100,7 @@ impl Tool for ProgressTool {
             text: "ok".into(),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         })
     }
 }
@@ -143,6 +145,7 @@ impl Tool for WaitsForDeliveryTool {
             text: if delivered { "live" } else { "buffered" }.into(),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         })
     }
 }
@@ -174,6 +177,7 @@ impl Tool for CallIdTool {
             text: cx.call_id().map(ToString::to_string).unwrap_or_default(),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         })
     }
 }
@@ -216,6 +220,7 @@ impl Tool for AloneTool {
             text: "ran".into(),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         })
     }
 }
@@ -617,6 +622,7 @@ fn before_tool_call_can_short_circuit_execution() {
                     text: "blocked by host policy".into(),
                     structured: None,
                     terminate: false,
+                    media: Vec::new(),
                 })
             } else {
                 None
@@ -715,6 +721,7 @@ impl Tool for SleepTool {
             text: format!("slept_{}", self.millis),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         })
     }
 }
@@ -819,6 +826,7 @@ fn parallel_dispatch_honors_before_tool_call_short_circuit() {
                     text: "blocked".into(),
                     structured: None,
                     terminate: false,
+                    media: Vec::new(),
                 })
             } else {
                 None
@@ -1158,6 +1166,7 @@ impl Tool for ConfineProbe {
             text: cx.is_confined().to_string(),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         })
     }
 }
@@ -1217,6 +1226,7 @@ impl Hooks for BlockErr {
             text: "blocked".into(),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         })
     }
 }
@@ -1423,6 +1433,7 @@ impl Tool for EscapeProbe {
             text: resolved.display().to_string(),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         })
     }
 }
@@ -1516,6 +1527,7 @@ impl Tool for SleepsIgnoringCancel {
             text: "finished".into(),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         })
     }
 }
@@ -1641,6 +1653,7 @@ impl Tool for ConcurrencyProbe {
             text: "done".into(),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         })
     }
 }
@@ -1730,6 +1743,7 @@ impl Tool for ChattyTool {
             text: "done".into(),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         })
     }
 }
@@ -1790,6 +1804,7 @@ impl Tool for StructuredTool {
             text: "text".into(),
             structured: Some(serde_json::json!({ "blob": "x".repeat(size) })),
             terminate: false,
+            media: Vec::new(),
         })
     }
 }
@@ -1856,4 +1871,39 @@ fn oversized_structured_output_is_dropped_from_the_end_event() {
             other => panic!("unexpected content: {other:?}"),
         }
     }
+}
+
+#[test]
+fn a_tool_s_images_follow_its_result_in_history() {
+    let output = ToolOutput {
+        text: "drawn".into(),
+        media: vec![
+            kage_core::ToolMedia {
+                mime: "image/png".into(),
+                data: "iVBO".into(),
+            },
+            kage_core::ToolMedia {
+                mime: "audio/wav".into(),
+                data: "UklG".into(),
+            },
+        ],
+        ..ToolOutput::default()
+    };
+    let message = result_message(ToolCallId::new("c1"), output, MessageId::new());
+    assert_eq!(message.role, Role::ToolResult);
+    assert!(matches!(
+        &message.content[0],
+        Content::ToolResultBlock { output, .. }
+            if output == "drawn\n[audio/wav output is not kept]"
+    ));
+    assert_eq!(
+        message.content[1],
+        Content::Image {
+            source: MediaSource::Base64 {
+                data: "iVBO".into()
+            },
+            mime: "image/png".into(),
+        }
+    );
+    assert_eq!(message.content.len(), 2);
 }

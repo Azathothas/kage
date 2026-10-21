@@ -76,6 +76,7 @@ impl WriteTool {
                 ),
                 structured: None,
                 terminate: false,
+                media: Vec::new(),
             });
         }
 
@@ -99,6 +100,7 @@ impl WriteTool {
             text: format!("wrote {bytes} bytes to {}", input.path),
             structured: Some(serde_json::json!({"path": input.path, "bytes": bytes})),
             terminate: false,
+            media: Vec::new(),
         })
     }
 }

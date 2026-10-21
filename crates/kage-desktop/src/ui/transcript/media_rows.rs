@@ -70,6 +70,23 @@ pub fn render_media(ui: &mut egui::Ui, mime: &str, data: &str) -> (egui::Respons
     (response, save)
 }
 
+/// The images a tool call's content carries, as `(mime, base64)`.
+#[must_use]
+pub fn tool_images(call: &kage_client::ToolCallItem) -> Vec<(&str, &str)> {
+    call.content
+        .iter()
+        .filter_map(|content| match content {
+            kage_client::wire::ToolCallContent::Content(chunk) => match &chunk.content {
+                kage_client::wire::ContentBlock::Image(blob) => {
+                    Some((blob.mime_type.as_str(), blob.data.as_str()))
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
 /// A `bytes://` URI that names the image by its content, so two images
 /// never share a texture and one image keeps its texture across frames
 /// and rebuilds. Hashing the ends and the length keeps it cheap on

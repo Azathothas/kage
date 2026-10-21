@@ -320,6 +320,7 @@ mod tests {
             text: "hi".into(),
             structured: None,
             terminate: false,
+            media: Vec::new(),
         };
         let back = h.after_tool_call("read", out.clone());
         assert_eq!(back, out);
@@ -342,6 +343,7 @@ mod tests {
                 text: "ok".into(),
                 structured: None,
                 terminate: false,
+                media: Vec::new(),
             },
         );
         assert_eq!(h.tool_calls_before, vec!["shell"]);

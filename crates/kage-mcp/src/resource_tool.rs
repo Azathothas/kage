@@ -161,6 +161,7 @@ fn output(is_error: bool, text: String) -> ToolOutput {
         text,
         structured: None,
         terminate: false,
+        media: Vec::new(),
     }
 }
 

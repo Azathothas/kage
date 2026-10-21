@@ -250,6 +250,7 @@ impl Tool for TodoListTool {
                 text: render(&self.todos.read()),
                 structured: None,
                 terminate: false,
+                media: Vec::new(),
             });
         };
         let todos: Vec<TodoItem> = serde_json::from_value(sent)?;
@@ -263,6 +264,7 @@ impl Tool for TodoListTool {
             },
             structured: Some(serde_json::to_value(&stored)?),
             terminate: false,
+            media: Vec::new(),
         })
     }
 }

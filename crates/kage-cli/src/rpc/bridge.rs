@@ -1240,6 +1240,7 @@ pub(super) fn to_update(
         }
         LoopEvent::ToolCallEnd { id, output } => {
             let mut content = vec![text_content(output.text.clone())];
+            content.extend(output.media.iter().map(tool_media_content));
             if !output.is_error
                 && let Some(call) = seen.get(&id.to_string())
             {
@@ -1582,6 +1583,15 @@ pub(super) fn agent_usage(node: &AgentNode) -> Option<SubagentUsage> {
 /// The model a subagent update reports of `node`, once known.
 pub(super) fn agent_model(node: &AgentNode) -> Option<String> {
     (!node.model.is_empty()).then(|| node.model.clone())
+}
+
+/// A tool's image (or audio) as content of its `tool_call_update`.
+fn tool_media_content(media: &kage_core::ToolMedia) -> ToolCallContent {
+    let kind = kage_core::Modality::of_mime(&media.mime).unwrap_or(kage_core::Modality::Image);
+    ToolCallContent::Content(MessageChunk {
+        content: media_block(kind, &media.mime, &media.data),
+        meta: None,
+    })
 }
 
 /// The ACP block that carries media a model produced: `image` or

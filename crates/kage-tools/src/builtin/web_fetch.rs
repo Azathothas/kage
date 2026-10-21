@@ -172,6 +172,7 @@ fn fetch(agent: &ureq::Agent, parsed: &url::Url, max_bytes: u64) -> Result<ToolO
             "truncated": truncated,
         })),
         terminate: false,
+        media: Vec::new(),
     })
 }
 

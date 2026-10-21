@@ -285,6 +285,7 @@ mod tests {
                 text,
                 structured: None,
                 terminate: false,
+                media: Vec::new(),
             })
         }
     }
