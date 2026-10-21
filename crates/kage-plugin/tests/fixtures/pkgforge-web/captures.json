@@ -1,0 +1,39 @@
+{
+ "query": {
+  "url": "http://example.com/",
+  "from": null,
+  "to": null,
+  "limit": 2
+ },
+ "captures": [
+  {
+   "timestamp": "20020120142510",
+   "original_url": "http://example.com/",
+   "status": 200,
+   "mimetype": "text/html",
+   "digest": "HT2DYGA5UKZCPBSFVCV3JOBXGW2G5UUA",
+   "record_length": 1792,
+   "provider": "wayback",
+   "replay": "https://archive.web.pkgforge.dev/capture/20020120142510/http://example.com/?provider=wayback"
+  },
+  {
+   "timestamp": "20020328012821",
+   "original_url": "http://www.example.com/",
+   "status": 200,
+   "mimetype": "text/html",
+   "digest": "UY3I2DT2AMWAY6DECFCFYMT5ZOTFHUCH",
+   "record_length": 481,
+   "provider": "wayback",
+   "replay": "https://archive.web.pkgforge.dev/capture/20020328012821/http://www.example.com/?provider=wayback"
+  }
+ ],
+ "duplicates": 0,
+ "more": true,
+ "next_from": null,
+ "cursor": "WyJ3YXliYWNrIiwiZUp4THpzX1ZTYTFJekMzSVNkWFVWekF5TURBeU1EYXlNREEwc2pBeUJBQl9ZQWVQIl0",
+ "next": "https://archive.web.pkgforge.dev/captures?url=http%3A%2F%2Fexample.com%2F&limit=2&provider=wayback&cursor=WyJ3YXliYWNrIiwiZUp4THpzX1ZTYTFJekMzSVNkWFVWekF5TURBeU1EYXlNREEwc2pBeUJBQl9ZQWVQIl0",
+ "misses": [],
+ "provider": "wayback",
+ "account": "keyless",
+ "cached": false
+}

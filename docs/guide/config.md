@@ -83,7 +83,8 @@ scrub_env = []
 # the engine `web_search` asks: "duckduckgo" (the default, no key),
 # "searxng", a SearXNG instance at `url` that allows the json format,
 # or "brave", the Brave Search API with the key in `api_key_env`
-# (default BRAVE_API_KEY).
+# (default BRAVE_API_KEY). The pkgforge-web plugin replaces the tool
+# with its own (see /plugins/pkgforge-web).
 # engine = "searxng"
 # url = "https://searx.example.org"
 # engine = "brave"

@@ -1,0 +1,689 @@
+{
+ "search.web.pkgforge.dev": {
+  "openapi": "3.1.0",
+  "info": {
+   "title": "search: web search, brokered",
+   "version": "b39f3ad27617"
+  },
+  "paths": {
+   "/search": {
+    "get": {
+     "operationId": "search_get",
+     "x-route-id": "search:get",
+     "parameters": [
+      {
+       "name": "q",
+       "in": "query",
+       "required": true,
+       "schema": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 400
+       }
+      },
+      {
+       "name": "count",
+       "in": "query",
+       "required": false,
+       "schema": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 10
+       }
+      },
+      {
+       "name": "freshness",
+       "in": "query",
+       "required": false,
+       "schema": {
+        "type": "string",
+        "enum": [
+         "day",
+         "week",
+         "month",
+         "year"
+        ]
+       }
+      },
+      {
+       "name": "include_domains",
+       "in": "query",
+       "required": false,
+       "schema": {
+        "type": "string"
+       }
+      },
+      {
+       "name": "exclude_domains",
+       "in": "query",
+       "required": false,
+       "schema": {
+        "type": "string"
+       }
+      },
+      {
+       "name": "raw",
+       "in": "query",
+       "required": false,
+       "schema": {
+        "type": "string",
+        "enum": [
+         "true",
+         "false",
+         "1",
+         "0"
+        ]
+       }
+      },
+      {
+       "name": "provider",
+       "in": "query",
+       "required": false,
+       "schema": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+       }
+      },
+      {
+       "name": "rank",
+       "in": "query",
+       "required": false,
+       "schema": {
+        "type": "string",
+        "enum": [
+         "reranked",
+         "provider"
+        ],
+        "default": "reranked"
+       }
+      }
+     ]
+    }
+   }
+  }
+ },
+ "read.web.pkgforge.dev": {
+  "openapi": "3.1.0",
+  "info": {
+   "title": "read: a page as Markdown",
+   "version": "6abd733c92f0"
+  },
+  "paths": {
+   "/": {
+    "get": {
+     "operationId": "read_query",
+     "x-route-id": "read-query",
+     "parameters": [
+      {
+       "name": "url",
+       "in": "query",
+       "required": true,
+       "schema": {
+        "type": "string",
+        "format": "uri"
+       }
+      },
+      {
+       "name": "provider",
+       "in": "query",
+       "required": false,
+       "schema": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+       }
+      },
+      {
+       "$ref": "#/components/parameters/query.__mode"
+      },
+      {
+       "$ref": "#/components/parameters/query.__format"
+      },
+      {
+       "$ref": "#/components/parameters/query.__links"
+      },
+      {
+       "$ref": "#/components/parameters/query.__images"
+      },
+      {
+       "$ref": "#/components/parameters/query.__max-bytes"
+      },
+      {
+       "$ref": "#/components/parameters/query.__provider"
+      },
+      {
+       "$ref": "#/components/parameters/query.__convert-images"
+      },
+      {
+       "$ref": "#/components/parameters/query.__providers"
+      },
+      {
+       "$ref": "#/components/parameters/query.__timeout-ms"
+      }
+     ]
+    }
+   }
+  },
+  "components": {
+   "parameters": {
+    "query.__max-bytes": {
+     "name": "__max-bytes",
+     "in": "query",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "minimum": 4096,
+      "maximum": 10000000
+     }
+    },
+    "query.__links": {
+     "name": "__links",
+     "in": "query",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "enum": [
+       "inline",
+       "referenced"
+      ]
+     }
+    },
+    "query.__images": {
+     "name": "__images",
+     "in": "query",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "enum": [
+       "alt",
+       "keep",
+       "none"
+      ]
+     }
+    },
+    "query.__mode": {
+     "name": "__mode",
+     "in": "query",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "enum": [
+       "markdown",
+       "text",
+       "clean"
+      ]
+     }
+    },
+    "query.__provider": {
+     "name": "__provider",
+     "in": "query",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+     }
+    },
+    "query.__format": {
+     "name": "__format",
+     "in": "query",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "enum": [
+       "markdown",
+       "json"
+      ]
+     }
+    },
+    "query.__providers": {
+     "name": "__providers",
+     "in": "query",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "enum": [
+       "any",
+       "none"
+      ]
+     }
+    },
+    "query.__convert-images": {
+     "name": "__convert-images",
+     "in": "query",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "enum": [
+       "0",
+       "1"
+      ]
+     }
+    },
+    "query.__timeout-ms": {
+     "name": "__timeout-ms",
+     "in": "query",
+     "required": false,
+     "schema": {
+      "type": "integer",
+      "minimum": 1000,
+      "maximum": 25000
+     }
+    }
+   }
+  }
+ },
+ "research.web.pkgforge.dev": {
+  "openapi": "3.1.0",
+  "info": {
+   "title": "research: scholarly works, brokered",
+   "version": "f370e6166598"
+  },
+  "paths": {
+   "/works": {
+    "get": {
+     "operationId": "works_search",
+     "x-route-id": "works-search",
+     "parameters": [
+      {
+       "name": "q",
+       "in": "query",
+       "required": true,
+       "schema": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1000
+       }
+      },
+      {
+       "name": "from",
+       "in": "query",
+       "required": false,
+       "schema": {
+        "type": "string"
+       }
+      },
+      {
+       "name": "to",
+       "in": "query",
+       "required": false,
+       "schema": {
+        "type": "string"
+       }
+      },
+      {
+       "name": "type",
+       "in": "query",
+       "required": false,
+       "schema": {
+        "type": "string",
+        "pattern": "^[a-z][a-z-]{0,39}$"
+       }
+      },
+      {
+       "name": "oa",
+       "in": "query",
+       "required": false,
+       "schema": {
+        "type": "string",
+        "enum": [
+         "true",
+         "false",
+         "1",
+         "0"
+        ]
+       }
+      },
+      {
+       "name": "count",
+       "in": "query",
+       "required": false,
+       "schema": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 10
+       }
+      },
+      {
+       "$ref": "#/components/parameters/query.provider"
+      },
+      {
+       "name": "rank",
+       "in": "query",
+       "required": false,
+       "schema": {
+        "type": "string",
+        "enum": [
+         "reranked",
+         "provider"
+        ],
+        "default": "reranked"
+       }
+      }
+     ]
+    }
+   },
+   "/works/{id}": {
+    "get": {
+     "operationId": "works_lookup",
+     "x-route-id": "works-lookup",
+     "parameters": [
+      {
+       "$ref": "#/components/parameters/query.provider"
+      }
+     ]
+    },
+    "parameters": [
+     {
+      "name": "id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ]
+   }
+  },
+  "components": {
+   "parameters": {
+    "query.provider": {
+     "name": "provider",
+     "in": "query",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+     }
+    }
+   }
+  }
+ },
+ "crawl.web.pkgforge.dev": {
+  "openapi": "3.1.0",
+  "info": {
+   "title": "crawl: provider crawl jobs",
+   "version": "cbaa1f3500e8"
+  },
+  "paths": {
+   "/crawl": {
+    "post": {
+     "operationId": "crawl_submit",
+     "x-route-id": "crawl-submit",
+     "parameters": [
+      {
+       "name": "provider",
+       "in": "query",
+       "required": false,
+       "schema": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+       }
+      }
+     ],
+     "requestBody": {
+      "required": true,
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object",
+         "additionalProperties": false,
+         "required": [
+          "url"
+         ],
+         "properties": {
+          "url": {
+           "type": "string",
+           "format": "uri",
+           "maxLength": 2048
+          },
+          "limit": {
+           "type": "integer",
+           "minimum": 1,
+           "maximum": 100,
+           "default": 10
+          },
+          "render": {
+           "type": "boolean",
+           "default": false
+          },
+          "depth": {
+           "type": "integer",
+           "minimum": 1,
+           "maximum": 10
+          },
+          "provider": {
+           "type": "string",
+           "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+          },
+          "include_paths": {
+           "type": "array",
+           "maxItems": 10,
+           "items": {
+            "type": "string",
+            "pattern": "^/[\\x21-\\x7e]*$",
+            "maxLength": 200
+           }
+          },
+          "exclude_paths": {
+           "type": "array",
+           "maxItems": 10,
+           "items": {
+            "type": "string",
+            "pattern": "^/[\\x21-\\x7e]*$",
+            "maxLength": 200
+           }
+          },
+          "main_content": {
+           "type": "boolean",
+           "default": false
+          }
+         }
+        }
+       }
+      }
+     }
+    }
+   },
+   "/crawl/{job_id}": {
+    "get": {
+     "operationId": "crawl_poll",
+     "x-route-id": "crawl-poll",
+     "parameters": [
+      {
+       "name": "cursor",
+       "in": "query",
+       "required": false,
+       "schema": {
+        "type": "string",
+        "pattern": "^cc_[0-9a-f]{32}$"
+       }
+      }
+     ]
+    },
+    "parameters": [
+     {
+      "name": "job_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "pattern": "^cj_[0-9a-f]{32}$"
+      }
+     }
+    ]
+   }
+  }
+ },
+ "archive.web.pkgforge.dev": {
+  "openapi": "3.1.0",
+  "info": {
+   "title": "archive: web archives, brokered",
+   "version": "281179ee5d54"
+  },
+  "paths": {
+   "/captures": {
+    "get": {
+     "operationId": "captures",
+     "x-route-id": "captures",
+     "parameters": [
+      {
+       "$ref": "#/components/parameters/query.url"
+      },
+      {
+       "name": "from",
+       "in": "query",
+       "required": false,
+       "schema": {
+        "type": "string",
+        "pattern": "^\\d{1,14}$"
+       }
+      },
+      {
+       "name": "to",
+       "in": "query",
+       "required": false,
+       "schema": {
+        "type": "string",
+        "pattern": "^\\d{1,14}$"
+       }
+      },
+      {
+       "name": "limit",
+       "in": "query",
+       "required": false,
+       "schema": {
+        "type": "integer",
+        "minimum": 1,
+        "default": 100
+       }
+      },
+      {
+       "$ref": "#/components/parameters/query.provider"
+      },
+      {
+       "name": "crawls",
+       "in": "query",
+       "required": false,
+       "schema": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 12
+       }
+      },
+      {
+       "name": "cursor",
+       "in": "query",
+       "required": false,
+       "schema": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]+$",
+        "maxLength": 1024
+       }
+      }
+     ]
+    }
+   },
+   "/closest": {
+    "get": {
+     "operationId": "closest",
+     "x-route-id": "closest",
+     "parameters": [
+      {
+       "$ref": "#/components/parameters/query.url"
+      },
+      {
+       "name": "at",
+       "in": "query",
+       "required": true,
+       "schema": {
+        "type": "string",
+        "pattern": "^\\d{1,14}$"
+       }
+      },
+      {
+       "$ref": "#/components/parameters/query.provider"
+      }
+     ]
+    }
+   },
+   "/capture/{rest}": {
+    "get": {
+     "operationId": "capture",
+     "x-route-id": "capture",
+     "parameters": [
+      {
+       "$ref": "#/components/parameters/query.provider"
+      }
+     ]
+    },
+    "parameters": [
+     {
+      "name": "rest",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string"
+      }
+     }
+    ]
+   },
+   "/save": {
+    "post": {
+     "operationId": "save",
+     "x-route-id": "save",
+     "parameters": [
+      {
+       "name": "url",
+       "in": "query",
+       "required": true,
+       "schema": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 2048
+       }
+      }
+     ]
+    }
+   },
+   "/save/{job}": {
+    "get": {
+     "operationId": "save_status",
+     "x-route-id": "save-status"
+    },
+    "parameters": [
+     {
+      "name": "job",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$"
+      }
+     }
+    ]
+   }
+  },
+  "components": {
+   "parameters": {
+    "query.url": {
+     "name": "url",
+     "in": "query",
+     "required": true,
+     "schema": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+     }
+    },
+    "query.provider": {
+     "name": "provider",
+     "in": "query",
+     "required": false,
+     "schema": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+     }
+    }
+   }
+  }
+ }
+}

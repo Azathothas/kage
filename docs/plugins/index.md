@@ -116,3 +116,5 @@ Type `:hello` or `/hello`. You should see a transient toast.
   environment variables and network access
 - [Examples](/plugins/examples): longer plugins that demonstrate
   the patterns
+- [pkgforge web](/plugins/pkgforge-web): web search, pages as
+  Markdown, papers, crawls and web archives from web.pkgforge.dev

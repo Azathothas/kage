@@ -55,6 +55,7 @@ export default defineConfig({
           { text: "capabilities", link: "/plugins/capabilities" },
           { text: "editor setup", link: "/plugins/editor" },
           { text: "examples", link: "/plugins/examples" },
+          { text: "pkgforge web", link: "/plugins/pkgforge-web" },
         ],
       },
       {

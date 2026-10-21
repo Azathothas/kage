@@ -1,0 +1,21 @@
+{
+ "query": {
+  "url": "http://example.com/",
+  "at": "20020101000000",
+  "at_asked": "2002"
+ },
+ "closest": {
+  "timestamp": "20020120142510",
+  "original_url": "http://example.com/",
+  "status": 200,
+  "mimetype": null,
+  "digest": null,
+  "record_length": null,
+  "provider": "wayback",
+  "replay": "https://archive.web.pkgforge.dev/capture/20020120142510/http://example.com/?provider=wayback"
+ },
+ "misses": [],
+ "provider": "wayback",
+ "account": "keyless",
+ "cached": false
+}

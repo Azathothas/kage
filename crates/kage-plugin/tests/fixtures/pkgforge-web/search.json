@@ -1,0 +1,29 @@
+{
+ "query": "rust ureq",
+ "results": [
+  {
+   "url": "https://docs.rs/ureq/latest/ureq/",
+   "title": "ureq - Rust",
+   "snippet": "ureq - Rust\n\n# Crate ureq Copy item path\n\nExpand description\n\n \n\nA simple, safe HTTP client.\n\nUreq\u2019s first priority is being easy for you to use. It\u2019s great for anyone who wants a low-overhead HTTP client that just gets the job done. Works very well with HTTP APIs. Its features include cookies, JSON, HTTP proxies, HTTPS, charset decoding, and is based on the API of the `http` crate.\n\nUreq is in pure Rust for safety and ease of understanding. It forbids `unsafe` code. It uses blocking I/O instead of async I/O, because that keeps the API simple and keeps dependencies to a minimum. For TLS, ureq uses rustls or native-tls.\n\nSee the changelog for details of recent releases.\n\n...\n\n## \u00a7 Usage\n\nIn its simplest form, ureq looks like this:\n\n```\nlet body: String = ureq::get(\"http://example.com\")\n    .header(\"Example-Header\", \"header value\")\n    .call()?\n    .body_mut()\n    .read_to_string()?;\n```\n\nFor more involved tasks, you\u2019ll want to create an `Agent`. An Agent holds a connection pool for",
+   "published": null,
+   "published_source": null,
+   "extra": {
+    "rank": 0.9897938966751099
+   }
+  },
+  {
+   "url": "https://crates.io/crates/ureq",
+   "title": "ureq",
+   "snippet": "# ureq\n\nSimple, safe HTTP client\n\n- Version: 3.4.2\n- Repository ... https://github.com/algesten/ureq\n- Total downloads: 235183097\n- Recent downloads: 72116438\n- Dependents: 4390\n- Created: 2018-06-22T08:25:15.267842Z\n- Updated: 2026-09-13T13:47:40.862114Z",
+   "published": null,
+   "published_source": null,
+   "extra": {
+    "rank": 0.00804012082517147
+   }
+  }
+ ],
+ "provider": "exa",
+ "account": "exa-as",
+ "cached": false,
+ "rank": "reranked(bge-reranker-base@binding)"
+}
