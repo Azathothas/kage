@@ -46,6 +46,7 @@ changelog_include = [
   "kage-core",
   "kage-desktop",
   "kage-jsonrpc",
+  "kage-kura",
   "kage-loop",
   "kage-mcp",
   "kage-plugin",
@@ -73,6 +74,10 @@ version_group = "kage"
 
 [[package]]
 name = "kage-jsonrpc"
+version_group = "kage"
+
+[[package]]
+name = "kage-kura"
 version_group = "kage"
 
 [[package]]
