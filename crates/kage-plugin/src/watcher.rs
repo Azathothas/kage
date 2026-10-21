@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use notify::event::ModifyKind;
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
 use crate::error::PluginError;
@@ -49,13 +50,13 @@ struct Scope {
 }
 
 impl Scope {
-    fn matches(&self, path: &Path) -> bool {
+    fn matches(&self, kind: EventKind, path: &Path) -> bool {
         let lua = path.extension().is_some_and(|ext| ext == "lua");
         self.init.as_deref() == Some(path)
             || self
                 .plugins
                 .as_deref()
-                .is_some_and(|dir| in_plugins(dir, path, lua))
+                .is_some_and(|dir| in_plugins(dir, path, lua, kind))
             || lua
                 && self
                     .modules
@@ -67,7 +68,7 @@ impl Scope {
 /// Whether `path` under the plugins directory `dir` belongs to a plugin:
 /// a script, a package directory, a manifest, or a Lua file inside a
 /// directory that holds one.
-fn in_plugins(dir: &Path, path: &Path, lua: bool) -> bool {
+fn in_plugins(dir: &Path, path: &Path, lua: bool, kind: EventKind) -> bool {
     let Ok(rest) = path.strip_prefix(dir) else {
         return false;
     };
@@ -79,7 +80,14 @@ fn in_plugins(dir: &Path, path: &Path, lua: bool) -> bool {
         return false;
     }
     if parts.clone().next().is_none() {
-        return lua || path.extension().is_none();
+        // A package directory counts when it appears, goes, or is
+        // renamed. Windows also reports it changed whenever a file in
+        // it is written, which that file's own event already decides.
+        let touched = matches!(
+            kind,
+            EventKind::Modify(ModifyKind::Any | ModifyKind::Data(_) | ModifyKind::Metadata(_))
+        );
+        return lua || path.extension().is_none() && !touched;
     }
     let manifest = crate::package::MANIFEST;
     path.file_name().is_some_and(|name| name == manifest)
@@ -142,7 +150,9 @@ impl PluginWatcher {
         let mut watcher = RecommendedWatcher::new(
             move |res: notify::Result<Event>| {
                 let Ok(event) = res else { return };
-                if is_meaningful_kind(event.kind) && event.paths.iter().any(|p| filter.matches(p)) {
+                if is_meaningful_kind(event.kind)
+                    && event.paths.iter().any(|p| filter.matches(event.kind, p))
+                {
                     dirty_for_handler.store(true, Ordering::Relaxed);
                 }
             },
