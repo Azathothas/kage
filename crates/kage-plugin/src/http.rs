@@ -20,7 +20,8 @@
 //!
 //! `get` / `post` / `delete` give up after `timeout_secs` seconds
 //! (default 30); `post_stream` bounds only the connection phases so
-//! the stream itself can run long.
+//! the stream itself can run long. Inside a tool call that was
+//! cancelled, `get` / `post` / `delete` raise instead of starting.
 //!
 //! `get` / `post` / `delete` return `{ status, body, content_type, truncated, headers }`,
 //! where `headers` maps each lowercase response header name to its
@@ -123,6 +124,9 @@ fn build_http_table(lua: &Lua) -> mlua::Result<Table> {
 fn simple_function(lua: &Lua, method: &'static str, name: &'static str) -> mlua::Result<Function> {
     lua.create_async_function(
         move |lua, (url, opts): (String, Option<Table>)| async move {
+            if crate::tools::cancelled(&lua) {
+                return Err(crate::tools::cancelled_error());
+            }
             let fail = |err: String| mlua::Error::external(format!("{name} {url}: {err}"));
             let request = build_request(opts.as_ref()).map_err(fail)?;
             let max_bytes = request.max_bytes.unwrap_or(DEFAULT_MAX_BYTES);

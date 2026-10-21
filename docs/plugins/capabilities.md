@@ -186,7 +186,9 @@ capped at `max_bytes` (2 MB by default, 32 MB for `post_stream`), and
 `truncated` is `true` when the cap was hit. `headers` maps each
 response header name, in lowercase, to its value; a header sent more
 than once has its values joined with `, `. `post_stream` bounds only
-connecting and sending, so a long stream is never cut off.
+connecting and sending, so a long stream is never cut off. Inside a
+tool's `execute`, `get`, `post` and `delete` raise instead of starting
+once the tool call is cancelled.
 
 Every request passes the same SSRF check as the built-in `web_fetch`
 tool: the scheme must be `http` or `https` and the host must resolve to

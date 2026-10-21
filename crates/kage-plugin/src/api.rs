@@ -257,7 +257,8 @@ fn now_ms(_: &Lua, (): ()) -> mlua::Result<i64> {
 const SLEEP_MS_MAX: i64 = 500;
 
 /// Inside a driven coroutine (see [`crate::tasks`]) the wait yields the
-/// owner thread to other work; anywhere else it blocks.
+/// owner thread to other work; anywhere else it blocks, and inside a
+/// tool call it raises once the call is cancelled.
 async fn sleep_ms(lua: Lua, ms: i64) -> mlua::Result<()> {
     if ms < 0 {
         return Err(mlua::Error::external(
@@ -276,8 +277,10 @@ async fn sleep_ms(lua: Lua, ms: i64) -> mlua::Result<()> {
         if crate::tasks::is_driven(&lua) {
             crate::tasks::sleep(duration).await;
         } else {
-            std::thread::sleep(duration);
+            crate::tools::sleep(&lua, duration)?;
         }
+    } else if crate::tools::cancelled(&lua) {
+        return Err(crate::tools::cancelled_error());
     }
     Ok(())
 }

@@ -13,16 +13,21 @@
 //! and the runtime stores a [`LuaTool`] that the host can hand to a
 //! `ToolRegistry`. Tool execution runs on the runtime's Lua owner
 //! thread; the calling thread waits for the result and gives up as
-//! soon as the tool's cancel flag is set.
+//! soon as the tool's cancel flag is set. The running handler sees the
+//! flag too: `kage.sleep_ms` and the `kage.http` helpers raise once it
+//! is set (see [`cancelled`]), so a polling loop stops and frees the
+//! owner thread instead of running on after its caller left.
 
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-use kage_core::{Risk, ToolOutput, sync::lock};
+use kage_core::{CancelFlag, Risk, ToolOutput, sync::lock};
 use kage_tools::{Tool, ToolContext, ToolError};
 use mlua::{Function, Lua, RegistryKey, Table, Value};
 
 use crate::api::{LogLevel, SharedHostLog, json_to_lua, lua_to_json};
 use crate::error::PluginError;
+use crate::guard::RestoreOnDrop;
 use crate::host::{self, LuaHost, WeakHost};
 use crate::watchdog;
 
@@ -94,8 +99,9 @@ impl Tool for LuaTool {
         let name = self.name.clone();
         let sink = Arc::clone(&self.sink);
         let key = Arc::clone(&self.handler_key);
+        let cancel = cx.cancel_flag().clone();
         let reply = self.host.call_cancellable(cx.cancel_flag(), move |lua| {
-            run_tool(lua, &name, &sink, &key, &input)
+            run_tool(lua, &name, &sink, &key, &input, &cancel)
         });
         match reply {
             Ok(Some(result)) => result,
@@ -114,19 +120,26 @@ fn run_tool(
     sink: &SharedHostLog,
     handler_key: &RegistryKey,
     input: &serde_json::Value,
+    cancel: &CancelFlag,
 ) -> Result<ToolOutput, ToolError> {
     let func: Function = lua
         .registry_value(handler_key)
         .map_err(|e| ToolError::Other(format!("plugin tool '{name}': {e}")))?;
     let lua_input = json_to_lua(lua, input).map_err(|e| ToolError::InvalidInput(e.to_string()))?;
-    match watchdog::run(lua, watchdog::BUDGET, || func.call::<Value>(lua_input)) {
+    let returned = with_cancel(lua, cancel.clone(), || {
+        watchdog::run(lua, watchdog::BUDGET, || func.call::<Value>(lua_input))
+    });
+    match returned {
         Ok(returned) => Ok(value_to_output(returned)),
         Err(err) => {
-            let mut s = lock(sink);
-            s.log(
-                LogLevel::Error,
-                &format!("plugin tool '{name}' raised: {err}"),
-            );
+            // A cancelled call's caller already stopped waiting, so the
+            // error that stopped the handler is no news to log.
+            if !cancel.is_cancelled() {
+                lock(sink).log(
+                    LogLevel::Error,
+                    &format!("plugin tool '{name}' raised: {err}"),
+                );
+            }
             Ok(ToolOutput {
                 is_error: true,
                 text: err.to_string(),
@@ -135,6 +148,55 @@ fn run_tool(
             })
         }
     }
+}
+
+/// The cancel flag of the tool call whose handler is running, held in
+/// the Lua state's app data for the length of the call.
+struct ToolCancel(CancelFlag);
+
+/// Run `f` with `cancel` as the running tool call's flag, then put the
+/// previous one back, also when `f` unwinds.
+fn with_cancel<R>(lua: &Lua, cancel: CancelFlag, f: impl FnOnce() -> R) -> R {
+    let mut previous = lua.set_app_data(ToolCancel(cancel));
+    let restore = RestoreOnDrop::arm(|| match previous.take() {
+        Some(previous) => drop(lua.set_app_data(previous)),
+        None => drop(lua.remove_app_data::<ToolCancel>()),
+    });
+    let out = f();
+    drop(restore);
+    out
+}
+
+/// Whether the tool call whose handler is running was cancelled. False
+/// outside a tool call.
+pub(crate) fn cancelled(lua: &Lua) -> bool {
+    lua.app_data_ref::<ToolCancel>()
+        .is_some_and(|cancel| cancel.0.is_cancelled())
+}
+
+/// The error `kage.sleep_ms` and `kage.http` raise inside a cancelled
+/// tool call.
+pub(crate) fn cancelled_error() -> mlua::Error {
+    mlua::Error::external("the tool call was cancelled")
+}
+
+/// Block the owner thread for `duration`. Inside a tool call the wait
+/// ends early when the call is cancelled, and then raises, so the
+/// handler stops at its next sleep instead of polling on unheard.
+pub(crate) fn sleep(lua: &Lua, duration: Duration) -> mlua::Result<()> {
+    let cancel = lua
+        .app_data_ref::<ToolCancel>()
+        .map(|cancel| cancel.0.clone());
+    let Some(cancel) = cancel else {
+        std::thread::sleep(duration);
+        return Ok(());
+    };
+    let watch = cancel.watch();
+    let _ = watch.receiver().recv_timeout(duration);
+    if cancel.is_cancelled() {
+        return Err(cancelled_error());
+    }
+    Ok(())
 }
 
 fn value_to_output(value: Value) -> ToolOutput {
@@ -435,6 +497,98 @@ mod tests {
         let cx = ToolContext::new(&workdir, &cancel);
         let err = tool.execute(json!({}), &cx).unwrap_err();
         assert!(matches!(err, ToolError::Cancelled));
+    }
+
+    /// Cancel a call to the registered tool `name` 200 ms after it
+    /// starts, and return how long the owner thread then took to come
+    /// free.
+    fn cancel_mid_call(rt: &PluginRuntime, name: &str) -> Duration {
+        let tool = rt
+            .registered_tools()
+            .into_iter()
+            .find(|tool| tool.name() == name)
+            .unwrap();
+        let cancel = CancelFlag::new();
+        let canceller = {
+            let cancel = cancel.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(Duration::from_millis(200));
+                cancel.cancel();
+            })
+        };
+        let workdir = PathBuf::from("/tmp");
+        let cx = ToolContext::new(&workdir, &cancel);
+        let err = tool.execute(json!({}), &cx).unwrap_err();
+        assert!(matches!(err, ToolError::Cancelled));
+        let cancelled_at = std::time::Instant::now();
+        rt.eval("return true").unwrap();
+        canceller.join().unwrap();
+        cancelled_at.elapsed()
+    }
+
+    #[test]
+    fn a_cancelled_call_stops_its_handler_at_the_next_sleep() {
+        let (rec, rt) = crate::testing::runtime_with_recording(PathBuf::from("."));
+        rt.eval(
+            r"
+            naps = 0
+            kage.register_tool({
+                name = 'poll',
+                description = 'naps for ten seconds',
+                schema = {},
+                execute = function()
+                    for _ = 1, 200 do
+                        kage.sleep_ms(50)
+                        naps = naps + 1
+                    end
+                    return 'done'
+                end,
+            })
+            ",
+        )
+        .unwrap();
+        let freed_after = cancel_mid_call(&rt, "poll");
+        assert!(freed_after < Duration::from_secs(2), "{freed_after:?}");
+        let naps = rt.eval("return naps").unwrap().as_i64().unwrap();
+        assert!(naps < 100, "the loop ran on after the cancel: {naps} naps");
+        assert!(
+            rec.snapshot().logs.is_empty(),
+            "a cancelled call logs nothing: {:?}",
+            rec.snapshot().logs
+        );
+        // The flag belonged to that call alone: a later sleep outside
+        // any tool call runs normally.
+        rt.eval("kage.sleep_ms(1)").unwrap();
+    }
+
+    #[test]
+    fn a_cancelled_call_starts_no_request() {
+        let mut caps = std::collections::BTreeMap::new();
+        caps.insert("p".to_owned(), vec!["net".to_owned()]);
+        let rt = PluginRuntime::builder().capabilities(caps).build().unwrap();
+        rt.eval_plugin(
+            "p",
+            r"
+            kage.request_capabilities({ 'net' })
+            kage.register_tool({
+                name = 'fetch_after_cancel',
+                description = 'waits for its cancel, then asks for a page',
+                schema = {},
+                execute = function()
+                    for _ = 1, 250 do
+                        if not pcall(kage.sleep_ms, 20) then break end
+                    end
+                    local ok, err = pcall(kage.http.get, 'https://example.com/')
+                    refused = not ok and tostring(err) or 'the request ran'
+                end,
+            })
+            ",
+        )
+        .unwrap();
+        cancel_mid_call(&rt, "fetch_after_cancel");
+        let refused = rt.eval_plugin("p", "return refused").unwrap();
+        let refused = refused.as_string().unwrap().to_string_lossy();
+        assert!(refused.contains("cancelled"), "{refused}");
     }
 
     #[test]

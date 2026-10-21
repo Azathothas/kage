@@ -91,6 +91,9 @@ it. Lines logged while kage starts show as `kage:log` blocks instead.
 Sleep for `ms` milliseconds, at most 500 per call. Loop the call to
 wait longer. Inside a provider's `stream` handler the wait lets other
 plugin work run meanwhile; anywhere else it holds the Lua thread.
+Inside a tool's `execute` it raises once the tool call is cancelled,
+so a loop that polls with it stops at its next sleep and frees the
+Lua thread.
 
 ### `kage.json.encode(value)` / `kage.json.decode(raw: string)`
 

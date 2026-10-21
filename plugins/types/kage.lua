@@ -625,7 +625,9 @@ function kage.requires(spec) end
 
 --- Sleep the calling thread for `ms` milliseconds. Capped at
 --- 500 ms per call so a host-side cancel never has to wait a
---- multi-second sleep; loop the call to wait longer.
+--- multi-second sleep; loop the call to wait longer. Inside a
+--- tool's `execute`, it raises once the tool call is
+--- cancelled, so a polling loop stops there.
 --- Since API 1.
 ---@param ms integer
 function kage.sleep_ms(ms) end
