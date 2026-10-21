@@ -50,8 +50,10 @@ transcript_on_exit = "full"
 # override the plugin directory (default ~/.config/kage/plugins/).
 # `~` expands to home, and relative paths resolve against ~/.config/kage.
 # dir = "/path/to/plugins"
-# if non-empty, only these plugin file stems load.
-enabled = []
+# plugins that do not load, by file stem or package directory. a
+# project config can add to this list but never shorten it.
+# (`enabled`, an allowlist, still works but is deprecated.)
+disabled = []
 
 [shell]
 # Program the shell tool runs commands with: `bash` (the default on

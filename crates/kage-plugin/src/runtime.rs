@@ -181,10 +181,11 @@ pub(crate) struct EvalState {
     current_plugin: CurrentPlugin,
     /// What each package's manifest lets it hold. Rebuilt on every load.
     ceilings: Ceilings,
-    /// Load allowlist by plugin file stem. When non-empty, the loader
-    /// evaluates only the listed plugins and skips the rest; empty means
-    /// load every discovered plugin.
-    enabled: Vec<String>,
+    /// Deprecated load allowlist by plugin name. When non-empty, the
+    /// loader evaluates only the listed plugins and skips the rest.
+    pub(crate) enabled: Vec<String>,
+    /// Plugins the loader skips, by name.
+    disabled: Vec<String>,
     /// Per-plugin settings by file stem, surfaced to the named plugin
     /// through `kage.plugin_config()`. Each plugin sees only its slice.
     plugin_config: BTreeMap<String, serde_json::Value>,
@@ -217,8 +218,8 @@ impl EvalState {
         &self.sink
     }
 
-    pub(crate) fn is_enabled(&self, stem: &str) -> bool {
-        self.enabled.is_empty() || self.enabled.iter().any(|name| name == stem)
+    pub(crate) fn is_enabled(&self, name: &str) -> bool {
+        kage_core::config::plugin_loads(&self.enabled, &self.disabled, name)
     }
 
     /// Cap what plugin `name` may hold at `declared`, its manifest's
@@ -318,6 +319,7 @@ pub struct PluginRuntimeBuilder {
     capabilities: BTreeMap<String, Vec<String>>,
     credential_lookup: env::CredentialLookup,
     enabled: Vec<String>,
+    disabled: Vec<String>,
     plugin_config: BTreeMap<String, serde_json::Value>,
     state_dir: Option<PathBuf>,
     script_budget: u64,

@@ -44,12 +44,21 @@ impl PluginRuntimeBuilder {
         self
     }
 
-    /// Set the load allowlist (from `[plugins] enabled`), keyed by
-    /// plugin file stem. Empty (the default) loads every discovered
-    /// plugin; non-empty loads only the named plugins.
+    /// Set the deprecated load allowlist (from `[plugins] enabled`),
+    /// by plugin name. Empty (the default) loads every discovered
+    /// plugin; non-empty loads only the named plugins, and each load
+    /// warns that the list is deprecated.
     #[must_use]
     pub fn enabled(mut self, enabled: Vec<String>) -> Self {
         self.enabled = enabled;
+        self
+    }
+
+    /// Set the plugins that do not load (from `[plugins] disabled`), by
+    /// plugin name.
+    #[must_use]
+    pub fn disabled(mut self, disabled: Vec<String>) -> Self {
+        self.disabled = disabled;
         self
     }
 
@@ -325,6 +334,7 @@ impl PluginRuntimeBuilder {
             current_plugin,
             ceilings,
             enabled: self.enabled,
+            disabled: self.disabled,
             plugin_config: self.plugin_config,
             state_dir: self.state_dir,
             script_budget: self.script_budget,

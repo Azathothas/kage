@@ -256,6 +256,9 @@ impl Config {
     /// `plugins.capabilities` tables are dropped unless the project is
     /// trusted (see [`crate::trust`]). The project file's `providers` and
     /// `acp` tables never apply: those are only read from the user config.
+    /// `plugins.disabled` is the union of the user's list and the
+    /// winning layer's, so a project can disable a plugin but never
+    /// enable one the user disabled.
     pub fn load_layered(workdir: &Path) -> Result<Self> {
         let cfg = Self::load_layered_raw(workdir)?;
         cfg.validate()?;
@@ -273,7 +276,20 @@ impl Config {
             None => figment.merge(Toml::file(Self::project_path(workdir))),
         };
         figment = figment.merge(Env::prefixed("KAGE_").split("__"));
-        Ok(figment.extract()?)
+        let mut cfg: Self = figment.extract()?;
+        // A later layer replaces an array, so a project's `disabled`
+        // would otherwise re-enable what the user turned off.
+        if let Some(user) = Self::default_path() {
+            let user_disabled: Vec<String> = Figment::from(Toml::file(user))
+                .extract_inner("plugins.disabled")
+                .unwrap_or_default();
+            for name in user_disabled {
+                if !cfg.plugins.disabled.contains(&name) {
+                    cfg.plugins.disabled.push(name);
+                }
+            }
+        }
+        Ok(cfg)
     }
 
     /// Set each `(key path, value)` pair in the TOML file at `path`,
@@ -791,7 +807,15 @@ pub struct PluginsConfig {
     /// `~` expands to the home directory; relative paths resolve
     /// against the kage config directory.
     pub dir: Option<PathBuf>,
-    /// If non-empty, only plugins in this allowlist are loaded.
+    /// Plugins that do not load, by name. A project config can add to
+    /// the user's list but never shorten it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub disabled: Vec<String>,
+    /// Deprecated allowlist: when non-empty, only the plugins it names
+    /// load. Superseded by [`Self::disabled`]; still honored so older
+    /// configs keep working, and dropped by the first toggle that
+    /// writes `disabled`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub enabled: Vec<String>,
     /// Per-plugin elevated capability grants, keyed by plugin file
     /// stem (`[plugins.capabilities] my-plugin = ["session_write"]`).
@@ -809,6 +833,22 @@ pub struct PluginsConfig {
     /// allowed.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub config: BTreeMap<String, serde_json::Value>,
+}
+
+impl PluginsConfig {
+    /// Whether the plugin `name` loads under these lists.
+    #[must_use]
+    pub fn loads(&self, name: &str) -> bool {
+        plugin_loads(&self.enabled, &self.disabled, name)
+    }
+}
+
+/// Whether plugin `name` loads: it is not `disabled`, and the
+/// deprecated `enabled` allowlist is empty or names it.
+#[must_use]
+pub fn plugin_loads(enabled: &[String], disabled: &[String], name: &str) -> bool {
+    !disabled.iter().any(|entry| entry == name)
+        && (enabled.is_empty() || enabled.iter().any(|entry| entry == name))
 }
 
 /// The `[shell]` table: shell tool policy.
@@ -1261,6 +1301,37 @@ mod tests {
             jail.set_env("KAGE_UI__THEME", "catppuccin-mocha");
             let cfg = Config::load(jail.directory().join("config.toml").as_path()).unwrap();
             assert_eq!(cfg.ui.theme, "catppuccin-mocha");
+            Ok(())
+        });
+    }
+
+    #[test]
+    fn a_project_adds_to_the_disabled_plugins_but_never_removes_one() {
+        let _globals = process_globals();
+        figment::Jail::expect_with(|jail| {
+            let home = jail.directory().to_path_buf();
+            jail.set_env("HOME", home.to_string_lossy().as_ref());
+            let xdg_config = home.join(".config");
+            jail.set_env("XDG_CONFIG_HOME", xdg_config.to_string_lossy().as_ref());
+            let io = |e: std::io::Error| figment::Error::from(e.to_string());
+            std::fs::create_dir_all(xdg_config.join("kage")).map_err(io)?;
+            std::fs::write(
+                xdg_config.join("kage/config.toml"),
+                "[plugins]\ndisabled = [\"spy\"]\n",
+            )
+            .map_err(io)?;
+            let project = home.join("project");
+            std::fs::create_dir_all(project.join(".kage")).map_err(io)?;
+            std::fs::write(
+                project.join(".kage/config.toml"),
+                "[plugins]\ndisabled = [\"noisy\"]\n",
+            )
+            .map_err(io)?;
+            let cfg =
+                Config::load_layered(&project).map_err(|e| figment::Error::from(e.to_string()))?;
+            assert_eq!(cfg.plugins.disabled, ["noisy", "spy"]);
+            assert!(!cfg.plugins.loads("spy"));
+            assert!(cfg.plugins.loads("other"));
             Ok(())
         });
     }

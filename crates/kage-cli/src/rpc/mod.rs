@@ -69,7 +69,7 @@ use kage_acp::acp::{
     SwarmResumeRequest, SwarmResumeResponse, ThemesRequest, ThemesResult,
 };
 use kage_acp::agent::{Agent, PromptContext};
-use kage_core::config::{Config, McpServer as McpSpec};
+use kage_core::config::{Config, McpServer as McpSpec, PluginsConfig};
 use kage_core::permissions::PermissionAction;
 use kage_core::protocol::{AgentTree, Command, CommandKind, Delivery, RunOutcome};
 use kage_core::sync::lock;
@@ -91,10 +91,10 @@ use crate::engine::{Background, Recorder, SessionSpec, SubscriptionId};
 const REDACTED: &str = "<redacted>";
 
 /// The plugins in `dir`, scripts and packages, by name, each marked
-/// with whether the `enabled` allowlist lets it load. A missing or
-/// unreadable directory has none, and an entry that cannot load is left
-/// out (the load reports it).
-fn installed_plugins(dir: &Path, enabled: &[String]) -> Vec<InstalledPlugin> {
+/// with whether `plugins` lets it load. A missing or unreadable
+/// directory has none, and an entry that cannot load is left out (the
+/// load reports it).
+fn installed_plugins(dir: &Path, plugins: &PluginsConfig) -> Vec<InstalledPlugin> {
     let found = kage_plugin::package::discover(dir).unwrap_or_default();
     let mut plugins: Vec<InstalledPlugin> = found
         .into_iter()
@@ -103,7 +103,7 @@ fn installed_plugins(dir: &Path, enabled: &[String]) -> Vec<InstalledPlugin> {
             Found::Invalid { .. } => None,
         })
         .map(|name| InstalledPlugin {
-            enabled: enabled.is_empty() || enabled.contains(&name),
+            enabled: plugins.loads(&name),
             name,
         })
         .collect();
@@ -582,7 +582,7 @@ impl Agent for CliAcpAgent {
             crate::auth::AuthStore::load().unwrap_or_else(|_| crate::auth::AuthStore::empty());
         let provider_keys = probe::provider_keys(&config, &store);
         let installed_plugins = crate::plugins_dir()
-            .map(|dir| installed_plugins(&dir, &config.plugins.enabled))
+            .map(|dir| installed_plugins(&dir, &config.plugins))
             .unwrap_or_default();
         Ok(ConfigGetResult {
             providers: config.providers,

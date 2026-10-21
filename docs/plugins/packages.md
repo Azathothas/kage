@@ -113,6 +113,6 @@ The link's name is the package name, so it must match `name` in
 `plugin.toml`. Removing the plugin from kage removes only the link,
 never your checkout.
 
-`[plugins] enabled`, `[plugins.capabilities]` and
+`[plugins] disabled`, `[plugins.capabilities]` and
 `[plugins.config.<name>]` name a package by its directory, the same
 way they name a script by its file stem.

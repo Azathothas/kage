@@ -195,6 +195,7 @@ struct ToolRules {
 #[serde(default)]
 struct Plugins {
     dir: Option<String>,
+    disabled: Vec<String>,
     enabled: Vec<String>,
     capabilities: BTreeMap<String, Vec<String>>,
     config: BTreeMap<String, serde_json::Value>,
@@ -443,7 +444,7 @@ fn plugin_rows(snapshot: &Snapshot) -> Vec<PluginRow> {
                 .map(|plugin| plugin.enabled);
             let state = match enabled {
                 Some(true) => "loads",
-                Some(false) => "skipped by the allowlist",
+                Some(false) => "disabled",
                 None => "not installed",
             };
             let detail = [
@@ -465,27 +466,25 @@ fn plugin_rows(snapshot: &Snapshot) -> Vec<PluginRow> {
         .collect()
 }
 
-/// The `[plugins] enabled` allowlist after turning plugin `name` on or
-/// off. An empty list loads every plugin, so turning one off lists every
-/// other installed plugin; names the list holds stay. `None` when the
-/// list would end up empty, which would load every plugin instead of
-/// none.
-fn toggled_allowlist(snapshot: &Snapshot, name: &str, on: bool) -> Option<Vec<String>> {
-    let mut list = if snapshot.plugins.enabled.is_empty() {
-        snapshot
-            .installed_plugins
-            .iter()
-            .map(|plugin| plugin.name.clone())
-            .collect()
-    } else {
-        snapshot.plugins.enabled.clone()
-    };
-    list.retain(|entry| entry != name);
-    if on {
+/// The `[plugins] disabled` list after turning plugin `name` on or off.
+/// It starts from every plugin that does not load now, so a config still
+/// on the deprecated `enabled` allowlist keeps loading the same plugins
+/// once that list is dropped.
+fn toggled_disabled(snapshot: &Snapshot, name: &str, on: bool) -> Vec<String> {
+    let mut list: Vec<String> = snapshot
+        .installed_plugins
+        .iter()
+        .filter(|plugin| !plugin.enabled)
+        .map(|plugin| plugin.name.clone())
+        .chain(snapshot.plugins.disabled.iter().cloned())
+        .filter(|entry| entry != name)
+        .collect();
+    if !on {
         list.push(name.to_owned());
     }
     list.sort();
-    (!list.is_empty()).then_some(list)
+    list.dedup();
+    list
 }
 
 /// What the config pages edit in place: the provider chooser, the
@@ -2116,10 +2115,16 @@ pub fn plugins_page(
             false,
             palette,
         );
-        let loaded = if plugins.enabled.is_empty() {
+        let loaded = if !plugins.enabled.is_empty() {
+            format!(
+                "Only these load: {} (a deprecated allowlist; switching a plugin moves \
+                 the rest to the disabled list)",
+                plugins.enabled.join(", ")
+            )
+        } else if plugins.disabled.is_empty() {
             "Every plugin in the directory loads".to_owned()
         } else {
-            format!("Only these load: {}", plugins.enabled.join(", "))
+            format!("Every plugin loads but {}", plugins.disabled.join(", "))
         };
         list_row(
             ui,
@@ -2252,14 +2257,8 @@ fn plugin_row(
     for cap in &row.caps {
         name.push(Part::Badge(cap.clone(), Tone::plain(palette)));
     }
-    let allowlist = row
-        .enabled
-        .map(|on| (on, toggled_allowlist(snapshot, &row.name, !on)));
-    let trail = match &allowlist {
-        Some((on, list)) => Trail::Switch {
-            on: *on,
-            live: list.is_some(),
-        },
+    let trail = match row.enabled {
+        Some(on) => Trail::Switch { on, live: true },
         None => Trail::None,
     };
     let lead = Lead::Icon(if expanded {
@@ -2281,8 +2280,13 @@ fn plugin_row(
             state.plugin_open = (!expanded).then(|| row.name.clone());
         }
         Hit::Switch => {
-            if let Some((_, Some(list))) = allowlist {
-                store.config_set(&["plugins", "enabled"], Some(serde_json::json!(list)));
+            if let Some(on) = row.enabled {
+                let list = toggled_disabled(snapshot, &row.name, !on);
+                let value = (!list.is_empty()).then(|| serde_json::json!(list));
+                store.config_set(&["plugins", "disabled"], value);
+                if !snapshot.plugins.enabled.is_empty() {
+                    store.config_set(&["plugins", "enabled"], None);
+                }
             }
         }
         Hit::Nothing => {}
@@ -2385,7 +2389,7 @@ fn grant_chip(ui: &mut egui::Ui, cap: &str, granted: bool, palette: &Palette) ->
 
 #[cfg(test)]
 mod tests {
-    use super::{RuleAdd, Snapshot, plugin_rows, provider_rows, rule_added, toggled_allowlist};
+    use super::{RuleAdd, Snapshot, plugin_rows, provider_rows, rule_added, toggled_disabled};
 
     #[test]
     fn an_added_glob_writes_the_whole_rule() {
@@ -2435,22 +2439,24 @@ mod tests {
         assert_eq!(
             lines,
             [
-                ("clock", "skipped by the allowlist"),
+                ("clock", "disabled"),
                 ("gone", "not installed \u{b7} has settings"),
                 ("tokps", "loads \u{b7} capabilities granted in config.toml"),
             ]
         );
         assert_eq!(rows[2].caps, ["session_write"]);
         assert_eq!(rows[1].enabled, None);
+        assert!(toggled_disabled(&snapshot, "clock", true).is_empty());
         assert_eq!(
-            toggled_allowlist(&snapshot, "clock", true).unwrap(),
+            toggled_disabled(&snapshot, "tokps", false),
             ["clock", "tokps"]
         );
-        assert_eq!(toggled_allowlist(&snapshot, "tokps", false), None);
         let open = Snapshot::parse(&serde_json::json!({
+            "plugins": {"disabled": ["gone"]},
             "installedPlugins": [{"name": "a", "enabled": true}, {"name": "b", "enabled": true}]
         }));
-        assert_eq!(toggled_allowlist(&open, "a", false).unwrap(), ["b"]);
+        assert_eq!(toggled_disabled(&open, "a", false), ["a", "gone"]);
+        assert_eq!(toggled_disabled(&open, "gone", true), Vec::<String>::new());
     }
 
     #[test]

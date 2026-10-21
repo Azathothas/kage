@@ -36,8 +36,9 @@ pub struct LoadReport {
     pub loaded: Vec<PathBuf>,
     /// Plugins that failed, paired with the error encountered.
     pub failed: Vec<(PathBuf, String)>,
-    /// Plugins skipped because a non-empty `[plugins] enabled`
-    /// allowlist did not name them. Reported, never silently dropped.
+    /// Plugins skipped because `[plugins] disabled` names them or the
+    /// deprecated `[plugins] enabled` allowlist leaves them out.
+    /// Reported, never silently dropped.
     pub skipped: Vec<PathBuf>,
     /// Outcome of the trusted `init.lua`, or `None` when there was none
     /// to load.
@@ -117,6 +118,13 @@ fn load_plugins(lua: &Lua, dir: &Path, eval: &EvalState) -> Result<LoadReport, P
         source: err,
     })?;
     let sink = eval.sink();
+    if !eval.enabled.is_empty() {
+        lock(sink).log(
+            LogLevel::Warn,
+            "[plugins] enabled is deprecated: list the plugins to leave out in \
+             [plugins] disabled instead",
+        );
+    }
     let mut report = LoadReport::default();
     for entry in found {
         let (path, result) = match entry {
@@ -145,7 +153,7 @@ fn load_plugins(lua: &Lua, dir: &Path, eval: &EvalState) -> Result<LoadReport, P
             Found::Script { name, path } | Found::Package { name, dir: path } => {
                 lock(sink).log(
                     LogLevel::Info,
-                    &format!("plugin '{name}' not in [plugins] enabled allowlist; skipped"),
+                    &format!("plugin '{name}' is disabled in [plugins]; skipped"),
                 );
                 report.skipped.push(path);
                 continue;
@@ -268,6 +276,48 @@ mod tests {
         assert_eq!(commands.len(), 1);
         assert!(rt.registered_commands().iter().any(|c| c.name() == "t"));
         assert!(!rt.registered_commands().iter().any(|c| c.name() == "o"));
+    }
+
+    #[test]
+    fn disabled_plugins_are_skipped_and_the_rest_load() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("on.lua"), "").unwrap();
+        fs::write(dir.path().join("off.lua"), "").unwrap();
+        let (rec, sink) = crate::testing::recording_sink();
+        let rt = PluginRuntime::builder()
+            .sink(sink)
+            .disabled(vec!["off".to_owned()])
+            .build()
+            .unwrap();
+        let report = load_dir(dir.path(), &rt).unwrap();
+        assert_eq!(report.loaded.len(), 1);
+        assert!(report.skipped[0].ends_with("off.lua"));
+        assert!(
+            !rec.snapshot()
+                .logs
+                .iter()
+                .any(|(_, msg)| msg.contains("deprecated"))
+        );
+    }
+
+    #[test]
+    fn the_deprecated_allowlist_still_applies_and_warns() {
+        let dir = tempdir().unwrap();
+        fs::write(dir.path().join("a.lua"), "").unwrap();
+        fs::write(dir.path().join("b.lua"), "").unwrap();
+        let (rec, sink) = crate::testing::recording_sink();
+        let rt = PluginRuntime::builder()
+            .sink(sink)
+            .enabled(vec!["a".to_owned(), "b".to_owned()])
+            .disabled(vec!["b".to_owned()])
+            .build()
+            .unwrap();
+        let report = load_dir(dir.path(), &rt).unwrap();
+        assert_eq!(report.loaded.len(), 1);
+        assert!(report.loaded[0].ends_with("a.lua"));
+        assert!(rec.snapshot().logs.iter().any(|(level, msg)| {
+            *level == LogLevel::Warn && msg.contains("[plugins] enabled is deprecated")
+        }));
     }
 
     #[test]

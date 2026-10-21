@@ -12,8 +12,8 @@ Registrations, mappings, autocmds, slots and timers do not carry over
 a reload. Option values and highlight overrides do.
 
 A plugin that fails to load logs an error and the others still load.
-A non-empty `[plugins] enabled` list in `config.toml` loads only the
-plugins it names, by file stem or package directory.
+`[plugins] disabled` in `config.toml` lists plugins that do not load,
+by file stem or package directory.
 
 For your own setup, use `~/.config/kage/init.lua` instead. It uses the
 same API, is trusted, and loads after every plugin, so it has the last

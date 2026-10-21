@@ -653,8 +653,8 @@ fn check_plugins(workdir: &Path) -> Check {
     // Use a no-op sink so plugin errors don't pollute stderr while we
     // diagnose - we surface them in our own line instead.
     let sink: kage_plugin::SharedHostLog = Arc::new(Mutex::new(Box::new(SilentSink)));
-    let enabled = match Config::load_layered_raw(workdir) {
-        Ok(c) => c.plugins.enabled,
+    let plugins = match Config::load_layered_raw(workdir) {
+        Ok(c) => c.plugins,
         Err(err) => {
             return Check {
                 name: "plugins",
@@ -667,7 +667,8 @@ fn check_plugins(workdir: &Path) -> Check {
     let runtime = match PluginRuntime::builder()
         .sink(Arc::clone(&sink))
         .workdir(workdir.to_path_buf())
-        .enabled(enabled)
+        .enabled(plugins.enabled.clone())
+        .disabled(plugins.disabled)
         .config(json!({}))
         .build()
     {
@@ -681,21 +682,26 @@ fn check_plugins(workdir: &Path) -> Check {
             };
         }
     };
+    let deprecated = !plugins.enabled.is_empty();
     match kage_plugin::load_dir(&dir, &runtime) {
         Ok(report) if report.failed.is_empty() => Check {
             name: "plugins",
-            status: Status::Ok,
+            status: if deprecated { Status::Warn } else { Status::Ok },
             body: if report.skipped.is_empty() {
                 format!("{} loaded from {}", report.loaded.len(), dir.display())
             } else {
                 format!(
-                    "{} loaded, {} skipped by [plugins] enabled, from {}",
+                    "{} loaded, {} disabled, from {}",
                     report.loaded.len(),
                     report.skipped.len(),
                     dir.display()
                 )
             },
-            hint: None,
+            hint: deprecated.then(|| {
+                "[plugins] enabled is deprecated: list the plugins to leave out in \
+                 [plugins] disabled"
+                    .into()
+            }),
         },
         Ok(report) => {
             let first = report

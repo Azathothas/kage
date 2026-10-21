@@ -9,7 +9,7 @@ use kage_acp::acp::{
     ContentBlock, EmbeddedResource, McpServer, SessionUpdate, ToolCallStatus, ToolKind,
 };
 use kage_core::agents::AgentDefs;
-use kage_core::config::McpServer as McpSpec;
+use kage_core::config::{McpServer as McpSpec, PluginsConfig};
 use kage_core::permissions::{PermissionAction, PermissionsConfig, ToolPermissionRules};
 use kage_core::protocol::{McpServerInfo, McpServerStatus, Usage};
 use kage_core::{
@@ -3189,16 +3189,35 @@ fn installed_plugins_are_the_scripts_and_packages_the_allowlist_marks() {
     std::fs::create_dir(dir.path().join("c")).unwrap();
     std::fs::write(dir.path().join("c/plugin.toml"), "").unwrap();
     std::fs::create_dir(dir.path().join("data")).unwrap();
-    let all = super::installed_plugins(dir.path(), &[]);
+    let all = super::installed_plugins(dir.path(), &PluginsConfig::default());
     let names: Vec<_> = all.iter().map(|p| (p.name.as_str(), p.enabled)).collect();
     assert_eq!(names, [("a", true), ("b", true), ("c", true)]);
-    let only_b = super::installed_plugins(dir.path(), &["b".to_owned()]);
-    let names: Vec<_> = only_b
-        .iter()
-        .map(|p| (p.name.as_str(), p.enabled))
+    let off_a = PluginsConfig {
+        disabled: vec!["a".to_owned()],
+        ..PluginsConfig::default()
+    };
+    let names: Vec<_> = super::installed_plugins(dir.path(), &off_a)
+        .into_iter()
+        .map(|p| (p.name, p.enabled))
         .collect();
-    assert_eq!(names, [("a", false), ("b", true), ("c", false)]);
-    assert!(super::installed_plugins(&dir.path().join("missing"), &[]).is_empty());
+    assert_eq!(
+        names,
+        [("a", false), ("b", true), ("c", true)].map(|(n, on)| (n.to_owned(), on))
+    );
+    let only_b = PluginsConfig {
+        enabled: vec!["b".to_owned()],
+        ..PluginsConfig::default()
+    };
+    let names: Vec<_> = super::installed_plugins(dir.path(), &only_b)
+        .into_iter()
+        .map(|p| (p.name, p.enabled))
+        .collect();
+    assert_eq!(
+        names,
+        [("a", false), ("b", true), ("c", false)].map(|(n, on)| (n.to_owned(), on))
+    );
+    let missing = dir.path().join("missing");
+    assert!(super::installed_plugins(&missing, &PluginsConfig::default()).is_empty());
 }
 
 #[test]

@@ -104,13 +104,15 @@ pub enum KeySource {
     Unneeded,
 }
 
-/// One plugin file in the plugin directory.
+/// One plugin in the plugin directory: a script or a package.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstalledPlugin {
-    /// The file stem, which `config.toml` names the plugin by.
+    /// The file stem or package directory, which `config.toml` names
+    /// the plugin by.
     pub name: String,
-    /// Whether the `[plugins] enabled` allowlist lets it load.
+    /// Whether `[plugins] disabled` (and the deprecated `enabled`
+    /// allowlist) let it load.
     pub enabled: bool,
 }
 

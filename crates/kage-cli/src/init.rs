@@ -49,9 +49,9 @@ editor = "modeless"
 
 [plugins]
 # Defaults: `~/.config/kage/plugins/`. Set `dir` to an absolute path
-# to point elsewhere. `enabled = ["foo", "bar"]` restricts loading
-# to a named subset; an empty list loads everything in the dir.
-enabled = []
+# to point elsewhere. Every plugin in the dir loads except the ones
+# `disabled` names, such as `disabled = ["foo"]`.
+disabled = []
 
 [shell]
 # Program the shell tool and user `!` commands run with: `bash` (the
@@ -391,7 +391,7 @@ mod tests {
         assert_eq!(cfg.ui.theme, "default");
         assert!(cfg.ui.mouse);
         assert_eq!(cfg.ui.editor, kage_core::config::EditorMode::Modeless);
-        assert!(cfg.plugins.enabled.is_empty());
+        assert!(cfg.plugins.disabled.is_empty());
         assert!(cfg.keybindings.bindings.is_empty());
     }
 

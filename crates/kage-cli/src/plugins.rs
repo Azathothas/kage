@@ -128,6 +128,7 @@ fn runtime_builder(
         .workdir(workdir.to_path_buf())
         .capabilities(plugins_cfg.capabilities)
         .enabled(plugins_cfg.enabled)
+        .disabled(plugins_cfg.disabled)
         .plugin_config(plugins_cfg.config)
         .credential_lookup(std::sync::Arc::new(|provider: &str| {
             crate::auth::AuthStore::load()
@@ -146,10 +147,7 @@ fn report_plugins(report: &LoadReport) {
         eprintln!("kage: plugin {} failed to load: {err}", path.display());
     }
     for path in &report.skipped {
-        eprintln!(
-            "kage: plugin {} skipped (not in [plugins] enabled)",
-            path.display()
-        );
+        eprintln!("kage: plugin {} skipped (disabled)", path.display());
     }
 }
 

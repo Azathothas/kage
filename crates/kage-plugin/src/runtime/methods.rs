@@ -25,6 +25,7 @@ impl PluginRuntime {
             capabilities: BTreeMap::new(),
             credential_lookup: std::sync::Arc::new(|_: &str| -> Option<String> { None }),
             enabled: Vec::new(),
+            disabled: Vec::new(),
             plugin_config: BTreeMap::new(),
             state_dir: None,
             script_budget: watchdog::BUDGET,
