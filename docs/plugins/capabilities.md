@@ -164,7 +164,8 @@ tokens are secrets of the same class as environment secrets.
 
 ```lua
 local res = kage.http.get("https://example.com/status")
--- res = { status = 200, body = "...", content_type = "...", truncated = false }
+-- res = { status = 200, body = "...", content_type = "...", truncated = false,
+--         headers = { ["retry-after"] = "7", ... } }
 ```
 
 Attaches the request helpers to `kage.http`. Without the grant,
@@ -179,11 +180,13 @@ Attaches the request helpers to `kage.http`. Without the grant,
 
 `opts` may carry `headers`, `body`, `json` (a table sent as JSON,
 instead of `body`), `max_bytes` and `timeout_secs`. `get`, `post` and
-`delete` return `{ status, body, content_type, truncated }` and give up
-after `timeout_secs` seconds (30 by default). The body is capped at
-`max_bytes` (2 MB by default, 32 MB for `post_stream`), and `truncated`
-is `true` when the cap was hit. `post_stream` bounds only connecting
-and sending, so a long stream is never cut off.
+`delete` return `{ status, body, content_type, truncated, headers }`
+and give up after `timeout_secs` seconds (30 by default). The body is
+capped at `max_bytes` (2 MB by default, 32 MB for `post_stream`), and
+`truncated` is `true` when the cap was hit. `headers` maps each
+response header name, in lowercase, to its value; a header sent more
+than once has its values joined with `, `. `post_stream` bounds only
+connecting and sending, so a long stream is never cut off.
 
 Every request passes the same SSRF check as the built-in `web_fetch`
 tool: the scheme must be `http` or `https` and the host must resolve to

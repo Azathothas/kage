@@ -22,7 +22,9 @@
 //! (default 30); `post_stream` bounds only the connection phases so
 //! the stream itself can run long.
 //!
-//! `get` / `post` / `delete` return `{ status, body, content_type, truncated }`.
+//! `get` / `post` / `delete` return `{ status, body, content_type, truncated, headers }`,
+//! where `headers` maps each lowercase response header name to its
+//! value, repeated fields joined with `, `.
 //! `post_stream` returns `{ status, content_type }` and dispatches each
 //! decoded SSE frame to the callback as `{ event = name, data = payload }`
 //! (multi-line `data:` lines are joined with `\n`). The callback is
@@ -219,6 +221,7 @@ struct SimpleResult {
     status: u16,
     body: String,
     content_type: String,
+    headers: Vec<(String, String)>,
     truncated: bool,
 }
 
@@ -228,7 +231,30 @@ fn simple_result_to_table(lua: &Lua, r: &SimpleResult) -> mlua::Result<Table> {
     table.set("body", r.body.clone())?;
     table.set("content_type", r.content_type.clone())?;
     table.set("truncated", r.truncated)?;
+    let headers = lua.create_table()?;
+    for (name, value) in &r.headers {
+        headers.set(name.as_str(), value.as_str())?;
+    }
+    table.set("headers", headers)?;
     Ok(table)
+}
+
+/// One `(name, value)` pair per response header name. Names are
+/// lowercase; a field sent more than once has its values joined with
+/// `, `, and bytes that are not UTF-8 are replaced rather than dropping
+/// the header.
+fn header_pairs(headers: &ureq::http::HeaderMap) -> Vec<(String, String)> {
+    headers
+        .keys()
+        .map(|name| {
+            let values: Vec<_> = headers
+                .get_all(name)
+                .iter()
+                .map(|value| String::from_utf8_lossy(value.as_bytes()))
+                .collect();
+            (name.as_str().to_owned(), values.join(", "))
+        })
+        .collect()
 }
 
 /// Reads `reader` up to `max_bytes` plus one lookahead byte, reporting
@@ -255,6 +281,12 @@ fn simple_request(
     let timeout = spec.and_then(|s| s.timeout).unwrap_or(DEFAULT_TIMEOUT);
     let (parsed, agent) = prepare(url, Some(timeout))?;
     let response = dispatch(method, &agent, parsed.as_str(), spec)?;
+    Ok(read_simple(response, max_bytes))
+}
+
+/// The status, headers and body, capped at `max_bytes`, of a response
+/// to `get`, `post` or `delete`.
+fn read_simple(response: ureq::http::Response<ureq::Body>, max_bytes: u64) -> SimpleResult {
     let status = response.status().as_u16();
     let content_type = response
         .headers()
@@ -262,13 +294,15 @@ fn simple_request(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_owned();
+    let headers = header_pairs(response.headers());
     let (buf, truncated) = read_capped(response.into_body().into_reader(), max_bytes);
-    Ok(SimpleResult {
+    SimpleResult {
         status,
         body: String::from_utf8_lossy(&buf).into_owned(),
         content_type,
+        headers,
         truncated,
-    })
+    }
 }
 
 fn stream_request(
@@ -842,6 +876,14 @@ mod tests {
     /// name is never looked up, which is the point: the caller picks a
     /// name that cannot resolve.
     fn one_connect_proxy() -> (u16, std::thread::JoinHandle<()>) {
+        one_connect_proxy_answering(
+            b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok",
+        )
+    }
+
+    /// [`one_connect_proxy`], answering the request inside the tunnel
+    /// with `answer`.
+    fn one_connect_proxy_answering(answer: &'static [u8]) -> (u16, std::thread::JoinHandle<()>) {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let handle = std::thread::spawn(move || {
@@ -864,13 +906,57 @@ mod tests {
                     break;
                 }
             }
-            std::io::Write::write_all(
-                &mut sock,
-                b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok",
-            )
-            .unwrap();
+            std::io::Write::write_all(&mut sock, answer).unwrap();
         });
         (port, handle)
+    }
+
+    #[test]
+    fn a_response_carries_its_headers() {
+        let (port, server) = one_connect_proxy_answering(
+            b"HTTP/1.1 429 Too Many Requests\r\n\
+              Content-Type: application/problem+json\r\n\
+              Retry-After: 7\r\n\
+              X-Web-Provider: one\r\n\
+              x-web-provider: two\r\n\
+              content-length: 2\r\n\
+              connection: close\r\n\r\n{}",
+        );
+        let proxy = ureq::Proxy::new(&format!("http://127.0.0.1:{port}")).unwrap();
+        let url = "http://kage-proxy-test.invalid/x";
+        let (parsed, agent) = super::prepare_with(url, None, Some(proxy)).unwrap();
+        let response = super::dispatch("GET", &agent, parsed.as_str(), None).unwrap();
+        let result = super::read_simple(response, super::DEFAULT_MAX_BYTES);
+        server.join().unwrap();
+        assert_eq!(result.status, 429);
+        assert_eq!(result.body, "{}");
+        let header = |name: &str| {
+            result
+                .headers
+                .iter()
+                .find(|(n, _)| n == name)
+                .map(|(_, v)| v.as_str())
+        };
+        assert_eq!(header("retry-after"), Some("7"));
+        assert_eq!(header("content-type"), Some("application/problem+json"));
+        assert_eq!(header("x-web-provider"), Some("one, two"));
+        assert_eq!(header("Retry-After"), None, "names are lowercase");
+
+        let lua = Lua::new();
+        let table = super::simple_result_to_table(&lua, &result).unwrap();
+        let headers: Table = table.get("headers").unwrap();
+        assert_eq!(headers.get::<String>("retry-after").unwrap(), "7");
+    }
+
+    #[test]
+    fn a_header_value_that_is_not_utf8_is_kept() {
+        let mut headers = ureq::http::HeaderMap::new();
+        headers.insert(
+            "x-name",
+            ureq::http::HeaderValue::from_bytes(b"caf\xe9").unwrap(),
+        );
+        let pairs = super::header_pairs(&headers);
+        assert_eq!(pairs, [("x-name".to_owned(), "caf\u{FFFD}".to_owned())]);
     }
 
     #[test]

@@ -194,7 +194,7 @@ pub(super) const GATED: &[GatedFunc] = &[
                 },
             ],
             ret: Some(
-                "{ status: integer, body: string, content_type: string, truncated: boolean }",
+                "{ status: integer, body: string, content_type: string, truncated: boolean, headers: table<string, string> }",
             ),
         },
     },
@@ -222,7 +222,7 @@ pub(super) const GATED: &[GatedFunc] = &[
                 },
             ],
             ret: Some(
-                "{ status: integer, body: string, content_type: string, truncated: boolean }",
+                "{ status: integer, body: string, content_type: string, truncated: boolean, headers: table<string, string> }",
             ),
         },
     },
@@ -249,7 +249,7 @@ pub(super) const GATED: &[GatedFunc] = &[
                 },
             ],
             ret: Some(
-                "{ status: integer, body: string, content_type: string, truncated: boolean }",
+                "{ status: integer, body: string, content_type: string, truncated: boolean, headers: table<string, string> }",
             ),
         },
     },
