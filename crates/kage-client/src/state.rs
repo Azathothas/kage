@@ -208,6 +208,13 @@ impl Session {
     /// Appends a streamed message or thought chunk, merging it into
     /// the trailing item when that item is of the same kind.
     pub(crate) fn append_chunk(&mut self, chunk: &ContentBlock, assistant: bool) {
+        if let (ContentBlock::Image(blob) | ContentBlock::Audio(blob), true) = (chunk, assistant) {
+            self.items.push(TranscriptItem::Media {
+                mime: blob.mime_type.clone(),
+                data: blob.data.clone(),
+            });
+            return;
+        }
         let Some(text) = chunk.as_text() else {
             return;
         };
@@ -412,6 +419,14 @@ pub enum TranscriptItem {
     Assistant {
         /// The text so far.
         text: String,
+    },
+    /// Media the assistant produced, such as an image, between the
+    /// reply text around it.
+    Media {
+        /// MIME type, such as `image/png`.
+        mime: String,
+        /// The bytes, base64-encoded.
+        data: String,
     },
     /// Assistant reasoning text.
     Thinking {
@@ -633,6 +648,36 @@ mod tests {
                     text: "again".into()
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn an_image_chunk_stands_between_the_reply_text_around_it() {
+        let mut session = Session::new("s1");
+        let image = ContentBlock::Image(crate::wire::BlobContent {
+            data: "iVBO".into(),
+            mime_type: "image/png".into(),
+            uri: None,
+        });
+        session.append_chunk(&ContentBlock::text("here"), true);
+        session.append_chunk(&image, true);
+        session.append_chunk(&ContentBlock::text("done"), true);
+        session.append_chunk(&image, false);
+        assert_eq!(
+            session.items,
+            vec![
+                TranscriptItem::Assistant {
+                    text: "here".into()
+                },
+                TranscriptItem::Media {
+                    mime: "image/png".into(),
+                    data: "iVBO".into(),
+                },
+                TranscriptItem::Assistant {
+                    text: "done".into()
+                },
+            ],
+            "an image in a thought chunk is not the reply's"
         );
     }
 

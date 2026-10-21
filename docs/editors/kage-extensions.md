@@ -61,6 +61,14 @@ the `tool_call_update` that ends each tool call.
 `session/list` entries carry `_meta.kage.parentSessionId` for a
 session forked from another, so a client can draw the fork tree.
 
+Media a model produces, such as the images of a model that draws,
+arrive as standard ACP `image` (or `audio`) blocks in
+`agent_message_chunk`, carrying their bytes as base64, between the text
+chunks around them. A loaded session replays them the same way. The
+bytes ride the stream rather than a `file://` link, so a client that
+does not share the engine's filesystem shows them too. An image whose
+bytes the engine no longer holds replays as a text chunk saying so.
+
 ## sessions an agent started
 
 A subagent's session streams on its own id while it runs. Loading a

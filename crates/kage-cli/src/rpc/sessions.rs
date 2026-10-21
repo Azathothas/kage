@@ -16,7 +16,10 @@ use kage_acp::acp::{
 use kage_acp::agent::{PromptContext, send_update};
 use kage_core::protocol::{AgentNode, AgentState, AgentTree, SwarmMember, TimelineItem};
 use kage_core::sync::lock;
-use kage_core::{Content, LoopEvent, Message, MessageId, Role, SessionId, ToolCallId, ToolOutput};
+use kage_core::{
+    Content, LoopEvent, MediaSource, Message, MessageId, Modality, Role, SessionId, ToolCallId,
+    ToolOutput,
+};
 use kage_jsonrpc::RpcError;
 use kage_loop::TokenBudget;
 use kage_session::{
@@ -719,7 +722,23 @@ fn replay_event(id: MessageId, block: &Content) -> Option<LoopEvent> {
                 ..ToolOutput::default()
             },
         }),
-        Content::Image { .. } | Content::Custom { .. } => None,
+        Content::Image { source, mime } => Some(match source {
+            MediaSource::Base64 { data } => LoopEvent::Media {
+                id,
+                kind: Modality::of_mime(mime).unwrap_or(Modality::Image),
+                mime: mime.clone(),
+                data: data.clone(),
+            },
+            MediaSource::Url { url } => LoopEvent::TextDelta {
+                id,
+                delta: format!("\n![image]({url})\n"),
+            },
+            MediaSource::Blob { .. } => LoopEvent::TextDelta {
+                id,
+                delta: source.missing_note(mime).unwrap_or_default(),
+            },
+        }),
+        Content::Custom { .. } => None,
     }
 }
 
@@ -808,6 +827,45 @@ mod tests {
         };
         assert_eq!(update.tool_call_id, "swarm");
         assert_eq!(update.status, Some(kage_acp::acp::ToolCallStatus::Failed));
+    }
+
+    #[test]
+    fn a_produced_image_replays_as_an_image_chunk() {
+        let image = Content::Image {
+            source: kage_core::MediaSource::Base64 {
+                data: "iVBO".to_owned(),
+            },
+            mime: "image/png".to_owned(),
+        };
+        let gone = Content::Image {
+            source: kage_core::MediaSource::Blob {
+                sha256: "0".repeat(64),
+                size: 10,
+            },
+            mime: "image/png".to_owned(),
+        };
+        let timeline = vec![TimelineItem::Message(Arc::new(Message::new(
+            Role::Assistant,
+            vec![image, gone],
+            None,
+        )))];
+        let chunks: Vec<_> = replay_updates(&timeline)
+            .into_iter()
+            .filter_map(|update| match update {
+                SessionUpdate::AgentMessageChunk(chunk) => Some(chunk.content),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            matches!(&chunks[0], kage_acp::acp::ContentBlock::Image(blob)
+                if blob.data == "iVBO" && blob.mime_type == "image/png"),
+            "{chunks:?}"
+        );
+        assert!(
+            matches!(&chunks[1], kage_acp::acp::ContentBlock::Text(text)
+                if text.text.contains("no longer stored")),
+            "{chunks:?}"
+        );
     }
 
     fn card() -> TimelineItem {

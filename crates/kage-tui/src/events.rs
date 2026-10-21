@@ -12,7 +12,7 @@ use std::sync::{Arc, Mutex};
 use kage_core::agent_report::{AgentText, split_agent_text};
 use kage_core::protocol::{CompactionCounts, TimelineItem};
 use kage_core::resource_block::{self, ResourceRef};
-use kage_core::{Content, LoopError, LoopEvent, Message, MessageId, Role, StopReason};
+use kage_core::{Content, LoopError, LoopEvent, MediaSource, Message, MessageId, Role, StopReason};
 
 use crate::buffer::{Block, Buffer};
 use crate::view::tool_view::ToolPhase;
@@ -45,15 +45,8 @@ pub fn apply_loop_event(buf: &mut Buffer, event: &LoopEvent) {
         }
         LoopEvent::TextDelta { delta, .. } => buf.append_assistant_delta(delta),
         LoopEvent::ThinkingDelta { delta, .. } => buf.append_thinking_delta(delta),
-        LoopEvent::Media {
-            kind, mime, data, ..
-        } => {
-            let bytes = data.len() / 4 * 3;
-            let label = format!(
-                "[{} from the model: {mime}, {}]",
-                kind.as_str(),
-                crate::image::human_bytes(bytes)
-            );
+        LoopEvent::Media { mime, data, .. } => {
+            let label = produced_media_label(mime, data.len() / 4 * 3);
             buf.push_custom("kage:image", label, false);
         }
         LoopEvent::ToolCallArgsDelta {
@@ -165,6 +158,15 @@ fn push_user_message(buf: &mut Buffer, message: &Message) {
         push_user_text(buf, text);
     }
     push_user_image_rows(buf, message);
+}
+
+/// The row that stands for media the model produced: its type and
+/// size, the same live and on replay.
+fn produced_media_label(mime: &str, bytes: usize) -> String {
+    format!(
+        "[{mime} from the model, {}]",
+        crate::image::human_bytes(bytes)
+    )
 }
 
 /// One `kage:image` row per attached image, skipping an image the
@@ -411,9 +413,16 @@ fn push_replayed_message(buf: &mut Buffer, msg: &Arc<Message>, tool_durations: &
                     Content::ToolCall { id, name, input } => {
                         buf.push_tool_call(id.to_string(), name, input.clone());
                     }
+                    Content::Image { source, mime } => {
+                        let bytes = match source {
+                            MediaSource::Base64 { data } => data.len() / 4 * 3,
+                            MediaSource::Blob { size, .. } => usize::try_from(*size).unwrap_or(0),
+                            MediaSource::Url { .. } => 0,
+                        };
+                        buf.push_custom("kage:image", produced_media_label(mime, bytes), false);
+                    }
                     Content::Thinking { .. }
                     | Content::ToolResultBlock { .. }
-                    | Content::Image { .. }
                     | Content::Custom { .. } => {}
                 }
             }
@@ -573,6 +582,47 @@ mod tests {
 
     use super::*;
     use crate::buffer::Block;
+
+    #[test]
+    fn a_produced_image_shows_live_and_on_replay() {
+        let rows = |buf: &Buffer| -> Vec<String> {
+            buf.blocks()
+                .iter()
+                .filter_map(|block| match block.as_ref() {
+                    Block::Custom { kind, text, .. } if kind == "kage:image" => Some(text.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        let mut live = Buffer::new();
+        apply_loop_event(
+            &mut live,
+            &LoopEvent::Media {
+                id: MessageId::new(),
+                kind: kage_core::Modality::Image,
+                mime: "image/png".into(),
+                data: "A".repeat(4000),
+            },
+        );
+        let mut replayed = Buffer::new();
+        let message = std::sync::Arc::new(Message::new(
+            Role::Assistant,
+            vec![Content::Image {
+                source: MediaSource::Base64 {
+                    data: "A".repeat(4000),
+                },
+                mime: "image/png".into(),
+            }],
+            None,
+        ));
+        push_replayed_message(&mut replayed, &message, &ToolDurations::default());
+        assert_eq!(rows(&live), rows(&replayed));
+        assert!(
+            rows(&live)[0].contains("image/png from the model"),
+            "{:?}",
+            rows(&live)
+        );
+    }
 
     #[test]
     fn engine_notes_are_quiet_lines_not_user_bubbles() {

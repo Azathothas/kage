@@ -153,6 +153,11 @@ pub enum Row {
         /// Whether chunks still merge into this item.
         live: bool,
     },
+    /// Media the assistant produced, such as an image.
+    Media {
+        /// The item index.
+        ix: usize,
+    },
     /// Assistant reasoning, collapsed once it ends.
     Thinking {
         /// The item index.
@@ -236,6 +241,7 @@ impl Row {
             | Row::Thinking { ix, .. }
             | Row::Tool { ix, .. }
             | Row::TurnEnd { ix, .. }
+            | Row::Media { ix }
             | Row::Notice { ix }
             | Row::Compaction { ix }
             | Row::Plan { ix }
@@ -249,6 +255,7 @@ impl Row {
         match self {
             Row::User { .. } => "user",
             Row::Assistant { .. } => "assistant",
+            Row::Media { .. } => "media",
             Row::Thinking { .. } => "thinking",
             Row::Tool { .. } => "tool",
             Row::Group { .. } => "group",
@@ -763,6 +770,10 @@ pub fn row_search_text(session: &Session, row: &Row) -> String {
             .collect::<Vec<_>>()
             .join(" "),
         Row::Compaction { .. } => "context compacted".to_owned(),
+        Row::Media { ix } => match session.items.get(*ix) {
+            Some(TranscriptItem::Media { mime, .. }) => mime.clone(),
+            _ => String::new(),
+        },
         Row::Waiting => String::new(),
         Row::Plan { ix } => match session.items.get(*ix) {
             Some(TranscriptItem::Plan { entries }) => entries
@@ -1114,6 +1125,7 @@ fn plain_row(session: &Session, ix: usize, ui: &UiState, last: usize) -> Option<
             text: prompt_text(content),
         },
         TranscriptItem::Assistant { .. } => Row::Assistant { ix, live },
+        TranscriptItem::Media { .. } => Row::Media { ix },
         TranscriptItem::Thinking { .. } => Row::Thinking {
             ix,
             live,
@@ -1174,7 +1186,7 @@ const DETAIL_BOTTOM: f32 = 10.0;
 /// carries the margin of the detail or body that closes it.
 pub fn margins(row: &Row) -> (f32, f32) {
     match row {
-        Row::User { .. } | Row::Assistant { .. } => (18.0, 18.0),
+        Row::User { .. } | Row::Assistant { .. } | Row::Media { .. } => (18.0, 18.0),
         Row::Thinking { expanded, .. } => (
             ROW_MARGIN,
             if *expanded { DETAIL_BOTTOM } else { ROW_MARGIN },

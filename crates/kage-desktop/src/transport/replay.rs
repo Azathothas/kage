@@ -367,6 +367,7 @@ mod tests {
             .map(|item| match item {
                 TranscriptItem::User { .. } => "user",
                 TranscriptItem::Assistant { .. } => "assistant",
+                TranscriptItem::Media { .. } => "media",
                 TranscriptItem::Thinking { .. } => "thinking",
                 TranscriptItem::ToolCall(_) => "tool",
                 TranscriptItem::TurnEnd { .. } => "turn-end",

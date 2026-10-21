@@ -20,6 +20,7 @@ pub(crate) mod head;
 #[allow(dead_code)]
 pub mod list;
 pub mod markdown;
+pub mod media_rows;
 pub mod model;
 pub(crate) mod prose;
 pub mod text_rows;

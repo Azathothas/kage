@@ -5,9 +5,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use kage_acp::acp::{
-    AvailableCommandsUpdate, CompactionPhase, CompactionUpdate, ConfigOptionUpdate, ContentBlock,
-    Cost, CurrentModeUpdate, DiffContent, KageMeta, McpStatusUpdate, MessageChunk, NoticeTone,
-    NoticeUpdate, Plan, QuestionChoice, QuestionPrompt, SessionConfigSelectOption,
+    AvailableCommandsUpdate, BlobContent, CompactionPhase, CompactionUpdate, ConfigOptionUpdate,
+    ContentBlock, Cost, CurrentModeUpdate, DiffContent, KageMeta, McpStatusUpdate, MessageChunk,
+    NoticeTone, NoticeUpdate, Plan, QuestionChoice, QuestionPrompt, SessionConfigSelectOption,
     SessionInfoUpdate, SessionUpdate, SubagentSessionCapabilities, SubagentState, SubagentSwarm,
     SubagentUpdate, SubagentUsage, SwarmMeta, ToolCall, ToolCallContent, ToolCallMeta,
     ToolCallStatus, ToolCallUpdate, ToolKind, TurnPhase, TurnReason, TurnUpdate, UsageMeta,
@@ -1183,6 +1183,10 @@ fn describe_call(name: &str, input: &serde_json::Value) -> String {
 /// changed, and the later steps always do. `seen` holds the input and
 /// the swarm meta last sent for each call, so the meta goes out only
 /// when it changes.
+///
+/// Media a model produced go to the client as ACP `image` or `audio`
+/// blocks carrying their bytes, so a client that does not share kage's
+/// filesystem still shows them.
 pub(super) fn to_update(
     seen: &mut HashMap<String, SeenCall>,
     event: &LoopEvent,
@@ -1200,6 +1204,12 @@ pub(super) fn to_update(
                 meta: None,
             }))
         }
+        LoopEvent::Media {
+            kind, mime, data, ..
+        } => Some(SessionUpdate::AgentMessageChunk(MessageChunk {
+            content: media_block(*kind, mime, data),
+            meta: None,
+        })),
         LoopEvent::ToolCallArgsDelta {
             id,
             name,
@@ -1572,6 +1582,21 @@ pub(super) fn agent_usage(node: &AgentNode) -> Option<SubagentUsage> {
 /// The model a subagent update reports of `node`, once known.
 pub(super) fn agent_model(node: &AgentNode) -> Option<String> {
     (!node.model.is_empty()).then(|| node.model.clone())
+}
+
+/// The ACP block that carries media a model produced: `image` or
+/// `audio` with its bytes, or a line naming a kind ACP has no block for.
+fn media_block(kind: kage_core::Modality, mime: &str, data: &str) -> ContentBlock {
+    let blob = || BlobContent {
+        data: data.to_owned(),
+        mime_type: mime.to_owned(),
+        uri: None,
+    };
+    match kind {
+        kage_core::Modality::Image => ContentBlock::Image(blob()),
+        kage_core::Modality::Audio => ContentBlock::Audio(blob()),
+        other => ContentBlock::text(format!("[{} output: {mime}]", other.as_str())),
+    }
 }
 
 #[cfg(test)]

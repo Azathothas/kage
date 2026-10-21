@@ -41,13 +41,17 @@ eframe = { version = "0.36", default-features = false, features = [
     "wayland",
     "x11",
 ] }
+base64.workspace = true
 egui = "0.36"
-egui_extras = { version = "0.36", features = ["svg"] }
+egui_extras = { version = "0.36", features = ["svg", "image"] }
 egui_commonmark = { version = "0.25", features = ["better_syntax_highlighting"] }
 # The top-level block split the transcript's markdown renders by; the
 # same parser and version egui_commonmark reads with.
 pulldown-cmark = { version = "0.13", default-features = false }
 egui_virtual_list = "0.12"
+# Decodes the images a model produces in the transcript, through the
+# egui_extras image loader, on native and web alike.
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 # Syntax highlighting for the transcript's code blocks; the
 # `default-fancy` flavor keeps the fancy regex engine.
 syntect = { version = "5", default-features = false, features = ["default-fancy"] }

@@ -869,6 +869,12 @@ fn render_row(
             }
             _ => blank_row(ui),
         },
+        Row::Media { ix } => match session.items.get(*ix) {
+            Some(TranscriptItem::Media { mime, data }) => {
+                super::media_rows::render_media(ui, mime, data)
+            }
+            _ => blank_row(ui),
+        },
         Row::Thinking { ix, live, expanded } => match session.items.get(*ix) {
             Some(TranscriptItem::Thinking { text, .. }) => {
                 let response = text_rows::render_thinking(
