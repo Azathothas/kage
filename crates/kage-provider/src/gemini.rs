@@ -172,13 +172,23 @@ pub(crate) fn build_request_body(req: &StreamRequest) -> Value {
         })
         .unwrap_or(0);
     let enforced = enforces_signatures(&req.model);
+    // A model that draws gets its own images back, so it can keep
+    // working on them; any other model reads a note in their place.
+    let images = req.produces.contains(kage_core::Modality::Image);
     let contents: Vec<Value> = req
         .messages
         .iter()
         .enumerate()
         .filter_map(|(i, msg)| {
             let placeholder = enforced && i >= turn_start;
-            internal_message_to_gemini(msg, &names_by_id, &req.tools, &req.model, placeholder)
+            internal_message_to_gemini(
+                msg,
+                &names_by_id,
+                &req.tools,
+                &req.model,
+                placeholder,
+                images,
+            )
         })
         .collect();
 
@@ -345,12 +355,13 @@ fn internal_message_to_gemini(
     declared: &[ToolSpec],
     model: &str,
     placeholder: bool,
+    images: bool,
 ) -> Option<Value> {
     let (role, parts) = match msg.role {
         Role::User => ("user", convert_user_parts(&msg.content)),
         Role::Assistant => (
             "model",
-            convert_assistant_parts(&msg.content, model, placeholder),
+            convert_assistant_parts(&msg.content, model, placeholder, images),
         ),
         Role::ToolResult => (
             "user",
@@ -383,7 +394,15 @@ fn convert_user_parts(blocks: &[Content]) -> Vec<Value> {
 /// on the first call of every step in the current turn. With
 /// `placeholder`, a first call that has no real signature carries
 /// [`SKIP_SIGNATURE`] instead. Other thinking goes as `<thinking>` text.
-fn convert_assistant_parts(blocks: &[Content], model: &str, placeholder: bool) -> Vec<Value> {
+/// With `images`, an image the model produced goes back as inline data,
+/// carrying the signature before it; without, as a short note, and the
+/// signature is dropped so it never lands on a later call.
+fn convert_assistant_parts(
+    blocks: &[Content],
+    model: &str,
+    placeholder: bool,
+    images: bool,
+) -> Vec<Value> {
     let mut parts = Vec::new();
     let mut signature: Option<&str> = None;
     let mut first_call = true;
@@ -414,7 +433,17 @@ fn convert_assistant_parts(blocks: &[Content], model: &str, placeholder: bool) -
                 first_call = false;
                 parts.push(part);
             }
+            Content::Image { source, mime } if images => {
+                let mut part = image_part(source, mime);
+                if let Some(sig) = signature.take()
+                    && part.get("inlineData").is_some()
+                {
+                    part["thoughtSignature"] = Value::String(sig.to_owned());
+                }
+                parts.push(part);
+            }
             Content::Image { mime, .. } => {
+                signature = None;
                 parts.push(serde_json::json!({"text": Content::produced_media_note(mime)}));
             }
             _ => {}
@@ -590,6 +619,13 @@ impl GeminiStream {
             if let Some(kind) =
                 kage_core::Modality::of_mime(mime).filter(|_| !thought && !data.is_empty())
             {
+                // An image model signs its images; the signature goes
+                // back on the image when the conversation continues.
+                if let Some(signature) = part.get("thoughtSignature").and_then(Value::as_str) {
+                    self.pending.push_back(Ok(ProviderEvent::ThinkingSignature {
+                        data: signature.to_owned(),
+                    }));
+                }
                 self.pending.push_back(Ok(ProviderEvent::Media {
                     kind,
                     mime: mime.to_owned(),
@@ -1099,6 +1135,52 @@ mod tests {
             media,
             [(kage_core::Modality::Image, "image/png", "iVBORw0K")],
             "the image drawn while thinking is left out"
+        );
+    }
+
+    #[test]
+    fn an_image_keeps_its_signature_and_goes_back_to_a_model_that_draws() {
+        let bytes: &[u8] = b"data: {\"candidates\":[{\"content\":{\"parts\":[{\"inlineData\":{\"mimeType\":\"image/png\",\"data\":\"iVBO\"},\"thoughtSignature\":\"isig\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n";
+        let events = collect_ok(stream_from_bytes(bytes));
+        let at = |want: fn(&ProviderEvent) -> bool| events.iter().position(want).unwrap();
+        assert!(
+            at(|e| matches!(e, ProviderEvent::ThinkingSignature { data } if data == "isig"))
+                < at(|e| matches!(e, ProviderEvent::Media { .. })),
+            "{events:?}"
+        );
+
+        let reply = vec![
+            Content::Thinking {
+                text: String::new(),
+                signature: Some(kage_core::ThinkingSignature {
+                    model: "draw".into(),
+                    data: "isig".into(),
+                    redacted: false,
+                }),
+                duration_ms: None,
+            },
+            Content::Image {
+                source: kage_core::MediaSource::Base64 {
+                    data: "iVBO".into(),
+                },
+                mime: "image/png".into(),
+            },
+            Content::ToolCall {
+                id: kage_core::ToolCallId::new("c1"),
+                name: "read".into(),
+                input: serde_json::json!({}),
+            },
+        ];
+        let drawn = convert_assistant_parts(&reply, "draw", false, true);
+        assert_eq!(drawn[0]["inlineData"]["data"], "iVBO");
+        assert_eq!(drawn[0]["thoughtSignature"], "isig");
+        assert!(drawn[1].get("thoughtSignature").is_none());
+
+        let noted = convert_assistant_parts(&reply, "draw", false, false);
+        assert_eq!(noted[0]["text"], "[you produced an image here: image/png]");
+        assert!(
+            noted[1].get("thoughtSignature").is_none(),
+            "the image's signature does not move onto the call: {noted:?}"
         );
     }
 

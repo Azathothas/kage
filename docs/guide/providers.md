@@ -287,7 +287,10 @@ for images and can answer with them: Gemini models through
 `responseModalities`, and `openai`-kind models through the
 `modalities` field OpenRouter and compatible gateways read. The images
 land in the reply and in the session like attached ones, without
-bloating the session file.
+bloating the session file. On later turns a Gemini model that draws
+gets its own images back, so "make it blue" edits the last one; other
+models read a short note where each image was. `/image save` writes
+the newest one into the project.
 
 A custom id that matches a catalog provider, such as `deepseek`,
 replaces that provider. kage prints a warning at startup naming the
