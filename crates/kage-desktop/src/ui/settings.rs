@@ -944,6 +944,7 @@ fn agents(ui: &mut egui::Ui, store: &Store, palette: &Palette, events: &mut Vec<
             &[
                 ("thinking_level", "Thinking by default"),
                 ("compaction_threshold", "Compact at"),
+                ("max_provider_retries", "Provider retries"),
             ],
         ),
         (

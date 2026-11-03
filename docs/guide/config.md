@@ -140,6 +140,10 @@ timeoutlen = 1000
 # the remaining room can no longer hold a full reply. Applies to the
 # next session, and the /settings dialog edits it too.
 compaction_threshold = 0.8
+# how many times a turn that failed transiently (a dropped or stalled
+# stream, a 5xx, rate limiting) is re-issued before the error surfaces
+# (0 to 10). 0 turns auto-retry off. Applies to the next session.
+max_provider_retries = 4
 
 [agents]
 # how deep agents may nest (0 to 3). 0 removes the agent tool, and 1

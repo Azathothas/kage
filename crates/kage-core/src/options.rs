@@ -175,6 +175,17 @@ pub const OPTIONS: &[OptionDef] = &[
         live: false,
     },
     OptionDef {
+        name: "max_provider_retries",
+        toml: "loop.max_provider_retries",
+        kind: OptionKind::Int {
+            min: 0,
+            max: 10,
+            default: 4,
+        },
+        doc: "How many times to re-issue a turn whose provider request failed transiently before giving up. 0 disables auto-retry.",
+        live: false,
+    },
+    OptionDef {
         name: "leader",
         toml: "keybindings.leader",
         kind: OptionKind::Key { default: "\\" },
@@ -639,6 +650,9 @@ fn config_value(name: &str, config: &Config) -> Option<OptionValue> {
         "compaction_threshold" => {
             OptionValue::Float(widen(config.loop_settings.compaction_threshold))
         }
+        "max_provider_retries" => {
+            OptionValue::Int(i64::from(config.loop_settings.max_provider_retries))
+        }
         "leader" => OptionValue::Str(config.keybindings.leader.clone()),
         "timeoutlen" => OptionValue::Int(i64::from(config.keybindings.timeoutlen)),
         "agent_max_depth" => OptionValue::Int(i64::from(config.agents.max_depth)),
@@ -771,6 +785,7 @@ mod tests {
                 OptionValue::Str("high".into()),
             ),
             ("compaction_threshold", "0.6", OptionValue::Float(0.6)),
+            ("max_provider_retries", "7", OptionValue::Int(7)),
             ("leader", "\"<Space>\"", OptionValue::Str("<Space>".into())),
             ("timeoutlen", "300", OptionValue::Int(300)),
             ("agent_max_depth", "0", OptionValue::Int(0)),
@@ -891,6 +906,20 @@ mod tests {
                 .unwrap()
                 .new,
             OptionValue::Float(1.0)
+        );
+        for bad in [-1, 11] {
+            assert!(
+                store
+                    .set("max_provider_retries", OptionValue::Int(bad), OptionSource::Lua)
+                    .is_err()
+            );
+        }
+        assert_eq!(
+            store
+                .set("max_provider_retries", OptionValue::Int(10), OptionSource::Lua)
+                .unwrap()
+                .new,
+            OptionValue::Int(10)
         );
         assert!(
             store

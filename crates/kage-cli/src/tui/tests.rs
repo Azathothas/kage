@@ -145,7 +145,7 @@ fn options_set_in_init_lua_seed_the_first_session() {
     std::fs::write(
         user.path().join("init.lua"),
         "kage.opt.thinking_level = 'high'\nkage.opt.compaction_threshold = 0.5\n\
-         kage.opt.agent_max_depth = 2\nkage.opt.agent_max_running = 8\n\
+         kage.opt.max_provider_retries = 7\nkage.opt.agent_max_depth = 2\nkage.opt.agent_max_running = 8\n\
          kage.opt.swarm_max_items = 64\nkage.opt.swarm_timeout_ms = 60000\n\
          kage.opt.agent_model = 'zai:glm-5'\nkage.opt.agent_thinking = 'low'",
     )
@@ -173,6 +173,7 @@ fn options_set_in_init_lua_seed_the_first_session() {
     assert_eq!(agents.model.as_deref(), Some("zai/glm-5"));
     assert_eq!(agents.thinking, Some(kage_core::ThinkingLevel::Low));
     assert!((loop_cfg.compaction_threshold - 0.5).abs() < f32::EPSILON);
+    assert_eq!(loop_cfg.max_provider_retries, 7);
 
     let defaults = crate::engine::AgentSetup::from_options(
         kage_core::agents::AgentDefs::builtin(),

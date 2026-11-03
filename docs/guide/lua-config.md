@@ -119,6 +119,7 @@ value)` is the same as assigning.
 | `thinking_level` | `ui.thinking_level` | `""`, `"off"`, `"minimal"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"` or `"ultra"` | `""` | next session |
 | `transcript_on_exit` | `ui.transcript_on_exit` | `"full"`, `"last"` or `"none"` | `"full"` | at exit |
 | `compaction_threshold` | `loop.compaction_threshold` | number, 0 to 1 (0 turns compaction off) | `0.8` | next session |
+| `max_provider_retries` | `loop.max_provider_retries` | integer, 0 to 10 (0 turns auto-retry off) | `4` | next session |
 | `leader` | `keybindings.leader` | one key, such as `","` or `"<Space>"` | `"\\"` (backslash) | mappings set after it |
 | `timeoutlen` | `keybindings.timeoutlen` | integer milliseconds, 0 to 5000 | `1000` | immediately |
 | `agent_max_depth` | `agents.max_depth` | integer, 0 to 3 (0 turns the `agent` tool off) | `1` | at startup |
@@ -136,7 +137,8 @@ quit: the whole conversation as plain text, only the part from your
 last prompt on, or nothing. When the session was recorded, the session
 file path and a `kage resume <id>` hint follow.
 
-`thinking_level` and `compaction_threshold` set in `init.lua` apply to
+`thinking_level`, `compaction_threshold` and `max_provider_retries`
+set in `init.lua` apply to
 the first session, because kage starts it after `init.lua` has run. An
 empty `thinking_level` means the automatic level: high, or the nearest
 level the model accepts.

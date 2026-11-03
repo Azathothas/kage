@@ -483,6 +483,7 @@ fn session_spec(
             .with_mcp_servers(mcp.server_names().map(str::to_owned).collect()),
         loop_cfg: LoopConfig {
             compaction_threshold: config.loop_settings.compaction_threshold,
+            max_provider_retries: config.loop_settings.max_provider_retries,
             parallel_tools: false,
             ..LoopConfig::default()
         },

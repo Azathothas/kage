@@ -483,12 +483,16 @@ pub struct LoopSettings {
     /// `0` disables compaction, and `1` compacts as soon as usage
     /// reaches the context window.
     pub compaction_threshold: f32,
+    /// How many times to re-issue a turn whose provider request failed
+    /// transiently before giving up. `0` disables auto-retry.
+    pub max_provider_retries: u32,
 }
 
 impl Default for LoopSettings {
     fn default() -> Self {
         Self {
             compaction_threshold: 0.8,
+            max_provider_retries: 4,
         }
     }
 }

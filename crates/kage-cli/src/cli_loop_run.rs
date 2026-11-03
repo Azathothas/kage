@@ -111,6 +111,7 @@ pub(crate) fn execute_print_run(
         gate,
         loop_cfg: LoopConfig {
             compaction_threshold: layered.loop_settings.compaction_threshold,
+            max_provider_retries: layered.loop_settings.max_provider_retries,
             ..LoopConfig::default()
         },
         mcp,

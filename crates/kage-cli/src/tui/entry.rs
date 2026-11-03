@@ -602,6 +602,12 @@ pub(crate) fn startup_options(
             loop_cfg.compaction_threshold = threshold as f32;
         }
     }
+    if let Some(retries) = store
+        .get("max_provider_retries")
+        .and_then(OptionValue::as_int)
+    {
+        loop_cfg.max_provider_retries = u32::try_from(retries).unwrap_or(0);
+    }
     let thinking = store
         .get("thinking_level")
         .and_then(OptionValue::as_str)
