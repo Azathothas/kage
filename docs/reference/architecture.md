@@ -243,8 +243,10 @@ editor's command list.
 **The restart command.** `restart_mcp {server}` restarts one server.
 In-flight tool calls hold the old connection, so a busy session keeps
 the name until its next run starts, and an idle session restarts at
-once. The TUI sends it from `/mcp restart`, from the picker and after
-a login. `kage.mcp.restart` from Lua joins the same list at run start.
+once. The engine path sends it from `/mcp restart`, from the picker and
+after a login; the TUI, which speaks ACP, refuses it (see
+[the TUI's ACP link](#the-tuis-acp-link)). `kage.mcp.restart` from Lua
+joins the same list at run start.
 
 **MCP work off the dispatcher.** The dispatcher never waits on an MCP
 server. A session's manager starts with its servers not spawned yet
@@ -306,6 +308,48 @@ written, so a client never sees them first.
 Config option changes and prompts become ordinary engine commands, so
 the editor, the TUI and print mode share one implementation.
 
+## the TUI's ACP link
+
+The TUI is an ACP client. A reader thread, a writer thread and a pump
+thread run the connection, and the pump turns the agent's frames into
+the events the App draws. By default the agent is the user's shared
+host. `--standalone`, `[host] share = false`, a configuration override
+from the environment, a host of another version, a host that cannot be
+started and platforms without the socket use a private host served
+inside the process over an in-memory pipe.
+
+Two knobs are experimental and exist for tests: `KAGE_LINK=acp` runs
+the TUI against a `kage rpc` child of the same binary instead, and
+`KAGE_RPC_BIN` names another program to run as that child. Neither is
+a supported way to run kage.
+
+The TUI loads the user's plugins itself. At initialize it announces
+`plugin_host`, and the sessions it opens carry
+`_meta.kage.plugins = "client"`, so the agent asks the TUI for the
+plugin tools, hooks and events with `_kage/plugin/*` requests. A worker
+thread answers them in order, so the pump keeps serving the App while
+a Lua tool runs, and `Esc` cancels the running tool. A resumed or
+loaded session carries the same `_meta.kage` a new one does, so its
+settings and the TUI's plugin hosting survive the switch. A hosted
+plugin MCP server that sets `disabled_tools` or `oauth` is started by
+the agent without them, and the TUI warns when it sends one.
+
+The ACP link has no counterpart yet for some commands the engine path
+served. The TUI refuses each with the notice "... is not available over
+the ACP link yet":
+
+| Command | What it was |
+| --- | --- |
+| shell escapes | running a shell command from the prompt |
+| fork, rewind, undo | forking or rewinding the live session |
+| clone | cloning the session |
+| image open, image save, media open, media save | opening or saving attachments |
+| reload plugins, refresh providers, restart MCP (`/mcp restart`) | reloading what the engine held |
+| fork a session file, delete a session | acting on recorded sessions |
+
+An attachment kept in the session's blob store cannot ride the link and
+is dropped with a warning.
+
 ## the serve component
 
 `kage serve` puts the host behind a TCP listener. One endpoint, one
@@ -345,6 +389,9 @@ serve; on Windows the TCP port is the only guard:
   asked each approval with the first answer winning, a second
   client's prompt during a run fails busy, and a session no connection
   holds is closed once idle.
+- The accept loop also sheds what no client holds every 250 ms,
+  like the shared host's tick: project runtimes past their grace and
+  asks past the ask-hold cap.
 - SIGINT and SIGTERM cancel every run and give the sessions a moment
   to close their files before the process exits; a second signal
   exits at once. The connect URL printed at startup is the only place

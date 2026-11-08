@@ -248,7 +248,6 @@ impl Live {
     /// and that still hold an open ask with no client: the host
     /// declines those, so an ask nobody can answer stops holding the
     /// session and the host.
-    #[cfg_attr(not(unix), allow(dead_code, reason = "the shared host is unix only"))]
     pub(super) fn expired_ask_roots(&self, cap: Duration) -> Vec<SessionId> {
         let now = Instant::now();
         self.orphaned
@@ -265,10 +264,23 @@ impl Live {
             .collect()
     }
 
-    /// Forgets that `root`'s client left, after its asks were declined.
-    #[cfg_attr(not(unix), allow(dead_code, reason = "the shared host is unix only"))]
-    pub(super) fn forget_orphan(&mut self, root: &SessionId) {
-        self.orphaned.remove(root);
+    /// Hands out the open asks of the sessions [`Self::expired_ask_roots`]
+    /// names and forgets those sessions' windows, all under the one
+    /// borrow. A client attaching meanwhile, or a second caller, cannot
+    /// see a session this call took: each ask is handed out once.
+    pub(super) fn take_expired_asks(&mut self, cap: Duration) -> Vec<AskRef> {
+        let mut taken = Vec::new();
+        for root in self.expired_ask_roots(cap) {
+            taken.extend(self.asks_under(root));
+            self.orphaned.remove(&root);
+        }
+        taken
+    }
+
+    /// The moment `root`'s current ask-hold window started.
+    #[cfg(test)]
+    pub(super) fn orphan_stamp(&self, root: SessionId) -> Option<Instant> {
+        self.orphaned.get(&root).copied()
     }
 
     /// Whether `id` is open, closing, running or part of a live agent tree

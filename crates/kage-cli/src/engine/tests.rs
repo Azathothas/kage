@@ -1506,6 +1506,32 @@ fn swarm_mode_and_shell_count_reach_the_state_snapshot() {
 }
 
 #[test]
+fn a_pinned_output_cap_reaches_the_provider_request() {
+    let mock = MockProvider::replaying(text_turn("ok"));
+    let h = harness(mock.clone());
+    let id = SessionId::new();
+    let mut spec = h.spec(id);
+    spec.cx.max_output_tokens = Some(1_024);
+    h.engine.open(spec);
+    prompt(&h.engine, id, "hi", Delivery::Steer);
+    until_runs_end(&h.events, 1);
+    assert_eq!(mock.requests()[0].max_output_tokens, Some(1_024));
+    h.engine.shutdown();
+}
+
+#[test]
+fn an_unpinned_output_cap_follows_the_model() {
+    let mock = MockProvider::replaying(text_turn("ok"));
+    let h = harness(mock.clone());
+    let id = SessionId::new();
+    h.open(id, None);
+    prompt(&h.engine, id, "hi", Delivery::Steer);
+    until_runs_end(&h.events, 1);
+    assert_eq!(mock.requests()[0].max_output_tokens, None);
+    h.engine.shutdown();
+}
+
+#[test]
 fn shell_output_reaches_the_next_request() {
     let mock = MockProvider::replaying(text_turn("ok"));
     let h = harness(mock.clone());
@@ -1841,7 +1867,8 @@ fn the_title_call_carries_the_sessions_workdir_and_env() {
     let id = SessionId::new();
     let mut spec = h.spec(id);
     spec.title = true;
-    spec.cx.workdir = std::path::PathBuf::from("/kage-title-cwd");
+    let workdir = std::env::temp_dir().join("kage-title-cwd");
+    spec.cx.workdir = workdir.clone();
     spec.cx.env = Environment::captured(vec![("CLIENT".into(), "editor".into())]);
     h.engine.open(spec);
     prompt(&h.engine, id, "hi", Delivery::Steer);
@@ -1851,10 +1878,7 @@ fn the_title_call_carries_the_sessions_workdir_and_env() {
     h.engine.shutdown();
     let requests = mock.requests();
     let req = requests.last().unwrap();
-    assert_eq!(
-        req.workdir.as_deref(),
-        Some(std::path::Path::new("/kage-title-cwd"))
-    );
+    assert_eq!(req.workdir.as_deref(), Some(workdir.as_path()));
     assert_eq!(
         req.env.var("CLIENT").as_deref(),
         Some(std::ffi::OsStr::new("editor"))
@@ -1869,7 +1893,8 @@ fn the_goal_check_carries_the_sessions_workdir_and_env() {
     let h = harness_on(ProviderRegistry::new().with(Arc::new(mock.clone())));
     let id = SessionId::new();
     let mut spec = h.spec(id);
-    spec.cx.workdir = std::path::PathBuf::from("/kage-goal-cwd");
+    let workdir = std::env::temp_dir().join("kage-goal-cwd");
+    spec.cx.workdir = workdir.clone();
     spec.cx.env = Environment::captured(vec![("CLIENT".into(), "editor".into())]);
     h.engine.open(spec);
     h.engine.send(Command::to(
@@ -1887,10 +1912,7 @@ fn the_goal_check_carries_the_sessions_workdir_and_env() {
     h.engine.shutdown();
     let requests = mock.requests();
     let req = requests.last().unwrap();
-    assert_eq!(
-        req.workdir.as_deref(),
-        Some(std::path::Path::new("/kage-goal-cwd"))
-    );
+    assert_eq!(req.workdir.as_deref(), Some(workdir.as_path()));
     assert_eq!(
         req.env.var("CLIENT").as_deref(),
         Some(std::ffi::OsStr::new("editor"))
