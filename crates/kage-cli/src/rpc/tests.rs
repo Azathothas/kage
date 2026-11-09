@@ -7747,12 +7747,15 @@ fn run_external_host_test_in_child() {
     assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
+// The creator's open stays unresolved, as while a creation response is in
+// flight, until the test resolves or drops the returned ticket.
 fn external_race_fixture() -> (
     tempfile::TempDir,
     Arc<Host>,
     Arc<CliAcpAgent>,
     Arc<CliAcpAgent>,
+    external::OpenTicket,
 ) {
     let dir = tempfile::tempdir().unwrap();
     let mock = MockProvider::sequence(vec![]);
@@ -7768,6 +7771,17 @@ fn external_race_fixture() -> (
     };
     let owner = Arc::new(CliAcpAgent::new(Arc::clone(&host), peer()));
     let other = Arc::new(CliAcpAgent::new(Arc::clone(&host), peer()));
+    let (session, created) = external_race_session(dir.path(), &owner);
+    lock(&host.external).insert("external".into(), session);
+    lock(&owner.ids).external.insert("external".into());
+    (dir, host, owner, other, created)
+}
+
+#[cfg(target_os = "linux")]
+fn external_race_session(
+    dir: &Path,
+    owner: &CliAcpAgent,
+) -> (Arc<external::External>, external::OpenTicket) {
     let config = kage_core::config::AcpAgent {
         command: "python3".into(),
         args: vec![
@@ -7778,21 +7792,19 @@ fn external_race_fixture() -> (
         ],
         env: BTreeMap::new(),
     };
-    let session = external::External::start(
+    external::External::start(
+        &owner.host.lifecycles,
         "external".into(),
         "fake",
-        dir.path().to_str().unwrap(),
+        dir.to_str().unwrap(),
         &config,
         owner.connection,
         owner.peer.clone(),
     )
-    .unwrap();
-    lock(&host.external).insert("external".into(), session);
-    lock(&owner.ids).external.insert("external".into());
-    (dir, host, owner, other)
+    .unwrap()
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 fn wait_until_external_locked(host: &Host) -> bool {
     let deadline = Instant::now() + WAIT;
     while host.external.try_lock().is_ok() {
@@ -7804,13 +7816,13 @@ fn wait_until_external_locked(host: &Host) -> bool {
     true
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn external_attach_before_last_close_keeps_session_alive() {
-    let (_dir, host, owner, other) = external_race_fixture();
+    let (_dir, host, owner, other, _created) = external_race_fixture();
     let ids = lock(&other.ids);
     std::thread::scope(|scope| {
-        let attaching = scope.spawn(|| other.attach_external("external", &[]));
+        let attaching = scope.spawn(|| other.attach_external("external", &[], None));
         if !wait_until_external_locked(&host) {
             drop(ids);
             panic!("operation did not lock external sessions");
@@ -7821,7 +7833,7 @@ fn external_attach_before_last_close_keeps_session_alive() {
             })
         });
         drop(ids);
-        assert!(attaching.join().unwrap().unwrap());
+        attaching.join().unwrap().unwrap().unwrap()();
         closing.join().unwrap().unwrap();
     });
     assert!(lock(&host.external).contains_key("external"));
@@ -7832,13 +7844,13 @@ fn external_attach_before_last_close_keeps_session_alive() {
     other.detach();
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn external_attach_blocked_by_disconnect_does_not_leak_attachment() {
-    let (_dir, host, owner, other) = external_race_fixture();
+    let (_dir, host, owner, other, _created) = external_race_fixture();
     let ids = lock(&other.ids);
     std::thread::scope(|scope| {
-        let attaching = scope.spawn(|| other.attach_external("external", &[]));
+        let attaching = scope.spawn(|| other.attach_external("external", &[], None));
         if !wait_until_external_locked(&host) {
             drop(ids);
             panic!("operation did not lock external sessions");
@@ -7853,7 +7865,11 @@ fn external_attach_blocked_by_disconnect_does_not_leak_attachment() {
             std::thread::yield_now();
         }
         drop(ids);
-        let error = attaching.join().unwrap().unwrap_err();
+        let error = attaching
+            .join()
+            .unwrap()
+            .err()
+            .expect("attachment succeeded");
         assert!(error.message.contains("disconnecting"));
         disconnecting.join().unwrap();
     });
@@ -7864,27 +7880,35 @@ fn external_attach_blocked_by_disconnect_does_not_leak_attachment() {
     other.detach();
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn external_last_close_before_attach_removes_session() {
-    let (_dir, host, owner, other) = external_race_fixture();
+    let (_dir, host, owner, other, _created) = external_race_fixture();
     owner
         .close_session(CloseSessionRequest {
             session_id: "external".into(),
         })
         .unwrap();
     assert!(lock(&host.external).is_empty());
-    assert!(!other.attach_external("external", &[]).unwrap());
+    assert!(
+        other
+            .attach_external("external", &[], None)
+            .unwrap()
+            .is_none()
+    );
     assert!(lock(&other.ids).external.is_empty());
     owner.detach();
     other.detach();
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn external_close_and_reattach_same_connection_are_ordered() {
-    let (_dir, host, owner, other) = external_race_fixture();
-    assert!(other.attach_external("external", &[]).unwrap());
+    let (_dir, host, owner, other, _created) = external_race_fixture();
+    other
+        .attach_external("external", &[], None)
+        .unwrap()
+        .unwrap()();
     let ids = lock(&owner.ids);
     std::thread::scope(|scope| {
         let closing = scope.spawn(|| {
@@ -7896,10 +7920,10 @@ fn external_close_and_reattach_same_connection_are_ordered() {
             drop(ids);
             panic!("operation did not lock external sessions");
         }
-        let attaching = scope.spawn(|| owner.attach_external("external", &[]));
+        let attaching = scope.spawn(|| owner.attach_external("external", &[], None));
         drop(ids);
         closing.join().unwrap().unwrap();
-        assert!(attaching.join().unwrap().unwrap());
+        attaching.join().unwrap().unwrap().unwrap()();
     });
     let session = owner.external_session("external").unwrap();
     assert!(session.register_prompt(owner.connection).is_ok());
@@ -7907,14 +7931,14 @@ fn external_close_and_reattach_same_connection_are_ordered() {
     other.detach();
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 struct DelayedPromptAgent {
     inner: Arc<CliAcpAgent>,
     entered: mpsc::Sender<bool>,
     release: Mutex<Option<mpsc::Receiver<()>>>,
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 impl Agent for DelayedPromptAgent {
     fn initialize(&self, req: InitializeRequest) -> InitializeResponse {
         self.inner.initialize(req)
@@ -7954,12 +7978,89 @@ impl Agent for DelayedPromptAgent {
     }
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
+#[test]
+fn saturated_external_session_leaves_workers_for_another_session() {
+    let (dir, host, owner, other, _created) = external_race_fixture();
+    let session = owner.external_session("external").unwrap();
+    session
+        .attach_open(owner.connection, owner.peer.clone())
+        .unwrap()
+        .announce();
+    let (independent, _independent_created) = external_race_session(dir.path(), &owner);
+    independent
+        .attach_open(owner.connection, owner.peer.clone())
+        .unwrap()
+        .announce();
+    lock(&host.external).insert("independent".into(), independent);
+    lock(&owner.ids).external.insert("independent".into());
+
+    let (srv_r, cli_w) = std::io::pipe().unwrap();
+    let (cli_r, srv_w) = std::io::pipe().unwrap();
+    let agent = Arc::clone(&owner);
+    let (entered, _entered_rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        kage_acp::agent::serve_agent(BufReader::new(srv_r), srv_w, |_| DelayedPromptAgent {
+            inner: agent,
+            entered,
+            release: Mutex::new(None),
+        })
+        .unwrap();
+    });
+    let (client, _inbox, _reader) = kage_jsonrpc::connect(BufReader::new(cli_r), cli_w);
+    let pending: Vec<_> = (0..16)
+        .map(|_| prompt_async(&client, "external", "wait"))
+        .collect();
+    let deadline = Instant::now() + WAIT;
+    loop {
+        match session.register_prompt(owner.connection) {
+            Ok(ticket) => drop(ticket),
+            Err(_) => break,
+        }
+        assert!(Instant::now() < deadline, "external admission did not fill");
+        std::thread::yield_now();
+    }
+    let rejected = client.request(
+        "session/prompt",
+        serde_json::json!({"sessionId":"external", "prompt":[{"type":"text", "text":"extra"}]}),
+    );
+    assert!(
+        rejected
+            .unwrap_err()
+            .message
+            .contains("too many external prompts")
+    );
+    let result = prompt_async(&client, "independent", "hello")
+        .recv_timeout(WAIT)
+        .unwrap()
+        .unwrap();
+    assert_eq!(result["stopReason"], "end_turn");
+
+    owner.cancel("external");
+    for response in pending {
+        assert_eq!(
+            response.recv_timeout(WAIT).unwrap().unwrap()["stopReason"],
+            "cancelled"
+        );
+    }
+    owner.detach();
+    other.detach();
+}
+
+#[cfg(target_os = "linux")]
 fn delayed_external_prompt_test(reattach: bool) {
-    let (_dir, _host, owner, other) = external_race_fixture();
-    owner.session_announced("external");
+    let (_dir, _host, owner, other, _created) = external_race_fixture();
+    owner
+        .external_session("external")
+        .unwrap()
+        .attach_open(owner.connection, owner.peer.clone())
+        .unwrap()
+        .announce();
     if reattach {
-        assert!(other.attach_external("external", &[]).unwrap());
+        other
+            .attach_external("external", &[], None)
+            .unwrap()
+            .unwrap()();
     }
     let (entered_tx, entered_rx) = mpsc::channel();
     let (release_tx, release_rx) = mpsc::channel();
@@ -7994,8 +8095,10 @@ fn delayed_external_prompt_test(reattach: bool) {
                 session_id: "external".into(),
             })
             .unwrap();
-        assert!(owner.attach_external("external", &[]).unwrap());
-        owner.session_announced("external");
+        owner
+            .attach_external("external", &[], None)
+            .unwrap()
+            .unwrap()();
     } else {
         owner.cancel("external");
     }
@@ -8008,13 +8111,13 @@ fn delayed_external_prompt_test(reattach: bool) {
     other.detach();
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn dispatch_prepared_external_prompt_does_not_cross_reattachment() {
     delayed_external_prompt_test(true);
 }
 
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 #[test]
 fn dispatch_prepared_external_prompt_is_cancelled_before_worker_runs() {
     delayed_external_prompt_test(false);
@@ -8039,4 +8142,526 @@ fn native_prompt_preparation_defaults_to_normal_dispatch() {
         .request("session/prompt", serde_json::to_value(req).unwrap())
         .unwrap();
     assert_eq!(result["stopReason"], "end_turn");
+}
+
+#[cfg(target_os = "linux")]
+fn external_receipt_prompt(
+    session: &external::External,
+    owner: u64,
+    text: &str,
+) -> Result<PromptResponse, RpcError> {
+    let req: PromptRequest = serde_json::from_value(serde_json::json!({
+        "sessionId": "external", "prompt": [{"type": "text", "text": text}]
+    }))
+    .unwrap();
+    session.prompt(session.register_prompt(owner).unwrap(), req)
+}
+
+#[cfg(target_os = "linux")]
+fn pending_external_receipt_prompt(
+    session: &Arc<external::External>,
+    owner: u64,
+    text: &str,
+) -> mpsc::Receiver<Result<PromptResponse, RpcError>> {
+    let req: PromptRequest = serde_json::from_value(serde_json::json!({
+        "sessionId": "external", "prompt": [{"type": "text", "text": text}]
+    }))
+    .unwrap();
+    let ticket = session.register_prompt(owner).unwrap();
+    let session = Arc::clone(session);
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(session.prompt(ticket, req));
+    });
+    rx
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn prepared_external_prompt_waits_for_receipt_and_cancellation_prevents_dispatch() {
+    let dir = tempfile::tempdir().unwrap();
+    let script = dir.path().join("agent.py");
+    let marker = dir.path().join("prompts");
+    std::fs::write(
+        &script,
+        r"
+import json, os, sys
+for line in sys.stdin:
+    msg = json.loads(line)
+    method = msg.get('method')
+    if method == 'initialize':
+        result = {'protocolVersion': 1, 'agentCapabilities': {}}
+    elif method == 'session/new':
+        result = {'sessionId': 'upstream'}
+    elif method == 'session/prompt':
+        with open(os.environ['PROMPT_MARKER'], 'a') as f:
+            f.write(msg['params']['prompt'][0]['text'] + '\n')
+        result = {'stopReason': 'end_turn'}
+    else:
+        continue
+    print(json.dumps({'jsonrpc': '2.0', 'id': msg['id'], 'result': result}), flush=True)
+",
+    )
+    .unwrap();
+    let mock = MockProvider::sequence(vec![]);
+    let host = test_host(
+        Arc::new(Listed::of(mock)),
+        dir.path().into(),
+        dir.path().into(),
+        false,
+    );
+    let (peer, _, _) = kage_jsonrpc::connect(std::io::empty(), std::io::sink());
+    let owner = CliAcpAgent::new(Arc::clone(&host), peer.into());
+    let config = kage_core::config::AcpAgent {
+        command: "python3".into(),
+        args: vec![script.to_string_lossy().into_owned()],
+        env: BTreeMap::from([(
+            "PROMPT_MARKER".into(),
+            marker.to_string_lossy().into_owned(),
+        )]),
+    };
+    let (session, receipt) = external::External::start(
+        &host.lifecycles,
+        "external".into(),
+        "fake",
+        dir.path().to_str().unwrap(),
+        &config,
+        owner.connection,
+        owner.peer.clone(),
+    )
+    .unwrap();
+    lock(&host.external).insert("external".into(), Arc::clone(&session));
+    lock(&owner.ids).external.insert("external".into());
+
+    let pending = pending_external_receipt_prompt(&session, owner.connection, "after receipt");
+    assert!(matches!(
+        pending.recv_timeout(Duration::from_millis(200)),
+        Err(RecvTimeoutError::Timeout)
+    ));
+    assert!(!marker.exists(), "prompt dispatched before receipt");
+    receipt.announce();
+    assert!(pending.recv_timeout(WAIT).unwrap().is_ok());
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), "after receipt\n");
+
+    let (peer, _, _) = kage_jsonrpc::connect(std::io::empty(), std::io::sink());
+    let other = CliAcpAgent::new(Arc::clone(&host), peer.into());
+    let receipt = other
+        .attach_external("external", &[], None)
+        .unwrap()
+        .unwrap();
+    let pending = pending_external_receipt_prompt(&session, other.connection, "cancelled");
+    assert!(matches!(
+        pending.recv_timeout(Duration::from_millis(200)),
+        Err(RecvTimeoutError::Timeout)
+    ));
+    other.cancel("external");
+    assert_eq!(
+        pending.recv_timeout(WAIT).unwrap().unwrap().stop_reason,
+        kage_acp::acp::StopReason::Cancelled
+    );
+    receipt();
+    assert!(external_receipt_prompt(&session, other.connection, "next").is_ok());
+    assert_eq!(
+        std::fs::read_to_string(&marker).unwrap(),
+        "after receipt\nnext\n"
+    );
+    owner.detach();
+    other.detach();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn external_concurrent_open_receipts_survive_reverse_response_order() {
+    let (_dir, _host, owner, other, _created) = external_race_fixture();
+    let session = owner.external_session("external").unwrap();
+    let (first_tx, first_rx) = mpsc::channel();
+    let (second_tx, second_rx) = mpsc::channel();
+    std::thread::scope(|scope| {
+        let other = &other;
+        scope.spawn(move || {
+            first_tx
+                .send(
+                    other
+                        .attach_external("external", &[], None)
+                        .unwrap()
+                        .unwrap(),
+                )
+                .unwrap();
+        });
+        scope.spawn(move || {
+            second_tx
+                .send(
+                    other
+                        .attach_external("external", &[], None)
+                        .unwrap()
+                        .unwrap(),
+                )
+                .unwrap();
+        });
+    });
+    let first = first_rx.recv_timeout(WAIT).unwrap();
+    let second = second_rx.recv_timeout(WAIT).unwrap();
+    let before = pending_external_receipt_prompt(&session, other.connection, "before");
+    assert!(matches!(
+        before.recv_timeout(Duration::from_millis(100)),
+        Err(RecvTimeoutError::Timeout)
+    ));
+    // The second response completes before the first.
+    second();
+    assert!(before.recv_timeout(WAIT).unwrap().is_ok());
+    assert!(external_receipt_prompt(&session, other.connection, "after").is_ok());
+    first();
+    assert!(external_receipt_prompt(&session, other.connection, "again").is_ok());
+    owner.detach();
+    other.detach();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn external_failed_open_releases_the_connection_claim_and_last_session() {
+    let (_dir, host, owner, other, _created) = external_race_fixture();
+    let session = owner.external_session("external").unwrap();
+    drop(
+        other
+            .attach_external("external", &[], None)
+            .unwrap()
+            .unwrap(),
+    );
+    assert!(!lock(&other.ids).external.contains("external"));
+    assert!(!session.owners().contains(&other.connection));
+    assert!(lock(&host.external).contains_key("external"));
+
+    let first = other
+        .attach_external("external", &[], None)
+        .unwrap()
+        .unwrap();
+    let second = other
+        .attach_external("external", &[], None)
+        .unwrap()
+        .unwrap();
+    drop(first);
+    assert!(lock(&other.ids).external.contains("external"));
+    owner
+        .close_session(CloseSessionRequest {
+            session_id: "external".into(),
+        })
+        .unwrap();
+    assert!(lock(&host.external).contains_key("external"));
+    let unwound = std::thread::spawn(move || {
+        let _second = second;
+        panic!("injected open worker panic");
+    })
+    .join();
+    assert!(unwound.is_err());
+    assert!(!lock(&other.ids).external.contains("external"));
+    assert!(lock(&host.external).is_empty());
+    owner.detach();
+    other.detach();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn external_dropped_and_stale_receipts_do_not_announce_replacement() {
+    let (_dir, _host, owner, other, _created) = external_race_fixture();
+    let session = owner.external_session("external").unwrap();
+    let stale = session
+        .attach_open(owner.connection, owner.peer.clone())
+        .unwrap();
+    let dropped = session
+        .attach_open(owner.connection, owner.peer.clone())
+        .unwrap();
+    drop(dropped);
+    let dropped_prompt = pending_external_receipt_prompt(&session, owner.connection, "dropped");
+    assert!(matches!(
+        dropped_prompt.recv_timeout(Duration::from_millis(100)),
+        Err(RecvTimeoutError::Timeout)
+    ));
+    owner.cancel("external");
+    assert_eq!(
+        dropped_prompt
+            .recv_timeout(WAIT)
+            .unwrap()
+            .unwrap()
+            .stop_reason,
+        kage_acp::acp::StopReason::Cancelled
+    );
+
+    // Keep the process alive while replacing the owner's attachment.
+    let other_receipt = other
+        .attach_external("external", &[], None)
+        .unwrap()
+        .unwrap();
+    other_receipt();
+    owner
+        .close_session(CloseSessionRequest {
+            session_id: "external".into(),
+        })
+        .unwrap();
+    let replacement = owner
+        .attach_external("external", &[], None)
+        .unwrap()
+        .unwrap();
+    stale.announce();
+    let pending = pending_external_receipt_prompt(&session, owner.connection, "stale");
+    assert!(matches!(
+        pending.recv_timeout(Duration::from_millis(100)),
+        Err(RecvTimeoutError::Timeout)
+    ));
+    replacement();
+    assert!(pending.recv_timeout(WAIT).unwrap().is_ok());
+    assert!(external_receipt_prompt(&session, owner.connection, "replacement").is_ok());
+    owner.detach();
+    other.detach();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn external_stale_receipt_does_not_announce_replaced_session() {
+    let (dir, host, owner, other, _created) = external_race_fixture();
+    let old = owner.external_session("external").unwrap();
+    let stale = owner
+        .attach_external("external", &[], None)
+        .unwrap()
+        .unwrap();
+    owner
+        .close_session(CloseSessionRequest {
+            session_id: "external".into(),
+        })
+        .unwrap();
+    let (replacement, _replacement_created) = external_race_session(dir.path(), &owner);
+    assert!(
+        lock(&host.external)
+            .insert("external".into(), Arc::clone(&replacement))
+            .is_none()
+    );
+    let receipt = owner
+        .attach_external("external", &[], None)
+        .unwrap()
+        .unwrap();
+    stale();
+    let pending = pending_external_receipt_prompt(&replacement, owner.connection, "stale");
+    assert!(matches!(
+        pending.recv_timeout(Duration::from_millis(100)),
+        Err(RecvTimeoutError::Timeout)
+    ));
+    receipt();
+    assert!(pending.recv_timeout(WAIT).unwrap().is_ok());
+    assert!(external_receipt_prompt(&replacement, owner.connection, "replacement").is_ok());
+    assert!(!old.detach(owner.connection));
+    owner.detach();
+    other.detach();
+    assert!(lock(&host.external).is_empty());
+}
+
+#[test]
+fn native_new_session_with_receipt_preserves_legacy_announcement() {
+    let dir = tempfile::tempdir().unwrap();
+    let h = serve(vec![], dir.path(), dir.path());
+    let (peer, _, _) = kage_jsonrpc::connect(std::io::empty(), std::io::sink());
+    let agent = CliAcpAgent::new(Arc::clone(&h.host), peer.into());
+    let (response, receipt) = agent
+        .new_session_with_receipt(NewSessionRequest {
+            cwd: dir.path().to_string_lossy().into_owned(),
+            mcp_servers: vec![],
+            meta: None,
+        })
+        .unwrap();
+    assert!(receipt.is_none());
+    agent.session_announced(&response.session_id);
+    agent.detach();
+}
+
+/// Forwards to a host connection, holding the first resume and the first
+/// close worker until released.
+#[cfg(target_os = "linux")]
+struct FencedAgent {
+    inner: Arc<CliAcpAgent>,
+    resume_entered: mpsc::Sender<()>,
+    resume_release: Mutex<Option<mpsc::Receiver<()>>>,
+    close_release: Mutex<Option<mpsc::Receiver<()>>>,
+}
+
+#[cfg(target_os = "linux")]
+impl Agent for FencedAgent {
+    fn initialize(&self, req: InitializeRequest) -> InitializeResponse {
+        self.inner.initialize(req)
+    }
+
+    fn new_session(&self, req: NewSessionRequest) -> Result<NewSessionResponse, RpcError> {
+        self.inner.new_session(req)
+    }
+
+    fn prepare_prompt(
+        &self,
+        req: &PromptRequest,
+    ) -> Result<Option<Box<dyn std::any::Any + Send>>, RpcError> {
+        self.inner.prepare_prompt(req)
+    }
+
+    fn prompt_prepared(
+        &self,
+        req: PromptRequest,
+        ctx: &PromptContext,
+        prepared: Option<Box<dyn std::any::Any + Send>>,
+    ) -> Result<PromptResponse, RpcError> {
+        self.inner.prompt_prepared(req, ctx, prepared)
+    }
+
+    fn prompt(&self, req: PromptRequest, ctx: &PromptContext) -> Result<PromptResponse, RpcError> {
+        self.inner.prompt(req, ctx)
+    }
+
+    fn cancel(&self, session_id: &str) {
+        self.inner.cancel(session_id);
+    }
+
+    fn close_session(&self, req: CloseSessionRequest) -> Result<CloseSessionResponse, RpcError> {
+        self.inner.close_session(req)
+    }
+
+    fn fence_close(&self, req: &CloseSessionRequest) -> Option<Box<dyn std::any::Any + Send>> {
+        self.inner.fence_close(req)
+    }
+
+    fn close_session_fenced(
+        &self,
+        req: CloseSessionRequest,
+        fence: Option<Box<dyn std::any::Any + Send>>,
+    ) -> Result<CloseSessionResponse, RpcError> {
+        let release = lock(&self.close_release).take();
+        if let Some(release) = release {
+            release.recv_timeout(WAIT).unwrap();
+        }
+        self.inner.close_session_fenced(req, fence)
+    }
+
+    fn prepare_resume(&self, req: &ResumeSessionRequest) -> Option<Box<dyn std::any::Any + Send>> {
+        self.inner.prepare_resume(req)
+    }
+
+    fn resume_session_prepared(
+        &self,
+        req: ResumeSessionRequest,
+        ctx: &PromptContext,
+        prepared: Option<Box<dyn std::any::Any + Send>>,
+    ) -> kage_acp::agent::OpenResult<ResumeSessionResponse> {
+        let release = lock(&self.resume_release).take();
+        if let Some(release) = release {
+            self.resume_entered.send(()).unwrap();
+            release.recv_timeout(WAIT).unwrap();
+        }
+        self.inner.resume_session_prepared(req, ctx, prepared)
+    }
+}
+
+/// Serves `agent` and returns a raw writer and a reader of responses by id,
+/// so tests control the exact order of messages on the wire.
+#[cfg(target_os = "linux")]
+fn serve_raw(
+    agent: FencedAgent,
+) -> (
+    std::io::PipeWriter,
+    mpsc::Receiver<(u64, serde_json::Value)>,
+) {
+    let (srv_r, cli_w) = std::io::pipe().unwrap();
+    let (cli_r, srv_w) = std::io::pipe().unwrap();
+    std::thread::spawn(move || {
+        let _ = kage_acp::agent::serve_agent(BufReader::new(srv_r), srv_w, |_| agent);
+    });
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(cli_r).lines() {
+            let Ok(line) = line else { break };
+            let value: serde_json::Value = serde_json::from_str(&line).unwrap();
+            if let Some(id) = value["id"].as_u64() {
+                let _ = tx.send((id, value));
+            }
+        }
+    });
+    (cli_w, rx)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn external_close_fences_a_prompt_dispatched_after_it() {
+    let (_dir, host, owner, other, _created) = external_race_fixture();
+    other
+        .attach_external("external", &[], None)
+        .unwrap()
+        .unwrap()();
+    let session = owner.external_session("external").unwrap();
+    session
+        .attach_open(owner.connection, owner.peer.clone())
+        .unwrap()
+        .announce();
+    let (entered, _) = mpsc::channel();
+    let (release, close_release) = mpsc::channel();
+    let (mut wire, rx) = serve_raw(FencedAgent {
+        inner: Arc::clone(&owner),
+        resume_entered: entered,
+        resume_release: Mutex::new(None),
+        close_release: Mutex::new(Some(close_release)),
+    });
+    writeln!(
+        wire,
+        "{}\n{}",
+        serde_json::json!({"jsonrpc":"2.0","id":1,"method":"session/close","params":{"sessionId":"external"}}),
+        serde_json::json!({"jsonrpc":"2.0","id":2,"method":"session/prompt","params":{"sessionId":"external","prompt":[{"type":"text","text":"late"}]}}),
+    )
+    .unwrap();
+    // The close worker is held, so only the dispatch-time fence can stop
+    // the prompt from reaching the session.
+    let (id, prompt) = rx.recv_timeout(WAIT).unwrap();
+    assert_eq!(id, 2);
+    assert_eq!(prompt["error"]["code"], -32602, "{prompt}");
+    release.send(()).unwrap();
+    let (id, close) = rx.recv_timeout(WAIT).unwrap();
+    assert_eq!(id, 1);
+    assert_eq!(close["result"], serde_json::json!({}));
+    assert!(!session.owners().contains(&owner.connection));
+    assert!(lock(&host.external).contains_key("external"));
+    drop(wire);
+    owner.detach();
+    other.detach();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn external_close_fences_a_resume_dispatched_before_it() {
+    let (_dir, host, owner, other, _created) = external_race_fixture();
+    let session = owner.external_session("external").unwrap();
+    let (entered_tx, entered) = mpsc::channel();
+    let (release, release_rx) = mpsc::channel();
+    let (close, close_release) = mpsc::channel();
+    let (mut wire, rx) = serve_raw(FencedAgent {
+        inner: Arc::clone(&other),
+        resume_entered: entered_tx,
+        resume_release: Mutex::new(Some(release_rx)),
+        close_release: Mutex::new(Some(close_release)),
+    });
+    writeln!(
+        wire,
+        "{}\n{}",
+        serde_json::json!({"jsonrpc":"2.0","id":1,"method":"session/resume","params":{"sessionId":"external","cwd":"/","mcpServers":[]}}),
+        serde_json::json!({"jsonrpc":"2.0","id":2,"method":"session/close","params":{"sessionId":"external"}}),
+    )
+    .unwrap();
+    entered.recv_timeout(WAIT).unwrap();
+    // The close worker is held, so only the dispatch-time fence can stop
+    // the resume from attaching.
+    release.send(()).unwrap();
+    let (id, resume) = rx.recv_timeout(WAIT).unwrap();
+    assert_eq!(id, 1);
+    assert!(resume["error"].is_object(), "{resume}");
+    close.send(()).unwrap();
+    let (id, closed) = rx.recv_timeout(WAIT).unwrap();
+    assert_eq!(id, 2);
+    assert_eq!(closed["result"], serde_json::json!({}), "{closed}");
+    assert!(!session.owners().contains(&other.connection));
+    assert!(lock(&other.ids).external.is_empty());
+    assert!(lock(&other.ids).resuming.is_empty());
+    assert!(lock(&host.external).contains_key("external"));
+    drop(wire);
+    owner.detach();
+    other.detach();
 }

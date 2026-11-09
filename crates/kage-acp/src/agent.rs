@@ -481,6 +481,29 @@ pub trait Agent: Send + Sync + 'static {
             .map(|response| (response, None))
     }
 
+    /// Prepare a resume on the dispatch thread, so a later close can fence
+    /// it. Keep this short and nonblocking. The returned token is passed to
+    /// [`Agent::resume_session_prepared`] on the worker thread. The default
+    /// prepares nothing.
+    fn prepare_resume(&self, _req: &ResumeSessionRequest) -> Option<Box<dyn std::any::Any + Send>> {
+        None
+    }
+
+    /// Resume using the token returned by [`Agent::prepare_resume`]. The
+    /// default ignores the token and calls
+    /// [`Agent::resume_session_with_receipt`].
+    ///
+    /// # Errors
+    /// Returns an error if the session cannot be resumed.
+    fn resume_session_prepared(
+        &self,
+        req: ResumeSessionRequest,
+        ctx: &PromptContext,
+        _prepared: Option<Box<dyn std::any::Any + Send>>,
+    ) -> OpenResult<ResumeSessionResponse> {
+        self.resume_session_with_receipt(req, ctx)
+    }
+
     /// Release a session the connection loaded, created or resumed: it
     /// no longer watches it, and the agent may stop hosting it once no
     /// other connection does. The default rejects: only agents that
@@ -492,6 +515,29 @@ pub trait Agent: Send + Sync + 'static {
     /// be released.
     fn close_session(&self, _req: CloseSessionRequest) -> Result<CloseSessionResponse, RpcError> {
         Err(RpcError::method_not_found("session/close"))
+    }
+
+    /// Fence a close on the dispatch thread before any later message is
+    /// dispatched. Keep this short and nonblocking. The returned token is
+    /// passed to [`Agent::close_session_fenced`] on the worker thread. The
+    /// default fences nothing.
+    fn fence_close(&self, _req: &CloseSessionRequest) -> Option<Box<dyn std::any::Any + Send>> {
+        None
+    }
+
+    /// Finish a close using the token returned by [`Agent::fence_close`].
+    /// The default ignores the token and calls [`Agent::close_session`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`RpcError`] if the session id is unknown or cannot
+    /// be released.
+    fn close_session_fenced(
+        &self,
+        req: CloseSessionRequest,
+        _fence: Option<Box<dyn std::any::Any + Send>>,
+    ) -> Result<CloseSessionResponse, RpcError> {
+        self.close_session(req)
     }
 
     /// Change one config option of a session. The default rejects:
@@ -1176,7 +1222,7 @@ fn spawn_prompt<A: Agent>(
 /// Answer request `id` with `op`, which opens the session it returns
 /// the id of, on its own thread, then tell the agent the client has the
 /// response.
-fn spawn_open<A, F>(
+fn spawn_open<A, F, T>(
     peer: &AgentPeer,
     agent: &Arc<A>,
     id: serde_json::Value,
@@ -1184,13 +1230,12 @@ fn spawn_open<A, F>(
 ) -> thread::JoinHandle<()>
 where
     A: Agent,
-    F: FnOnce(&A) -> Result<(String, serde_json::Value, Option<OpenReceipt>), RpcError>
-        + Send
-        + 'static,
+    F: FnOnce(&A) -> Result<(String, T, Option<OpenReceipt>), RpcError> + Send + 'static,
+    T: serde::Serialize,
 {
     let agent = Arc::clone(agent);
     let peer = peer.clone();
-    thread::spawn(move || match op(&agent) {
+    thread::spawn(move || match op(&agent).and_then(encode_open) {
         Ok((session, response, receipt)) => {
             if peer.respond(&id, Ok(response)).is_ok() {
                 if let Some(receipt) = receipt {
@@ -1203,6 +1248,27 @@ where
         Err(e) => {
             let _ = peer.respond(&id, Err(e));
         }
+    })
+}
+
+fn encode_open<T: serde::Serialize>(
+    (session, response, receipt): (String, T, Option<OpenReceipt>),
+) -> Result<(String, serde_json::Value, Option<OpenReceipt>), RpcError> {
+    let response = serde_json::to_value(response)
+        .map_err(|e| RpcError::internal(format!("encode open response: {e}")))?;
+    Ok((session, response, receipt))
+}
+
+/// Fence a close on the dispatch thread, then finish it on its own thread.
+fn spawn_close<A: Agent>(
+    peer: &AgentPeer,
+    agent: &Arc<A>,
+    id: serde_json::Value,
+    req: CloseSessionRequest,
+) -> thread::JoinHandle<()> {
+    let fence = agent.fence_close(&req);
+    spawn_op(peer, agent, id, move |a| {
+        a.close_session_fenced(req, fence).map(jval)
     })
 }
 
@@ -1238,7 +1304,7 @@ fn handle_request<A: Agent>(
             Err(e) => return parse_failed(peer, &id, e),
             Ok(req) => spawn_open(peer, agent, id, move |a| {
                 a.new_session_with_receipt(req)
-                    .map(|(resp, receipt)| (resp.session_id.clone(), jval(resp), receipt))
+                    .map(|(resp, receipt)| (resp.session_id.clone(), resp, receipt))
             }),
         },
         "session/prompt" => match parse::<PromptRequest>(params) {
@@ -1280,7 +1346,7 @@ fn handle_request<A: Agent>(
                 spawn_open(peer, agent, id, move |a| {
                     let session = req.session_id.clone();
                     a.load_session_with_receipt(req, &ctx)
-                        .map(|(resp, receipt)| (session, jval(resp), receipt))
+                        .map(|(resp, receipt)| (session, resp, receipt))
                 })
             }
         },
@@ -1299,10 +1365,11 @@ fn handle_request<A: Agent>(
                     session_id: req.session_id.clone(),
                     start: None,
                 };
+                let prepared = agent.prepare_resume(&req);
                 spawn_open(peer, agent, id, move |a| {
                     let session = req.session_id.clone();
-                    a.resume_session_with_receipt(req, &ctx)
-                        .map(|(resp, receipt)| (session, jval(resp), receipt))
+                    a.resume_session_prepared(req, &ctx, prepared)
+                        .map(|(resp, receipt)| (session, resp, receipt))
                 })
             }
         },
@@ -1312,7 +1379,7 @@ fn handle_request<A: Agent>(
         },
         "session/close" => match parse::<CloseSessionRequest>(params) {
             Err(e) => return parse_failed(peer, &id, e),
-            Ok(req) => spawn_op(peer, agent, id, move |a| a.close_session(req).map(jval)),
+            Ok(req) => spawn_close(peer, agent, id, req),
         },
         other if other.starts_with("_kage/") => {
             return handle_kage_request(peer, agent, id, other, params);
@@ -2095,6 +2162,53 @@ mod tests {
             .unwrap();
         let response = messages.iter().position(|m| m["id"] == 2).unwrap();
         assert!(history < response);
+    }
+
+    #[test]
+    fn open_encoding_failure_returns_error_without_announcement() {
+        struct FailingSerialize;
+        impl serde::Serialize for FailingSerialize {
+            fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+                Err(serde::ser::Error::custom("deliberate failure"))
+            }
+        }
+
+        for with_receipt in [true, false] {
+            let writer = ReceiptWriter {
+                bytes: Arc::default(),
+                fail: false,
+            };
+            let (events, received) = std::sync::mpsc::channel();
+            let (drops, dropped) = std::sync::mpsc::channel();
+            let agent = Arc::new(ReceiptAgent {
+                writer: writer.clone(),
+                events,
+                drops,
+                receipts: with_receipt,
+                barrier: None,
+            });
+            let (peer, _inbound, reader) = connect(
+                BufReader::new(std::io::Cursor::new(Vec::new())),
+                writer.clone(),
+            );
+            let peer = AgentPeer::from(peer);
+            let worker = spawn_open(&peer, &agent, serde_json::json!(9), |a| {
+                Ok(("session".into(), FailingSerialize, a.receipt("9".into())))
+            });
+            worker.join().unwrap();
+            reader.join().unwrap();
+            assert!(received.try_iter().next().is_none());
+            assert_eq!(dropped.try_iter().count(), usize::from(with_receipt));
+            let bytes = writer.bytes.lock().unwrap();
+            let response: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(response["id"], 9);
+            assert_eq!(response["error"]["code"], -32603);
+            assert_eq!(
+                response["error"]["message"],
+                "encode open response: deliberate failure"
+            );
+            assert!(response.get("result").is_none());
+        }
     }
 
     #[test]
