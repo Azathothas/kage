@@ -10,14 +10,17 @@
 //! request the agent abandons (a permission ask outlived by its run) is
 //! withdrawn with `$/cancel_request`, so the client can close its dialog.
 //!
-//! Every request except `initialize` runs on its own thread, so the
-//! dispatch loop keeps draining inbound messages: a `session/cancel`
-//! always lands, and a slow `session/new` never blocks a running prompt.
+//! Admitted requests except `initialize` run on their own threads. Prompt
+//! workers are limited per connection, including their response writes. Excess
+//! prompts are rejected rather than waiting for a worker slot. Other request
+//! threads are not limited by this cap. The dispatch loop can continue to
+//! receive cancellation while prompt slots are occupied.
 //! When the input ends, every request but a prompt that is still in
 //! flight is answered before [`serve_agent`] returns.
 
 use std::collections::{BTreeMap, HashMap};
 use std::io::{BufRead, Write};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 
@@ -374,6 +377,14 @@ pub fn send_update(
     peer.notify("session/update", params)
 }
 
+/// A per-open action invoked once after the successful response is written.
+/// If the response cannot be written, the receipt is dropped without invocation.
+pub type OpenReceipt = Box<dyn FnOnce() + Send + 'static>;
+
+/// An open response and its optional per-operation completion receipt.
+/// A receipt replaces the call to [`Agent::session_announced`] for that open.
+pub type OpenResult<T> = Result<(T, Option<OpenReceipt>), RpcError>;
+
 /// The host-supplied agent the server drives. The server owns the
 /// protocol; this trait owns the agent. Methods take `&self` and may run
 /// concurrently on different sessions.
@@ -387,6 +398,15 @@ pub trait Agent: Send + Sync + 'static {
     ///
     /// Returns an [`RpcError`] if a session cannot be created.
     fn new_session(&self, req: NewSessionRequest) -> Result<NewSessionResponse, RpcError>;
+
+    /// Create a session with an optional completion receipt. The default calls
+    /// [`Agent::new_session`] and returns no receipt.
+    ///
+    /// # Errors
+    /// Returns an error if the session cannot be created.
+    fn new_session_with_receipt(&self, req: NewSessionRequest) -> OpenResult<NewSessionResponse> {
+        self.new_session(req).map(|response| (response, None))
+    }
 
     /// Resume a previously recorded session, streaming its history
     /// back through `ctx` as `session/update` notifications. The
@@ -403,6 +423,20 @@ pub trait Agent: Send + Sync + 'static {
         _ctx: &PromptContext,
     ) -> Result<LoadSessionResponse, RpcError> {
         Err(RpcError::method_not_found("session/load"))
+    }
+
+    /// Load a session with an optional completion receipt. The default calls
+    /// [`Agent::load_session`] and returns no receipt. History is still streamed
+    /// before the response.
+    ///
+    /// # Errors
+    /// Returns an error if the session cannot be loaded.
+    fn load_session_with_receipt(
+        &self,
+        req: LoadSessionRequest,
+        ctx: &PromptContext,
+    ) -> OpenResult<LoadSessionResponse> {
+        self.load_session(req, ctx).map(|response| (response, None))
     }
 
     /// List recorded sessions, one page at a time. The default rejects:
@@ -431,6 +465,20 @@ pub trait Agent: Send + Sync + 'static {
         _ctx: &PromptContext,
     ) -> Result<ResumeSessionResponse, RpcError> {
         Err(RpcError::method_not_found("session/resume"))
+    }
+
+    /// Resume a session with an optional completion receipt. The default calls
+    /// [`Agent::resume_session`] and returns no receipt.
+    ///
+    /// # Errors
+    /// Returns an error if the session cannot be resumed.
+    fn resume_session_with_receipt(
+        &self,
+        req: ResumeSessionRequest,
+        ctx: &PromptContext,
+    ) -> OpenResult<ResumeSessionResponse> {
+        self.resume_session(req, ctx)
+            .map(|response| (response, None))
     }
 
     /// Release a session the connection loaded, created or resumed: it
@@ -808,6 +856,36 @@ pub trait Agent: Send + Sync + 'static {
         Err(RpcError::method_not_found("_kage/registry/install"))
     }
 
+    /// Prepare a prompt on the dispatch thread after a worker slot is reserved.
+    /// Keep this operation short and nonblocking. The returned owned token is
+    /// passed to [`Agent::prompt_prepared`] on the worker thread. It is dropped
+    /// if the worker cannot be spawned.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`RpcError`] if the prompt cannot be prepared.
+    fn prepare_prompt(
+        &self,
+        _req: &PromptRequest,
+    ) -> Result<Option<Box<dyn std::any::Any + Send>>, RpcError> {
+        Ok(None)
+    }
+
+    /// Run a prompt using the token returned by [`Agent::prepare_prompt`].
+    /// The default ignores the token and calls [`Agent::prompt`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`RpcError`] if the turn cannot start or fails irrecoverably.
+    fn prompt_prepared(
+        &self,
+        req: PromptRequest,
+        ctx: &PromptContext,
+        _prepared: Option<Box<dyn std::any::Any + Send>>,
+    ) -> Result<PromptResponse, RpcError> {
+        self.prompt(req, ctx)
+    }
+
     /// Run one prompt turn to completion, streaming `session/update`
     /// notifications through `ctx`. Implementations that register work before
     /// cancellation can affect it must use [`PromptContext::start`] for that
@@ -956,6 +1034,28 @@ where
     serve_inbound(&peer, messages, make_agent)
 }
 
+// This bounds queued as well as executing prompts, for each connection.
+const MAX_PROMPT_WORKERS: usize = 32;
+
+struct PromptPermit(Arc<AtomicUsize>);
+
+impl PromptPermit {
+    fn acquire(count: &Arc<AtomicUsize>) -> Option<Self> {
+        count
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                (current < MAX_PROMPT_WORKERS).then_some(current + 1)
+            })
+            .ok()
+            .map(|_| Self(Arc::clone(count)))
+    }
+}
+
+impl Drop for PromptPermit {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 fn serve_inbound<A, F>(
     peer: &AgentPeer,
     inbound: impl IntoIterator<Item = Inbound>,
@@ -968,6 +1068,7 @@ where
     let agent = Arc::new(make_agent(peer.clone()));
 
     let mut ops = Vec::new();
+    let prompt_workers = Arc::new(AtomicUsize::new(0));
     let mut starts: HashMap<String, Vec<Weak<Mutex<bool>>>> = HashMap::new();
     for message in inbound {
         starts.retain(|_, entries| {
@@ -998,7 +1099,15 @@ where
                 _ => {}
             },
             Inbound::Request { id, method, params } => {
-                if let Some(op) = handle_request(peer, &agent, &mut starts, id, &method, params) {
+                if let Some(op) = handle_request(
+                    peer,
+                    &agent,
+                    &mut starts,
+                    &prompt_workers,
+                    id,
+                    &method,
+                    params,
+                ) {
                     ops.retain(|op: &thread::JoinHandle<()>| !op.is_finished());
                     ops.push(op);
                 }
@@ -1040,6 +1149,30 @@ where
     })
 }
 
+fn spawn_prompt<A: Agent>(
+    peer: &AgentPeer,
+    agent: &Arc<A>,
+    id: &serde_json::Value,
+    req: PromptRequest,
+    ctx: PromptContext,
+    permit: PromptPermit,
+    prepared: Option<Box<dyn std::any::Any + Send>>,
+) {
+    let agent = Arc::clone(agent);
+    let worker_peer = peer.clone();
+    let worker_id = id.clone();
+    if let Err(error) = thread::Builder::new().spawn(move || {
+        let _permit = permit;
+        let outcome = agent.prompt_prepared(req, &ctx, prepared).map(jval);
+        let _ = worker_peer.respond(&worker_id, outcome);
+    }) {
+        let _ = peer.respond(
+            id,
+            Err(RpcError::internal(format!("spawn prompt worker: {error}"))),
+        );
+    }
+}
+
 /// Answer request `id` with `op`, which opens the session it returns
 /// the id of, on its own thread, then tell the agent the client has the
 /// response.
@@ -1051,14 +1184,20 @@ fn spawn_open<A, F>(
 ) -> thread::JoinHandle<()>
 where
     A: Agent,
-    F: FnOnce(&A) -> Result<(String, serde_json::Value), RpcError> + Send + 'static,
+    F: FnOnce(&A) -> Result<(String, serde_json::Value, Option<OpenReceipt>), RpcError>
+        + Send
+        + 'static,
 {
     let agent = Arc::clone(agent);
     let peer = peer.clone();
     thread::spawn(move || match op(&agent) {
-        Ok((session, response)) => {
+        Ok((session, response, receipt)) => {
             if peer.respond(&id, Ok(response)).is_ok() {
-                agent.session_announced(&session);
+                if let Some(receipt) = receipt {
+                    receipt();
+                } else {
+                    agent.session_announced(&session);
+                }
             }
         }
         Err(e) => {
@@ -1084,6 +1223,7 @@ fn handle_request<A: Agent>(
     peer: &AgentPeer,
     agent: &Arc<A>,
     starts: &mut HashMap<String, Vec<Weak<Mutex<bool>>>>,
+    prompt_workers: &Arc<AtomicUsize>,
     id: serde_json::Value,
     method: &str,
     params: serde_json::Value,
@@ -1097,13 +1237,24 @@ fn handle_request<A: Agent>(
         "session/new" => match parse::<NewSessionRequest>(params) {
             Err(e) => return parse_failed(peer, &id, e),
             Ok(req) => spawn_open(peer, agent, id, move |a| {
-                a.new_session(req)
-                    .map(|resp| (resp.session_id.clone(), jval(resp)))
+                a.new_session_with_receipt(req)
+                    .map(|(resp, receipt)| (resp.session_id.clone(), jval(resp), receipt))
             }),
         },
         "session/prompt" => match parse::<PromptRequest>(params) {
             Err(e) => return parse_failed(peer, &id, e),
             Ok(req) => {
+                let Some(permit) = PromptPermit::acquire(prompt_workers) else {
+                    return parse_failed(
+                        peer,
+                        &id,
+                        RpcError::new(-32000, "prompt worker limit reached"),
+                    );
+                };
+                let prepared = match agent.prepare_prompt(&req) {
+                    Ok(prepared) => prepared,
+                    Err(error) => return parse_failed(peer, &id, error),
+                };
                 let start = Arc::new(Mutex::new(false));
                 starts
                     .entry(req.session_id.clone())
@@ -1114,7 +1265,7 @@ fn handle_request<A: Agent>(
                     session_id: req.session_id.clone(),
                     start: Some(start),
                 };
-                spawn_op(peer, agent, id, move |a| a.prompt(req, &ctx).map(jval));
+                spawn_prompt(peer, agent, &id, req, ctx, permit, prepared);
                 return None;
             }
         },
@@ -1128,7 +1279,8 @@ fn handle_request<A: Agent>(
                 };
                 spawn_open(peer, agent, id, move |a| {
                     let session = req.session_id.clone();
-                    a.load_session(req, &ctx).map(|resp| (session, jval(resp)))
+                    a.load_session_with_receipt(req, &ctx)
+                        .map(|(resp, receipt)| (session, jval(resp), receipt))
                 })
             }
         },
@@ -1149,8 +1301,8 @@ fn handle_request<A: Agent>(
                 };
                 spawn_open(peer, agent, id, move |a| {
                     let session = req.session_id.clone();
-                    a.resume_session(req, &ctx)
-                        .map(|resp| (session, jval(resp)))
+                    a.resume_session_with_receipt(req, &ctx)
+                        .map(|(resp, receipt)| (session, jval(resp), receipt))
                 })
             }
         },
@@ -1395,6 +1547,206 @@ mod tests {
         fn cancel(&self, _session_id: &str) {}
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn prompt_preparation_errors_and_transfers_token_to_worker() {
+        use std::io::{BufRead, Write};
+        use std::os::unix::net::UnixStream;
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        struct PreparedAgent(mpsc::Sender<(thread::ThreadId, thread::ThreadId, String)>);
+        impl Agent for PreparedAgent {
+            fn initialize(&self, req: InitializeRequest) -> InitializeResponse {
+                MockAgent.initialize(req)
+            }
+            fn new_session(&self, req: NewSessionRequest) -> Result<NewSessionResponse, RpcError> {
+                MockAgent.new_session(req)
+            }
+            fn prepare_prompt(
+                &self,
+                req: &PromptRequest,
+            ) -> Result<Option<Box<dyn std::any::Any + Send>>, RpcError> {
+                if req.session_id == "reject" {
+                    return Err(RpcError::new(-32001, "preparation rejected"));
+                }
+                Ok(Some(Box::new((
+                    thread::current().id(),
+                    req.session_id.clone(),
+                ))))
+            }
+            fn prompt_prepared(
+                &self,
+                _: PromptRequest,
+                _: &PromptContext,
+                prepared: Option<Box<dyn std::any::Any + Send>>,
+            ) -> Result<PromptResponse, RpcError> {
+                let (dispatch, session) = *prepared
+                    .unwrap()
+                    .downcast::<(thread::ThreadId, String)>()
+                    .unwrap();
+                self.0
+                    .send((dispatch, thread::current().id(), session))
+                    .unwrap();
+                Ok(PromptResponse {
+                    stop_reason: StopReason::EndTurn,
+                })
+            }
+            fn prompt(
+                &self,
+                _: PromptRequest,
+                _: &PromptContext,
+            ) -> Result<PromptResponse, RpcError> {
+                panic!("prepared prompt must be used")
+            }
+            fn cancel(&self, _: &str) {}
+        }
+
+        let (server_io, mut client) = UnixStream::pair().unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let server_read = server_io.try_clone().unwrap();
+        let (tx, rx) = mpsc::channel();
+        let server = thread::spawn(move || {
+            serve_agent(BufReader::new(server_read), server_io, |_| {
+                PreparedAgent(tx)
+            })
+        });
+        let mut reader = BufReader::new(client.try_clone().unwrap());
+        for (id, session) in [(1, "reject"), (2, "accept")] {
+            writeln!(client, "{}", serde_json::json!({"jsonrpc":"2.0", "id":id, "method":"session/prompt", "params":{"sessionId":session, "prompt":[]}})).unwrap();
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let response: serde_json::Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(response["id"], id);
+            if id == 1 {
+                assert_eq!(response["error"]["message"], "preparation rejected");
+                assert!(rx.try_recv().is_err());
+            } else {
+                assert_eq!(response["result"]["stopReason"], "end_turn");
+            }
+        }
+        let (dispatch, worker, session) = rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert_ne!(dispatch, worker);
+        assert_eq!(session, "accept");
+        client.shutdown(std::net::Shutdown::Both).unwrap();
+        server.join().unwrap().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[allow(clippy::too_many_lines)]
+    fn prompt_limit_rejects_without_starting_and_cancellation_stays_responsive() {
+        use std::io::{BufRead, Write};
+        use std::os::unix::net::UnixStream;
+        use std::sync::{Condvar, mpsc};
+        use std::time::Duration;
+
+        struct BlockingAgent {
+            entered: mpsc::Sender<()>,
+            cancelled: mpsc::Sender<()>,
+            gate: Arc<(Mutex<bool>, Condvar)>,
+        }
+        impl Agent for BlockingAgent {
+            fn initialize(&self, req: InitializeRequest) -> InitializeResponse {
+                MockAgent.initialize(req)
+            }
+            fn new_session(&self, req: NewSessionRequest) -> Result<NewSessionResponse, RpcError> {
+                MockAgent.new_session(req)
+            }
+            fn prompt(
+                &self,
+                _: PromptRequest,
+                ctx: &PromptContext,
+            ) -> Result<PromptResponse, RpcError> {
+                self.entered.send(()).unwrap();
+                let (lock, wake) = &*self.gate;
+                let mut released = lock.lock().unwrap();
+                while !*released {
+                    released = wake.wait(released).unwrap();
+                }
+                let started = ctx.start(|| ());
+                Ok(PromptResponse {
+                    stop_reason: if started.is_some() {
+                        StopReason::EndTurn
+                    } else {
+                        StopReason::Cancelled
+                    },
+                })
+            }
+            fn cancel(&self, _: &str) {
+                self.cancelled.send(()).unwrap();
+            }
+        }
+        let (server_io, mut client) = UnixStream::pair().unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let server_read = server_io.try_clone().unwrap();
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (cancel_tx, cancel_rx) = mpsc::channel();
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let server_gate = Arc::clone(&gate);
+        let (done_tx, done_rx) = mpsc::channel();
+        thread::spawn(move || {
+            let result = serve_agent(BufReader::new(server_read), server_io, |_| BlockingAgent {
+                entered: entered_tx,
+                cancelled: cancel_tx,
+                gate: server_gate,
+            });
+            done_tx.send(result).unwrap();
+        });
+        let mut reader = BufReader::new(client.try_clone().unwrap());
+        let send_prompt = |client: &mut UnixStream, id: usize| {
+            writeln!(client, "{}", serde_json::json!({"jsonrpc":"2.0", "id":id, "method":"session/prompt", "params":{"sessionId":"s", "prompt":[]}})).unwrap();
+        };
+        for id in 0..MAX_PROMPT_WORKERS {
+            send_prompt(&mut client, id);
+        }
+        for _ in 0..MAX_PROMPT_WORKERS {
+            entered_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        }
+        send_prompt(&mut client, MAX_PROMPT_WORKERS);
+        let mut line = String::new();
+        reader.read_line(&mut line).unwrap();
+        let response: serde_json::Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(response["id"], MAX_PROMPT_WORKERS);
+        assert_eq!(response["error"]["code"], -32000);
+        assert_eq!(response["error"]["message"], "prompt worker limit reached");
+        assert!(entered_rx.try_recv().is_err());
+        writeln!(client, "{}", serde_json::json!({"jsonrpc":"2.0", "method":"session/cancel", "params":{"sessionId":"s"}})).unwrap();
+        cancel_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        *gate.0.lock().unwrap() = true;
+        gate.1.notify_all();
+        for _ in 0..MAX_PROMPT_WORKERS {
+            line.clear();
+            reader.read_line(&mut line).unwrap();
+            let response: serde_json::Value = serde_json::from_str(&line).unwrap();
+            assert_eq!(response["result"]["stopReason"], "cancelled");
+        }
+        // Response bytes can be read just before the worker drops its permit.
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            assert!(std::time::Instant::now() < deadline);
+            send_prompt(&mut client, MAX_PROMPT_WORKERS + 1);
+            line.clear();
+            reader.read_line(&mut line).unwrap();
+            let response: serde_json::Value = serde_json::from_str(&line).unwrap();
+            if response.get("result").is_some() {
+                assert_eq!(response["result"]["stopReason"], "end_turn");
+                break;
+            }
+            thread::yield_now();
+        }
+        entered_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        client.shutdown(std::net::Shutdown::Both).unwrap();
+        done_rx
+            .recv_timeout(Duration::from_secs(3))
+            .unwrap()
+            .unwrap();
+    }
+
     #[test]
     fn initialize_new_prompt_round_trip() {
         let (srv_r, cli_w) = std::io::pipe().unwrap();
@@ -1569,6 +1921,293 @@ mod tests {
         let mut out = String::new();
         cli_r.read_to_string(&mut out).unwrap();
         assert!(out.contains("interrupted"), "{out}");
+    }
+
+    #[derive(Clone)]
+    struct ReceiptWriter {
+        bytes: Arc<Mutex<Vec<u8>>>,
+        fail: bool,
+    }
+
+    impl Write for ReceiptWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if self.fail {
+                return Err(std::io::Error::other("failed writer"));
+            }
+            self.bytes.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    struct DropSignal(std::sync::mpsc::Sender<&'static str>);
+    impl Drop for DropSignal {
+        fn drop(&mut self) {
+            self.0.send("dropped").unwrap();
+        }
+    }
+
+    struct ReceiptAgent {
+        writer: ReceiptWriter,
+        events: std::sync::mpsc::Sender<String>,
+        drops: std::sync::mpsc::Sender<&'static str>,
+        receipts: bool,
+        barrier: Option<Arc<std::sync::Barrier>>,
+    }
+
+    impl ReceiptAgent {
+        fn receipt(&self, label: String) -> Option<OpenReceipt> {
+            if !self.receipts {
+                return None;
+            }
+            let writer = self.writer.clone();
+            let events = self.events.clone();
+            let guard = DropSignal(self.drops.clone());
+            Some(Box::new(move || {
+                let _guard = guard;
+                let bytes = writer.bytes.lock().unwrap();
+                let lines = String::from_utf8(bytes.clone()).unwrap();
+                let expected_id: i64 = label.parse().unwrap();
+                assert!(
+                    lines.lines().any(|line| {
+                        let response: serde_json::Value = serde_json::from_str(line).unwrap();
+                        response["id"] == expected_id && response.get("result").is_some()
+                    }),
+                    "receipt before response: {lines}"
+                );
+                events.send(label).unwrap();
+            }))
+        }
+    }
+
+    impl Agent for ReceiptAgent {
+        fn initialize(&self, req: InitializeRequest) -> InitializeResponse {
+            MockAgent.initialize(req)
+        }
+        fn new_session(&self, req: NewSessionRequest) -> Result<NewSessionResponse, RpcError> {
+            MockAgent.new_session(req)
+        }
+        fn load_session(
+            &self,
+            req: LoadSessionRequest,
+            ctx: &PromptContext,
+        ) -> Result<LoadSessionResponse, RpcError> {
+            LoadAgent.load_session(req, ctx)
+        }
+        fn resume_session(
+            &self,
+            req: ResumeSessionRequest,
+            ctx: &PromptContext,
+        ) -> Result<ResumeSessionResponse, RpcError> {
+            LoadAgent.resume_session(req, ctx)
+        }
+        fn new_session_with_receipt(
+            &self,
+            req: NewSessionRequest,
+        ) -> OpenResult<NewSessionResponse> {
+            let label = req.cwd.clone();
+            if label == "error" {
+                let _receipt = self.receipt("9".into());
+                return Err(RpcError::internal("open failed"));
+            }
+            let response = self.new_session(req)?;
+            let receipt = self.receipt(label);
+            if let Some(barrier) = &self.barrier {
+                barrier.wait();
+            }
+            Ok((response, receipt))
+        }
+        fn load_session_with_receipt(
+            &self,
+            req: LoadSessionRequest,
+            ctx: &PromptContext,
+        ) -> OpenResult<LoadSessionResponse> {
+            let label = req.session_id.clone();
+            self.load_session(req, ctx)
+                .map(|response| (response, self.receipt(label)))
+        }
+        fn resume_session_with_receipt(
+            &self,
+            req: ResumeSessionRequest,
+            ctx: &PromptContext,
+        ) -> OpenResult<ResumeSessionResponse> {
+            let label = req.session_id.clone();
+            self.resume_session(req, ctx)
+                .map(|response| (response, self.receipt(label)))
+        }
+        fn prompt(&self, _: PromptRequest, _: &PromptContext) -> Result<PromptResponse, RpcError> {
+            unreachable!()
+        }
+        fn cancel(&self, _: &str) {}
+        fn session_announced(&self, session: &str) {
+            self.events.send(format!("default:{session}")).unwrap();
+        }
+    }
+
+    fn open_input() -> String {
+        [
+            serde_json::json!({"jsonrpc":"2.0","id":1,"method":"session/new","params":{"cwd":"1"}}),
+            serde_json::json!({"jsonrpc":"2.0","id":2,"method":"session/load","params":{"sessionId":"2","cwd":"/","mcpServers":[]}}),
+            serde_json::json!({"jsonrpc":"2.0","id":3,"method":"session/resume","params":{"sessionId":"3","cwd":"/","mcpServers":[]}}),
+        ].iter().fold(String::new(), |mut output, value| {
+            use std::fmt::Write as _;
+            writeln!(output, "{value}").unwrap();
+            output
+        })
+    }
+
+    #[test]
+    fn open_receipts_follow_responses_for_all_wrappers() {
+        let writer = ReceiptWriter {
+            bytes: Arc::default(),
+            fail: false,
+        };
+        let (events, received) = std::sync::mpsc::channel();
+        let (drops, dropped) = std::sync::mpsc::channel();
+        let agent = ReceiptAgent {
+            writer: writer.clone(),
+            events,
+            drops,
+            receipts: true,
+            barrier: None,
+        };
+        serve_agent(
+            BufReader::new(std::io::Cursor::new(open_input())),
+            writer.clone(),
+            |_| agent,
+        )
+        .unwrap();
+        let mut observed: Vec<_> = received.try_iter().collect();
+        observed.sort();
+        assert_eq!(observed, ["1", "2", "3"]);
+        assert_eq!(dropped.try_iter().count(), 3);
+        let lines = String::from_utf8(writer.bytes.lock().unwrap().clone()).unwrap();
+        let messages: Vec<serde_json::Value> = lines
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        let history = messages
+            .iter()
+            .position(|m| m["method"] == "session/update")
+            .unwrap();
+        let response = messages.iter().position(|m| m["id"] == 2).unwrap();
+        assert!(history < response);
+    }
+
+    #[test]
+    fn open_receipt_is_dropped_on_failed_response_or_open() {
+        for (fail, input) in [(true, "1"), (false, "error")] {
+            let writer = ReceiptWriter {
+                bytes: Arc::default(),
+                fail,
+            };
+            let (events, received) = std::sync::mpsc::channel();
+            let (drops, dropped) = std::sync::mpsc::channel();
+            let agent = ReceiptAgent {
+                writer: writer.clone(),
+                events,
+                drops,
+                receipts: true,
+                barrier: None,
+            };
+            let request = format!(
+                "{}\n",
+                serde_json::json!({"jsonrpc":"2.0","id":9,"method":"session/new","params":{"cwd":input}})
+            );
+            serve_agent(
+                BufReader::new(std::io::Cursor::new(request)),
+                writer,
+                |_| agent,
+            )
+            .unwrap();
+            assert!(received.try_iter().next().is_none());
+            assert_eq!(dropped.try_iter().collect::<Vec<_>>(), ["dropped"]);
+        }
+    }
+
+    #[test]
+    fn concurrent_opens_keep_independent_receipts_for_same_session() {
+        let writer = ReceiptWriter {
+            bytes: Arc::default(),
+            fail: false,
+        };
+        let (events, received) = std::sync::mpsc::channel();
+        let (drops, dropped) = std::sync::mpsc::channel();
+        let agent = ReceiptAgent {
+            writer: writer.clone(),
+            events,
+            drops,
+            receipts: true,
+            barrier: Some(Arc::new(std::sync::Barrier::new(2))),
+        };
+        let input = (1..=2).fold(String::new(), |mut output, id| {
+            use std::fmt::Write as _;
+            writeln!(output, "{}", serde_json::json!({"jsonrpc":"2.0","id":id,"method":"session/new","params":{"cwd":id.to_string()}})).unwrap();
+            output
+        });
+        serve_agent(BufReader::new(std::io::Cursor::new(input)), writer, |_| {
+            agent
+        })
+        .unwrap();
+        let mut observed: Vec<_> = received.try_iter().collect();
+        observed.sort();
+        assert_eq!(observed, ["1", "2"]);
+        assert_eq!(dropped.try_iter().count(), 2);
+    }
+
+    #[test]
+    fn default_open_wrappers_announce_each_session() {
+        struct DefaultAgent(std::sync::mpsc::Sender<String>);
+        impl Agent for DefaultAgent {
+            fn initialize(&self, req: InitializeRequest) -> InitializeResponse {
+                MockAgent.initialize(req)
+            }
+            fn new_session(&self, req: NewSessionRequest) -> Result<NewSessionResponse, RpcError> {
+                MockAgent.new_session(req)
+            }
+            fn load_session(
+                &self,
+                req: LoadSessionRequest,
+                ctx: &PromptContext,
+            ) -> Result<LoadSessionResponse, RpcError> {
+                LoadAgent.load_session(req, ctx)
+            }
+            fn resume_session(
+                &self,
+                req: ResumeSessionRequest,
+                ctx: &PromptContext,
+            ) -> Result<ResumeSessionResponse, RpcError> {
+                LoadAgent.resume_session(req, ctx)
+            }
+            fn prompt(
+                &self,
+                _: PromptRequest,
+                _: &PromptContext,
+            ) -> Result<PromptResponse, RpcError> {
+                unreachable!()
+            }
+            fn cancel(&self, _: &str) {}
+            fn session_announced(&self, session: &str) {
+                self.0.send(session.to_owned()).unwrap();
+            }
+        }
+        let writer = ReceiptWriter {
+            bytes: Arc::default(),
+            fail: false,
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        serve_agent(
+            BufReader::new(std::io::Cursor::new(open_input())),
+            writer,
+            |_| DefaultAgent(tx),
+        )
+        .unwrap();
+        let mut observed: Vec<_> = rx.try_iter().collect();
+        observed.sort();
+        assert_eq!(observed, ["2", "3", "sess-1"]);
     }
 
     struct LoadAgent;
